@@ -1,3 +1,6 @@
+// Copyright (c) Pydantic, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package provider
 
 import (
@@ -8,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	stringvalidator "github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	rschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -16,7 +20,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
-	stringvalidator "github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 )
 
 var _ resource.Resource = &AlertResource{}
@@ -183,7 +186,7 @@ func iso8601ToDuration(s string) (time.Duration, error) {
 	if err != nil {
 		return 0, err
 	}
-	min, err := parse(m[3])
+	mins, err := parse(m[3])
 	if err != nil {
 		return 0, err
 	}
@@ -194,7 +197,7 @@ func iso8601ToDuration(s string) (time.Duration, error) {
 
 	return time.Duration(days)*24*time.Hour +
 		time.Duration(h)*time.Hour +
-		time.Duration(min)*time.Minute +
+		time.Duration(mins)*time.Minute +
 		time.Duration(sec)*time.Second, nil
 }
 
@@ -439,7 +442,7 @@ func (r *AlertResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	// For lists, send only when we actually have values in the plan.
 	if plan.ChannelIDs != nil {
 		ids := make([]string, 0, len(plan.ChannelIDs))
-	 for _, cid := range plan.ChannelIDs {
+		for _, cid := range plan.ChannelIDs {
 			if !cid.IsNull() && !cid.IsUnknown() {
 				ids = append(ids, cid.ValueString())
 			}

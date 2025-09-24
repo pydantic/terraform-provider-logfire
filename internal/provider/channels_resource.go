@@ -1,3 +1,6 @@
+// Copyright (c) Pydantic, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package provider
 
 import (
@@ -5,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	stringvalidator "github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	rschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -13,7 +17,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
-	stringvalidator "github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 )
 
 var _ resource.Resource = &ChannelResource{}

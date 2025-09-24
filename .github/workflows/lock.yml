@@ -1,5 +1,3 @@
-# DO NOT EDIT - This GitHub Workflow is managed by automation
-# https://github.com/hashicorp/terraform-devex-repos
 name: 'Lock Threads'
 
 on:

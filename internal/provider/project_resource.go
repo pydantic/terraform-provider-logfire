@@ -1,3 +1,6 @@
+// Copyright (c) Pydantic, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package provider
 
 import (
