@@ -63,7 +63,9 @@ func (c *APIClient) doJSON(ctx context.Context, method, path string, in any, out
 
 	defer func() {
 		if out == nil {
-			io.Copy(io.Discard, resp.Body)
+			if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+                fmt.Printf("error discarding response body: %v\n", err)
+            }
 		}
 	}()
 

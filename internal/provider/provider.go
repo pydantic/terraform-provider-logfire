@@ -13,7 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-// Interface assertions
+// Interface assertions.
 var _ provider.Provider = &LogfireProvider{}
 
 func New(version string) func() provider.Provider {

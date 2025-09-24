@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	rschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -183,7 +182,7 @@ func iso8601ToDuration(s string) (time.Duration, error) {
 	if err != nil {
 		return 0, err
 	}
-	min, err := parse(m[3])
+	minutes, err := parse(m[3])
 	if err != nil {
 		return 0, err
 	}
