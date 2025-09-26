@@ -1,3 +1,6 @@
+// Copyright (c) Pydantic, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 // client.go
 package provider
 
@@ -51,7 +54,10 @@ func (c *APIClient) doJSON(ctx context.Context, method, path string, in any, out
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	if in != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	req.Header.Set("Accept", "application/json")
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
 	}
@@ -61,32 +67,43 @@ func (c *APIClient) doJSON(ctx context.Context, method, path string, in any, out
 		return nil, err
 	}
 
+	// Always drain and close so the connection can be reused.
 	defer func() {
-		if out == nil {
-			if _, err := io.Copy(io.Discard, resp.Body); err != nil {
-                fmt.Printf("error discarding response body: %v\n", err)
-            }
+		if resp != nil && resp.Body != nil {
+			_, _ = io.Copy(io.Discard, resp.Body) // explicitly ignore error
+			_ = resp.Body.Close()
 		}
 	}()
 
-	ok := false
-	for _, s := range expectedStatus {
-		if resp.StatusCode == s {
-			ok = true
-			break
+	// Check status
+	ok := len(expectedStatus) == 0 // if none provided, treat 2xx as OK below
+	if !ok {
+		for _, s := range expectedStatus {
+			if resp.StatusCode == s {
+				ok = true
+				break
+			}
 		}
 	}
 	if !ok {
-		b, _ := io.ReadAll(resp.Body)
+		// If caller didn't supply expected statuses, fall back to 2xx.
+		if len(expectedStatus) == 0 && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			ok = true
+		}
+	}
+	if !ok {
+		b, _ := io.ReadAll(resp.Body) // best-effort read for error message
 		return resp, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(b))
 	}
 
+	// Decode response if requested
 	if out != nil {
 		dec := json.NewDecoder(resp.Body)
 		if err := dec.Decode(out); err != nil && err != io.EOF {
 			return resp, err
 		}
 	}
+
 	return resp, nil
 }
 
@@ -132,7 +149,7 @@ func (c *APIClient) alertsBase(org, project string) string {
 	return fmt.Sprintf("api/organizations/%s/projects/%s/alerts/", url.PathEscape(org), url.PathEscape(project))
 }
 func (c *APIClient) alertPath(org, project, id string) string {
-	return fmt.Sprintf("%s%s", c.alertsBase(org, project), url.PathEscape(id))
+	return fmt.Sprintf("%s%s/", c.alertsBase(org, project), url.PathEscape(id))
 }
 
 func (c *APIClient) CreateAlert(ctx context.Context, org, project string, in AlertCreate) (*AlertRead, error) {
@@ -198,7 +215,7 @@ func (c *APIClient) channelsBase(org, project string) string {
 	return fmt.Sprintf("api/organizations/%s/projects/%s/channels/", url.PathEscape(org), url.PathEscape(project))
 }
 func (c *APIClient) channelPath(org, project, id string) string {
-	return fmt.Sprintf("%s%s", c.channelsBase(org, project), url.PathEscape(id))
+	return fmt.Sprintf("%s%s/", c.channelsBase(org, project), url.PathEscape(id))
 }
 
 func (c *APIClient) CreateChannel(ctx context.Context, org, project string, in ChannelCreate) (*ChannelRead, error) {
@@ -262,17 +279,21 @@ func (c *APIClient) projectPath(org, id string) string {
 }
 
 func (c *APIClient) CreateProject(ctx context.Context, org string, in ProjectCreate) (*ProjectRead, error) {
-    var out ProjectRead
-    _, err := c.doJSON(ctx, http.MethodPost, c.projectsBase(org), in, &out, http.StatusCreated, http.StatusOK)
-    if err != nil { return nil, err }
-    return &out, nil
+	var out ProjectRead
+	_, err := c.doJSON(ctx, http.MethodPost, c.projectsBase(org), in, &out, http.StatusCreated, http.StatusOK)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 func (c *APIClient) GetProject(ctx context.Context, org, id string) (*ProjectRead, int, error) {
 	var out ProjectRead
 	resp, err := c.doJSON(ctx, http.MethodGet, c.projectPath(org, id), nil, &out, http.StatusOK)
 	if err != nil {
-		if resp != nil { return nil, resp.StatusCode, err }
+		if resp != nil {
+			return nil, resp.StatusCode, err
+		}
 		return nil, 0, err
 	}
 	return &out, http.StatusOK, nil
@@ -281,7 +302,9 @@ func (c *APIClient) GetProject(ctx context.Context, org, id string) (*ProjectRea
 func (c *APIClient) UpdateProject(ctx context.Context, org, id string, in ProjectUpdate) (*ProjectRead, error) {
 	var out ProjectRead
 	_, err := c.doJSON(ctx, http.MethodPut, c.projectPath(org, id), in, &out, http.StatusOK)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	return &out, nil
 }
 

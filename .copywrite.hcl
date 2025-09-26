@@ -1,24 +1,19 @@
-# NOTE: This file is for HashiCorp specific licensing automation and can be deleted after creating a new repo with this template.
 schema_version = 1
 
 project {
+  name           = "terraform-provider-logfire"
   license        = "MPL-2.0"
-  copyright_year = 2021
+  copyright_holder = "Pydantic, Inc."
+  copyright_year   = 2025
 
   header_ignore = [
-    # internal catalog metadata (prose)
-    "META.d/**/*.yaml",
-
-    # examples used within documentation (prose)
+    # Documentation examples and prose
     "examples/**",
+    "docs/**",
 
-    # GitHub issue template configuration
-    ".github/ISSUE_TEMPLATE/*.yml",
-
-    # golangci-lint tooling configuration
+    # Repo/CI tooling
+    ".github/**",
     ".golangci.yml",
-
-    # GoReleaser tooling configuration
     ".goreleaser.yml",
   ]
 }
