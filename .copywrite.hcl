@@ -15,5 +15,6 @@ project {
     ".github/**",
     ".golangci.yml",
     ".goreleaser.yml",
+    ".pre-commit-config.yaml"
   ]
 }
