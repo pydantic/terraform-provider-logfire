@@ -281,9 +281,9 @@ func readToModel(a *AlertRead, m *AlertModel) {
 		m.Watermark = types.StringValue("")
 	}
 
-	m.ChannelIDs = make([]types.String, 0, len(a.ChannelIDs))
-	for _, cid := range a.ChannelIDs {
-		m.ChannelIDs = append(m.ChannelIDs, types.StringValue(cid))
+	m.ChannelIDs = make([]types.String, 0, len(a.Channels))
+	for _, channel := range a.Channels {
+		m.ChannelIDs = append(m.ChannelIDs, types.StringValue(channel.ID))
 	}
 	m.NotifyWhen = types.StringValue(a.NotifyWhen)
 	m.Active = types.BoolValue(a.Active)
@@ -318,11 +318,16 @@ func (r *AlertResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 
+	fresh, _, gerr := r.client.GetAlert(ctx, org, prj, out.ID)
+	if gerr != nil {
+		fresh = out
+	}
+
 	var state AlertModel
 	// Preserve org/project from plan into state
 	state.Organization = plan.Organization
 	state.Project = plan.Project
-	readToModel(out, &state)
+	readToModel(fresh, &state)
 
 	tflog.Trace(ctx, "created alert", map[string]any{"id": state.ID.ValueString(), "org": org, "project": prj})
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)

@@ -43,9 +43,10 @@ resource "logfire_alert" "production_alert_execution_failures" {
   time_window = "24h"
   frequency   = "6h"
   watermark   = "30s"
-  channel_ids = []
+  channel_ids = [logfire_channel.my_channel.id]
   notify_when = "has_matches"
   active      = true
+
 }
 
 resource "logfire_channel" "my_channel" {
