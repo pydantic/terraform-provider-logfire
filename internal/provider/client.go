@@ -110,16 +110,17 @@ func (c *APIClient) doJSON(ctx context.Context, method, path string, in any, out
 // ---- Alerts ----
 
 type AlertRead struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	Query       string   `json:"query"`
-	TimeWindow  string   `json:"time_window"`
-	Frequency   string   `json:"frequency"`
-	Watermark   string   `json:"watermark"`
-	ChannelIDs  []string `json:"channel_ids"`
-	NotifyWhen  string   `json:"notify_when"`
-	Active      bool     `json:"active"`
+	ID          string        `json:"id"`
+	Name        string        `json:"name"`
+	Description string        `json:"description"`
+	Query       string        `json:"query"`
+	TimeWindow  string        `json:"time_window"`
+	Frequency   string        `json:"frequency"`
+	Watermark   string        `json:"watermark"`
+	ChannelIDs  []string      `json:"channel_ids"`
+	Channels    []ChannelRead `json:"channels"`
+	NotifyWhen  string        `json:"notify_when"`
+	Active      bool          `json:"active"`
 }
 
 type AlertCreate struct {

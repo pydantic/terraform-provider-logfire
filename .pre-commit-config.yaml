@@ -1,0 +1,61 @@
+# .pre-commit-config.yaml
+# Fast, auto-fixers on commit; heavier checks on push.
+minimum_pre_commit_version: "3.0.0"
+default_stages: [commit]
+
+repos:
+  - repo: local
+    hooks:
+      # --- Commit-time hooks (fast / auto-fix) ---
+      - id: go-fmt
+        name: go fmt (make fmt)
+        entry: make fmt
+        language: system
+        pass_filenames: false
+
+      - id: go-generate
+        name: go generate (make generate)
+        entry: make generate
+        language: system
+        pass_filenames: false
+
+      - id: go-mod-tidy
+        name: go mod tidy
+        entry: bash -c 'go mod tidy && git add go.mod go.sum'
+        language: system
+        pass_filenames: false
+
+      - id: go-vet
+        name: go vet ./...
+        entry: go vet ./...
+        language: system
+        pass_filenames: false
+
+      - id: golangci-lint
+        name: golangci-lint (make lint)
+        entry: make lint
+        language: system
+        pass_filenames: false
+
+      # --- Push-time hooks (heavier) ---
+      - id: go-build
+        name: build on push (make build)
+        entry: make build
+        language: system
+        pass_filenames: false
+        stages: [push]
+
+      - id: go-test
+        name: unit tests on push (make test)
+        entry: make test
+        language: system
+        pass_filenames: false
+        stages: [push]
+
+      # --- Optional: manual acceptance tests (very slow) ---
+      - id: go-testacc
+        name: acceptance tests (make testacc) [manual]
+        entry: make testacc
+        language: system
+        pass_filenames: false
+        stages: [manual]
