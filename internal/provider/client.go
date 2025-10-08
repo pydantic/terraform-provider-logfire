@@ -107,6 +107,67 @@ func (c *APIClient) doJSON(ctx context.Context, method, path string, in any, out
 	return resp, nil
 }
 
+// ---- Projects ----
+
+type ProjectRead struct {
+	ID               string `json:"id"`
+	OrganizationName string `json:"organization_name"`
+	ProjectName      string `json:"project_name"`
+	Description      string `json:"description"`
+}
+
+type ProjectCreate struct {
+	ProjectName string `json:"project_name"`
+	Description string `json:"description"`
+}
+
+type ProjectUpdate struct {
+	ProjectName *string `json:"project_name,omitempty"`
+	Description *string `json:"description,omitempty"`
+}
+
+func (c *APIClient) projectsBase(org string) string {
+	return fmt.Sprintf("api/organizations/%s/projects/", url.PathEscape(org))
+}
+func (c *APIClient) projectPath(org, id string) string {
+	return fmt.Sprintf("%s%s/", c.projectsBase(org), url.PathEscape(id))
+}
+
+func (c *APIClient) CreateProject(ctx context.Context, org string, in ProjectCreate) (*ProjectRead, error) {
+	var out ProjectRead
+	_, err := c.doJSON(ctx, http.MethodPost, c.projectsBase(org), in, &out, http.StatusCreated, http.StatusOK)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *APIClient) GetProject(ctx context.Context, org, id string) (*ProjectRead, int, error) {
+	var out ProjectRead
+	resp, err := c.doJSON(ctx, http.MethodGet, c.projectPath(org, id), nil, &out, http.StatusOK)
+	if err != nil {
+		if resp != nil {
+			return nil, resp.StatusCode, err
+		}
+		return nil, 0, err
+	}
+	return &out, http.StatusOK, nil
+}
+
+func (c *APIClient) UpdateProject(ctx context.Context, org, id string, in ProjectUpdate) (*ProjectRead, error) {
+	var out ProjectRead
+	_, err := c.doJSON(ctx, http.MethodPut, c.projectPath(org, id), in, &out, http.StatusOK)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *APIClient) DeleteProject(ctx context.Context, org, id string) error {
+	_, err := c.doJSON(ctx, http.MethodDelete, c.projectPath(org, id), nil, nil, http.StatusNoContent)
+	return err
+}
+
 // ---- Alerts ----
 
 type AlertRead struct {
@@ -251,65 +312,5 @@ func (c *APIClient) UpdateChannel(ctx context.Context, org, project, id string, 
 
 func (c *APIClient) DeleteChannel(ctx context.Context, org, project, id string) error {
 	_, err := c.doJSON(ctx, http.MethodDelete, c.channelPath(org, project, id), nil, nil, http.StatusNoContent)
-	return err
-}
-
-// ---- Projects ----
-
-type ProjectRead struct {
-	ID          string `json:"id"`
-	ProjectName string `json:"project_name"`
-	Description string `json:"description"`
-}
-
-type ProjectCreate struct {
-	ProjectName string `json:"project_name"`
-	Description string `json:"description"`
-}
-
-type ProjectUpdate struct {
-	ProjectName *string `json:"project_name,omitempty"`
-	Description *string `json:"description,omitempty"`
-}
-
-func (c *APIClient) projectsBase(org string) string {
-	return fmt.Sprintf("api/organizations/%s/projects/", url.PathEscape(org))
-}
-func (c *APIClient) projectPath(org, id string) string {
-	return fmt.Sprintf("%s%s", c.projectsBase(org), url.PathEscape(id))
-}
-
-func (c *APIClient) CreateProject(ctx context.Context, org string, in ProjectCreate) (*ProjectRead, error) {
-	var out ProjectRead
-	_, err := c.doJSON(ctx, http.MethodPost, c.projectsBase(org), in, &out, http.StatusCreated, http.StatusOK)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-func (c *APIClient) GetProject(ctx context.Context, org, id string) (*ProjectRead, int, error) {
-	var out ProjectRead
-	resp, err := c.doJSON(ctx, http.MethodGet, c.projectPath(org, id), nil, &out, http.StatusOK)
-	if err != nil {
-		if resp != nil {
-			return nil, resp.StatusCode, err
-		}
-		return nil, 0, err
-	}
-	return &out, http.StatusOK, nil
-}
-
-func (c *APIClient) UpdateProject(ctx context.Context, org, id string, in ProjectUpdate) (*ProjectRead, error) {
-	var out ProjectRead
-	_, err := c.doJSON(ctx, http.MethodPut, c.projectPath(org, id), in, &out, http.StatusOK)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-func (c *APIClient) DeleteProject(ctx context.Context, org, id string) error {
-	_, err := c.doJSON(ctx, http.MethodDelete, c.projectPath(org, id), nil, nil, http.StatusNoContent)
 	return err
 }

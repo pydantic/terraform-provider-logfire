@@ -18,6 +18,7 @@ import (
 )
 
 var _ resource.Resource = &ProjectResource{}
+var _ resource.ResourceWithConfigure = &ProjectResource{}
 var _ resource.ResourceWithImportState = &ProjectResource{}
 
 func NewProjectResource() resource.Resource { return &ProjectResource{} }
@@ -29,7 +30,7 @@ type ProjectResource struct {
 type ProjectModel struct {
 	ID           types.String `tfsdk:"id"`
 	Organization types.String `tfsdk:"organization"`
-	ProjectName  types.String `tfsdk:"project_name"`
+	Name         types.String `tfsdk:"name"`
 	Description  types.String `tfsdk:"description"`
 }
 
@@ -55,7 +56,7 @@ func (r *ProjectResource) Schema(ctx context.Context, req resource.SchemaRequest
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-			"project_name": rschema.StringAttribute{
+			"name": rschema.StringAttribute{
 				Required:            true,
 				MarkdownDescription: "Project name/slug. Must be unique within the organization.",
 			},
@@ -83,13 +84,14 @@ func (r *ProjectResource) Configure(ctx context.Context, req resource.ConfigureR
 
 func projectReadToModel(p *ProjectRead, m *ProjectModel) {
 	m.ID = types.StringValue(p.ID)
-	m.ProjectName = types.StringValue(p.ProjectName)
+	m.Organization = types.StringValue(p.OrganizationName)
+	m.Name = types.StringValue(p.ProjectName)
 	m.Description = types.StringValue(p.Description)
 }
 
 func projectModelToCreate(m *ProjectModel) ProjectCreate {
 	return ProjectCreate{
-		ProjectName: m.ProjectName.ValueString(),
+		ProjectName: m.Name.ValueString(),
 		Description: m.Description.ValueString(),
 	}
 }
@@ -118,12 +120,13 @@ func (r *ProjectResource) Create(ctx context.Context, req resource.CreateRequest
 	}
 
 	var state ProjectModel
-	// preserve org from plan
-	state.Organization = plan.Organization
 	projectReadToModel(out, &state)
 
 	tflog.Trace(ctx, "created project", map[string]any{"id": state.ID.ValueString(), "org": org})
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 }
 
 func (r *ProjectResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -138,9 +141,7 @@ func (r *ProjectResource) Read(ctx context.Context, req resource.ReadRequest, re
 		return
 	}
 
-	org := state.Organization.ValueString()
-
-	out, status, err := r.client.GetProject(ctx, org, state.ProjectName.ValueString())
+	out, status, err := r.client.GetProject(ctx, state.Organization.ValueString(), state.Name.ValueString())
 	if err != nil {
 		if status == 404 {
 			resp.State.RemoveResource(ctx)
@@ -150,9 +151,7 @@ func (r *ProjectResource) Read(ctx context.Context, req resource.ReadRequest, re
 		return
 	}
 
-	orgVal := state.Organization
 	projectReadToModel(out, &state)
-	state.Organization = orgVal
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -179,12 +178,10 @@ func (r *ProjectResource) Update(ctx context.Context, req resource.UpdateRequest
 		return
 	}
 
-	org := state.Organization.ValueString()
-
 	// Build partial update payload
 	var payload ProjectUpdate
-	if !plan.ProjectName.IsNull() && !plan.ProjectName.IsUnknown() {
-		v := plan.ProjectName.ValueString()
+	if !plan.Name.IsNull() && !plan.Name.IsUnknown() {
+		v := plan.Name.ValueString()
 		payload.ProjectName = &v
 	}
 	if !plan.Description.IsNull() && !plan.Description.IsUnknown() {
@@ -192,14 +189,13 @@ func (r *ProjectResource) Update(ctx context.Context, req resource.UpdateRequest
 		payload.Description = &v
 	}
 
-	out, err := r.client.UpdateProject(ctx, org, state.ProjectName.ValueString(), payload)
+	out, err := r.client.UpdateProject(ctx, state.Organization.ValueString(), state.Name.ValueString(), payload)
 	if err != nil {
 		resp.Diagnostics.AddError("Update project failed", err.Error())
 		return
 	}
 
 	var newState ProjectModel
-	newState.Organization = state.Organization
 	projectReadToModel(out, &newState)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &newState)...)
 }
@@ -216,27 +212,43 @@ func (r *ProjectResource) Delete(ctx context.Context, req resource.DeleteRequest
 		return
 	}
 
-	org := state.Organization.ValueString()
-
-	if err := r.client.DeleteProject(ctx, org, state.ProjectName.ValueString()); err != nil {
+	if err := r.client.DeleteProject(ctx, state.Organization.ValueString(), state.Name.ValueString()); err != nil {
 		// If already gone, treat as successful delete but log warning
 		resp.Diagnostics.AddWarning("Delete project", fmt.Sprintf("delete returned error: %v", err))
 	}
 }
 
 func (r *ProjectResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	// Support "organization/id" (preferred) or just "id" (legacy).
-	parts := strings.Split(req.ID, "/")
-	switch len(parts) {
-	case 2:
-		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("organization"), parts[0])...)
-		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("project_name"), parts[1])...)
-	case 1:
-		resource.ImportStatePassthroughID(ctx, path.Root("project_name"), req, resp)
-	default:
+	if req.ID == "" {
 		resp.Diagnostics.AddError(
-			"Invalid import ID",
-			`Expected "organization/project_name" or "project_name".`,
+			"Missing import ID",
+			`Expected a non-empty ID. Use: terraform import logfire_project.prod "organization/name"`,
 		)
+		return
 	}
+
+	org, name, ok := splitTwo(req.ID)
+	if !ok || org == "" || name == "" {
+		resp.Diagnostics.AddError(
+			"Invalid import ID format",
+			`Expected "organization/name" (also accepts "organization,name" or "organization|name"). Example:
+terraform import logfire_project.prod "acme/prod-logs"`,
+		)
+		return
+	}
+
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("organization"), org)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("name"), name)...)
+
+}
+
+func splitTwo(s string) (string, string, bool) {
+	// Accept a few common separators to be user-friendly
+	seps := []string{"/", ",", "|"}
+	for _, sep := range seps {
+		if parts := strings.SplitN(s, sep, 2); len(parts) == 2 {
+			return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), true
+		}
+	}
+	return "", "", false
 }
