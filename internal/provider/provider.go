@@ -5,7 +5,6 @@ package provider
 
 import (
 	"context"
-	"net/http"
 	"os"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -14,6 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
 
 // Interface assertions.
@@ -45,6 +45,7 @@ func (p *LogfireProvider) Schema(ctx context.Context, req provider.SchemaRequest
 }
 
 func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureRequest, resp *provider.ConfigureResponse) {
+	tflog.Info(ctx, "Configuring Logfire client")
 	var config LogfireProviderModel
 	diags := req.Config.Get(ctx, &config)
 	resp.Diagnostics.Append(diags...)
@@ -66,7 +67,7 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 			path.Root("api_key"),
 			"Unknown Logfire API token",
 			"The provider cannot create the Logfire API client as there is an unknown configuration value for the Logfire API token. "+
-				"Either target apply the source of the value first, set the value statically in the configuration, or use the LOGFIRE_api_key environment variable.",
+				"Either target apply the source of the value first, set the value statically in the configuration, or use the LOGFIRE_API_KEY environment variable.",
 		)
 	}
 
@@ -109,11 +110,11 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 		return
 	}
 
-	httpClient := http.DefaultClient
+	tflog.Debug(ctx, "logfire endpoint", map[string]interface{}{"base_url": base_url})
 	apiClient, err := NewAPIClient(
 		base_url,
 		api_key,
-		httpClient)
+		nil)
 
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid provider configuration", err.Error())
@@ -122,6 +123,7 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 
 	resp.DataSourceData = apiClient
 	resp.ResourceData = apiClient
+	tflog.Info(ctx, "Logfire client configured successfully")
 }
 
 func (p *LogfireProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
