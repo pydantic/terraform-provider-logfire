@@ -21,6 +21,33 @@ type APIClient struct {
 	Token   string
 }
 
+type APIError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *APIError) Error() string {
+	if e.Message != "" {
+		return fmt.Sprintf("API error (status %d): %s", e.StatusCode, e.Message)
+	}
+	return fmt.Sprintf("API error: status %d", e.StatusCode)
+}
+
+func isStatusExpected(statusCode int, expectedStatuses []int) bool {
+	// If no expected statuses provided, accept 2xx
+	if len(expectedStatuses) == 0 {
+		return statusCode >= 200 && statusCode < 300
+	}
+
+	for _, expected := range expectedStatuses {
+		if statusCode == expected {
+			return true
+		}
+	}
+
+	return false
+}
+
 func NewAPIClient(baseURL, token string, httpClient *http.Client) (*APIClient, error) {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
@@ -44,7 +71,7 @@ func (c *APIClient) doJSON(ctx context.Context, method, path string, in any, out
 	if in != nil {
 		b, err := json.Marshal(in)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("marshal request body: %w", err)
 		}
 		body = bytes.NewReader(b)
 	}
@@ -52,7 +79,7 @@ func (c *APIClient) doJSON(ctx context.Context, method, path string, in any, out
 	u := c.BaseURL.ResolveReference(&url.URL{Path: path})
 	req, err := http.NewRequestWithContext(ctx, method, u.String(), body)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create request: %w", err)
 	}
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -64,43 +91,29 @@ func (c *APIClient) doJSON(ctx context.Context, method, path string, in any, out
 
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("execute request: %w", err)
 	}
 
-	// Always drain and close so the connection can be reused.
 	defer func() {
 		if resp != nil && resp.Body != nil {
-			_, _ = io.Copy(io.Discard, resp.Body) // explicitly ignore error
+			_, _ = io.Copy(io.Discard, resp.Body)
 			_ = resp.Body.Close()
 		}
 	}()
 
-	// Check status
-	ok := len(expectedStatus) == 0 // if none provided, treat 2xx as OK below
-	if !ok {
-		for _, s := range expectedStatus {
-			if resp.StatusCode == s {
-				ok = true
-				break
-			}
+	if !isStatusExpected(resp.StatusCode, expectedStatus) {
+		b, _ := io.ReadAll(resp.Body)
+		return resp, &APIError{
+			StatusCode: resp.StatusCode,
+			Message:    string(b),
 		}
-	}
-	if !ok {
-		// If caller didn't supply expected statuses, fall back to 2xx.
-		if len(expectedStatus) == 0 && resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			ok = true
-		}
-	}
-	if !ok {
-		b, _ := io.ReadAll(resp.Body) // best-effort read for error message
-		return resp, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(b))
 	}
 
 	// Decode response if requested
 	if out != nil {
 		dec := json.NewDecoder(resp.Body)
 		if err := dec.Decode(out); err != nil && err != io.EOF {
-			return resp, err
+			return resp, fmt.Errorf("decode response: %w", err)
 		}
 	}
 

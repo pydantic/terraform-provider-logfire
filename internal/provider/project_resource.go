@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	rschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
@@ -63,6 +65,9 @@ func (r *ProjectResource) Schema(ctx context.Context, req resource.SchemaRequest
 			"description": rschema.StringAttribute{
 				Optional:            true,
 				MarkdownDescription: "Project description.",
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
+				},
 			},
 		},
 	}
@@ -86,7 +91,11 @@ func projectReadToModel(p *ProjectRead, m *ProjectModel) {
 	m.ID = types.StringValue(p.ID)
 	m.Organization = types.StringValue(p.OrganizationName)
 	m.Name = types.StringValue(p.ProjectName)
-	m.Description = types.StringValue(p.Description)
+	if p.Description == "" {
+		m.Description = types.StringNull()
+	} else {
+		m.Description = types.StringValue(p.Description)
+	}
 }
 
 func projectModelToCreate(m *ProjectModel) ProjectCreate {
@@ -184,9 +193,14 @@ func (r *ProjectResource) Update(ctx context.Context, req resource.UpdateRequest
 		v := plan.Name.ValueString()
 		payload.ProjectName = &v
 	}
-	if !plan.Description.IsNull() && !plan.Description.IsUnknown() {
+
+	switch {
+	case !plan.Description.IsNull() && !plan.Description.IsUnknown():
 		v := plan.Description.ValueString()
 		payload.Description = &v
+	case plan.Description.IsNull() && !state.Description.IsNull() && !state.Description.IsUnknown():
+		empty := ""
+		payload.Description = &empty
 	}
 
 	out, err := r.client.UpdateProject(ctx, state.Organization.ValueString(), state.Name.ValueString(), payload)
