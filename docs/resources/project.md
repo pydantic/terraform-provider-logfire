@@ -17,8 +17,8 @@ Manages a Logfire project.
 
 ### Required
 
+- `name` (String) Project name/slug. Must be unique within the organization.
 - `organization` (String) Organization name.
-- `project_name` (String) Project name/slug. Must be unique within the organization.
 
 ### Optional
 
