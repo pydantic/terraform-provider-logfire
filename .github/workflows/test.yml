@@ -81,5 +81,7 @@ jobs:
       - run: go mod download
       - env:
           TF_ACC: "1"
+          LOGFIRE_BASE_URL: ${{ secrets.LOGFIRE_BASE_URL }}
+          LOGFIRE_API_KEY: ${{ secrets.LOGFIRE_API_KEY }}
         run: go test -v -cover ./internal/provider/
         timeout-minutes: 10

@@ -6,10 +6,8 @@ package provider
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	stringvalidator "github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
-	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	rschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -20,6 +18,7 @@ import (
 )
 
 var _ resource.Resource = &ChannelResource{}
+var _ resource.ResourceWithConfigure = &ChannelResource{}
 var _ resource.ResourceWithImportState = &ChannelResource{}
 
 func NewChannelResource() resource.Resource { return &ChannelResource{} }
@@ -38,17 +37,17 @@ type ChannelModel struct {
 	ID           types.String        `tfsdk:"id"`
 	Organization types.String        `tfsdk:"organization"`
 	Project      types.String        `tfsdk:"project"`
-	Label        types.String        `tfsdk:"label"`
+	Name         types.String        `tfsdk:"name"`
 	Config       *ChannelConfigModel `tfsdk:"config"`
 }
 
-func (r *ChannelResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
+func (r *ChannelResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_channel"
 }
 
-func (r *ChannelResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+func (r *ChannelResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = rschema.Schema{
-		MarkdownDescription: "Manages a Logfire channel.",
+		MarkdownDescription: "Manages a Logfire alert channel.",
 		Attributes: map[string]rschema.Attribute{
 			"id": rschema.StringAttribute{
 				Computed:            true,
@@ -71,9 +70,9 @@ func (r *ChannelResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-			"label": rschema.StringAttribute{
+			"name": rschema.StringAttribute{
 				Required:            true,
-				MarkdownDescription: "Human-friendly channel label.",
+				MarkdownDescription: "Channel name.",
 			},
 		},
 		Blocks: map[string]rschema.Block{
@@ -104,7 +103,7 @@ func (r *ChannelResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 	}
 }
 
-func (r *ChannelResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
+func (r *ChannelResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	if req.ProviderData == nil {
 		return
 	}
@@ -116,7 +115,7 @@ func (r *ChannelResource) Configure(_ context.Context, req resource.ConfigureReq
 	r.client = c
 }
 
-// ---- Channel Helpers ----
+// --- Helpers ---
 
 func channelModelToCreate(m *ChannelModel) ChannelCreate {
 	cfg := ChannelConfig{
@@ -125,22 +124,22 @@ func channelModelToCreate(m *ChannelModel) ChannelCreate {
 		URL:    m.Config.URL.ValueString(),
 	}
 	return ChannelCreate{
-		Label:  m.Label.ValueString(),
+		Label:  m.Name.ValueString(),
 		Config: cfg,
 	}
 }
 
-func channelReadToModel(in *ChannelRead, out *ChannelModel) {
-	out.ID = types.StringValue(in.ID)
-	out.Label = types.StringValue(in.Label)
-	out.Config = &ChannelConfigModel{
-		Type:   types.StringValue(in.Config.Type),
-		Format: types.StringValue(in.Config.Format),
-		URL:    types.StringValue(in.Config.URL),
+func channelReadToModel(c *ChannelRead, m *ChannelModel) {
+	m.ID = types.StringValue(c.ID)
+	m.Name = types.StringValue(c.Label)
+	m.Config = &ChannelConfigModel{
+		Type:   types.StringValue(c.Config.Type),
+		Format: types.StringValue(c.Config.Format),
+		URL:    types.StringValue(c.Config.URL),
 	}
 }
 
-// ---- CRUD ----
+// --- CRUD ---
 
 func (r *ChannelResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	if r.client == nil {
@@ -156,8 +155,8 @@ func (r *ChannelResource) Create(ctx context.Context, req resource.CreateRequest
 
 	org := plan.Organization.ValueString()
 	prj := plan.Project.ValueString()
-
 	in := channelModelToCreate(&plan)
+
 	out, err := r.client.CreateChannel(ctx, org, prj, in)
 	if err != nil {
 		resp.Diagnostics.AddError("Create channel failed", err.Error())
@@ -188,11 +187,11 @@ func (r *ChannelResource) Read(ctx context.Context, req resource.ReadRequest, re
 
 	org := state.Organization.ValueString()
 	prj := state.Project.ValueString()
+	id := state.ID.ValueString()
 
-	out, status, err := r.client.GetChannel(ctx, org, prj, state.ID.ValueString())
+	out, status, err := r.client.GetChannel(ctx, org, prj, id)
 	if err != nil {
 		if status == 404 {
-			// Removed out-of-band
 			resp.State.RemoveResource(ctx)
 			return
 		}
@@ -220,6 +219,7 @@ func (r *ChannelResource) Update(ctx context.Context, req resource.UpdateRequest
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
 	var state ChannelModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
@@ -232,10 +232,11 @@ func (r *ChannelResource) Update(ctx context.Context, req resource.UpdateRequest
 
 	org := state.Organization.ValueString()
 	prj := state.Project.ValueString()
+	id := state.ID.ValueString()
 
 	var payload ChannelUpdate
-	if !plan.Label.IsNull() && !plan.Label.IsUnknown() {
-		v := plan.Label.ValueString()
+	if !plan.Name.IsNull() && !plan.Name.IsUnknown() {
+		v := plan.Name.ValueString()
 		payload.Label = &v
 	}
 	if plan.Config != nil {
@@ -258,7 +259,7 @@ func (r *ChannelResource) Update(ctx context.Context, req resource.UpdateRequest
 		}
 	}
 
-	out, err := r.client.UpdateChannel(ctx, org, prj, state.ID.ValueString(), payload)
+	out, err := r.client.UpdateChannel(ctx, org, prj, id, payload)
 	if err != nil {
 		resp.Diagnostics.AddError("Update channel failed", err.Error())
 		return
@@ -285,27 +286,22 @@ func (r *ChannelResource) Delete(ctx context.Context, req resource.DeleteRequest
 
 	org := state.Organization.ValueString()
 	prj := state.Project.ValueString()
+	id := state.ID.ValueString()
 
-	if err := r.client.DeleteChannel(ctx, org, prj, state.ID.ValueString()); err != nil {
-		// If already gone or server returns something unexpected, treat as successful delete but warn.
+	if err := r.client.DeleteChannel(ctx, org, prj, id); err != nil {
+		// If already gone, treat as successful delete but log warning
 		resp.Diagnostics.AddWarning("Delete channel", fmt.Sprintf("delete returned error: %v", err))
 	}
 }
 
+// ///// TODO
 func (r *ChannelResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	// Support "organization/project/id" (preferred) or just "id" (legacy).
-	parts := strings.Split(req.ID, "/")
-	switch len(parts) {
-	case 3:
-		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("organization"), parts[0])...)
-		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("project"), parts[1])...)
-		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), parts[2])...)
-	case 1:
-		resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
-	default:
+
+	if req.ID == "" {
 		resp.Diagnostics.AddError(
-			"Invalid import ID",
-			`Expected "organization/project/id" or "id".`,
+			"Missing import ID",
+			`Expected a non-empty ID. Use: terraform import logfire_project.prod "organization/name"`,
 		)
+		return
 	}
 }
