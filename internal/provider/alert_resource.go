@@ -12,7 +12,6 @@ import (
 	"time"
 
 	stringvalidator "github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
-	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	rschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -23,6 +22,7 @@ import (
 )
 
 var _ resource.Resource = &AlertResource{}
+var _ resource.ResourceWithConfigure = &AlertResource{}
 var _ resource.ResourceWithImportState = &AlertResource{}
 
 func NewAlertResource() resource.Resource { return &AlertResource{} }
@@ -141,7 +141,7 @@ func (r *AlertResource) Configure(ctx context.Context, req resource.ConfigureReq
 	r.client = c
 }
 
-// --- helpers ---
+// --- Helpers ---
 
 func durToISO8601(d time.Duration) string {
 	if d < 0 {
@@ -229,7 +229,7 @@ func parseDurationStr(s types.String) (time.Duration, error) {
 	return time.ParseDuration(s.ValueString())
 }
 
-func modelToCreate(m *AlertModel) (AlertCreate, error) {
+func alertModelToCreate(m *AlertModel) (AlertCreate, error) {
 	tw, err := parseDurationStr(m.TimeWindow)
 	if err != nil {
 		return AlertCreate{}, fmt.Errorf("time_window: %w", err)
@@ -259,7 +259,7 @@ func modelToCreate(m *AlertModel) (AlertCreate, error) {
 	}, nil
 }
 
-func readToModel(a *AlertRead, m *AlertModel) {
+func alertReadToModel(a *AlertRead, m *AlertModel) {
 	m.ID = types.StringValue(a.ID)
 	m.Name = types.StringValue(a.Name)
 	m.Description = types.StringValue(a.Description)
@@ -305,8 +305,7 @@ func (r *AlertResource) Create(ctx context.Context, req resource.CreateRequest, 
 
 	org := plan.Organization.ValueString()
 	prj := plan.Project.ValueString()
-
-	in, err := modelToCreate(&plan)
+	in, err := alertModelToCreate(&plan)
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid duration", err.Error())
 		return
@@ -318,16 +317,16 @@ func (r *AlertResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 
-	fresh, _, gerr := r.client.GetAlert(ctx, org, prj, out.ID)
-	if gerr != nil {
-		fresh = out
-	}
+	// fresh, _, gerr := r.client.GetAlert(ctx, org, prj, out.ID)
+	// if gerr != nil {
+	// 	fresh = out
+	// }
 
 	var state AlertModel
 	// Preserve org/project from plan into state
 	state.Organization = plan.Organization
 	state.Project = plan.Project
-	readToModel(fresh, &state)
+	alertReadToModel(out, &state)
 
 	tflog.Trace(ctx, "created alert", map[string]any{"id": state.ID.ValueString(), "org": org, "project": prj})
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -347,11 +346,11 @@ func (r *AlertResource) Read(ctx context.Context, req resource.ReadRequest, resp
 
 	org := state.Organization.ValueString()
 	prj := state.Project.ValueString()
+	id := state.ID.ValueString()
 
-	out, status, err := r.client.GetAlert(ctx, org, prj, state.ID.ValueString())
+	out, status, err := r.client.GetAlert(ctx, org, prj, id)
 	if err != nil {
 		if status == 404 {
-			// Removed out-of-band
 			resp.State.RemoveResource(ctx)
 			return
 		}
@@ -359,11 +358,9 @@ func (r *AlertResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 
-	// keep org/project
 	orgVal := state.Organization
 	prjVal := state.Project
-
-	readToModel(out, &state)
+	alertReadToModel(out, &state)
 	state.Organization = orgVal
 	state.Project = prjVal
 
@@ -394,10 +391,9 @@ func (r *AlertResource) Update(ctx context.Context, req resource.UpdateRequest, 
 
 	org := state.Organization.ValueString()
 	prj := state.Project.ValueString()
+	id := state.ID.ValueString()
 
-	// Build partial update payload
 	var payload AlertUpdate
-
 	if !plan.Name.IsNull() && !plan.Name.IsUnknown() {
 		v := plan.Name.ValueString()
 		payload.Name = &v
@@ -460,18 +456,16 @@ func (r *AlertResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		payload.NotifyWhen = &v
 	}
 
-	out, err := r.client.UpdateAlert(ctx, org, prj, state.ID.ValueString(), payload)
+	out, err := r.client.UpdateAlert(ctx, org, prj, id, payload)
 	if err != nil {
 		resp.Diagnostics.AddError("Update alert failed", err.Error())
 		return
 	}
 
 	var newState AlertModel
-	// keep org/project
 	newState.Organization = state.Organization
 	newState.Project = state.Project
-	readToModel(out, &newState)
-
+	alertReadToModel(out, &newState)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &newState)...)
 }
 
@@ -480,35 +474,30 @@ func (r *AlertResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
 		return
 	}
+
 	var state AlertModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
 	org := state.Organization.ValueString()
 	prj := state.Project.ValueString()
+	id := state.ID.ValueString()
 
-	if err := r.client.DeleteAlert(ctx, org, prj, state.ID.ValueString()); err != nil {
+	if err := r.client.DeleteAlert(ctx, org, prj, id); err != nil {
 		// If already gone, treat as successful delete but surface info.
 		resp.Diagnostics.AddWarning("Delete alert", fmt.Sprintf("delete returned error: %v", err))
 	}
 }
 
+// ///// TODO
 func (r *AlertResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	// Support "organization/project/id" (preferred) or just "id" (legacy).
-	parts := strings.Split(req.ID, "/")
-	switch len(parts) {
-	case 3:
-		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("organization"), parts[0])...)
-		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("project"), parts[1])...)
-		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), parts[2])...)
-	case 1:
-		// Only ID provided – user must already have org/project in config/state.
-		resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
-	default:
+	if req.ID == "" {
 		resp.Diagnostics.AddError(
-			"Invalid import ID",
-			`Expected "organization/project/id" or "id".`,
+			"Missing import ID",
+			`Expected a non-empty ID. Use: terraform import logfire_project.prod "organization/name"`,
 		)
+		return
 	}
 }

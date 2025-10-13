@@ -57,10 +57,16 @@ func (r *ProjectResource) Schema(ctx context.Context, req resource.SchemaRequest
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(2),
+				},
 			},
 			"name": rschema.StringAttribute{
 				Required:            true,
 				MarkdownDescription: "Project name/slug. Must be unique within the organization.",
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(2),
+				},
 			},
 			"description": rschema.StringAttribute{
 				Optional:            true,
@@ -85,7 +91,14 @@ func (r *ProjectResource) Configure(ctx context.Context, req resource.ConfigureR
 	r.client = c
 }
 
-// --- helpers ---
+// --- Helpers ---
+
+func projectModelToCreate(m *ProjectModel) ProjectCreate {
+	return ProjectCreate{
+		ProjectName: m.Name.ValueString(),
+		Description: m.Description.ValueString(),
+	}
+}
 
 func projectReadToModel(p *ProjectRead, m *ProjectModel) {
 	m.ID = types.StringValue(p.ID)
@@ -95,13 +108,6 @@ func projectReadToModel(p *ProjectRead, m *ProjectModel) {
 		m.Description = types.StringNull()
 	} else {
 		m.Description = types.StringValue(p.Description)
-	}
-}
-
-func projectModelToCreate(m *ProjectModel) ProjectCreate {
-	return ProjectCreate{
-		ProjectName: m.Name.ValueString(),
-		Description: m.Description.ValueString(),
 	}
 }
 
@@ -133,9 +139,6 @@ func (r *ProjectResource) Create(ctx context.Context, req resource.CreateRequest
 
 	tflog.Trace(ctx, "created project", map[string]any{"id": state.ID.ValueString(), "org": org})
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
 }
 
 func (r *ProjectResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -150,7 +153,10 @@ func (r *ProjectResource) Read(ctx context.Context, req resource.ReadRequest, re
 		return
 	}
 
-	out, status, err := r.client.GetProject(ctx, state.Organization.ValueString(), state.Name.ValueString())
+	org := state.Organization.ValueString()
+	name := state.Name.ValueString()
+
+	out, status, err := r.client.GetProject(ctx, org, name)
 	if err != nil {
 		if status == 404 {
 			resp.State.RemoveResource(ctx)
@@ -187,6 +193,9 @@ func (r *ProjectResource) Update(ctx context.Context, req resource.UpdateRequest
 		return
 	}
 
+	org := state.Organization.ValueString()
+	name := state.Name.ValueString()
+
 	// Build partial update payload
 	var payload ProjectUpdate
 	if !plan.Name.IsNull() && !plan.Name.IsUnknown() {
@@ -203,7 +212,7 @@ func (r *ProjectResource) Update(ctx context.Context, req resource.UpdateRequest
 		payload.Description = &empty
 	}
 
-	out, err := r.client.UpdateProject(ctx, state.Organization.ValueString(), state.Name.ValueString(), payload)
+	out, err := r.client.UpdateProject(ctx, org, name, payload)
 	if err != nil {
 		resp.Diagnostics.AddError("Update project failed", err.Error())
 		return
@@ -226,7 +235,10 @@ func (r *ProjectResource) Delete(ctx context.Context, req resource.DeleteRequest
 		return
 	}
 
-	if err := r.client.DeleteProject(ctx, state.Organization.ValueString(), state.Name.ValueString()); err != nil {
+	org := state.Organization.ValueString()
+	name := state.Name.ValueString()
+
+	if err := r.client.DeleteProject(ctx, org, name); err != nil {
 		// If already gone, treat as successful delete but log warning
 		resp.Diagnostics.AddWarning("Delete project", fmt.Sprintf("delete returned error: %v", err))
 	}
