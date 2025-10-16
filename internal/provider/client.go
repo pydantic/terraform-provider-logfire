@@ -191,7 +191,6 @@ type AlertRead struct {
 	TimeWindow  string        `json:"time_window"`
 	Frequency   string        `json:"frequency"`
 	Watermark   string        `json:"watermark"`
-	ChannelIDs  []string      `json:"channel_ids"`
 	Channels    []ChannelRead `json:"channels"`
 	NotifyWhen  string        `json:"notify_when"`
 	Active      bool          `json:"active"`
