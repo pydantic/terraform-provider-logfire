@@ -4,6 +4,7 @@
 package provider
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
@@ -28,4 +29,16 @@ func testAccPreCheck(t *testing.T) {
 	if v := os.Getenv("LOGFIRE_API_KEY"); v == "" {
 		t.Fatalf("LOGFIRE_API_KEY must be set for acceptance tests")
 	}
+}
+
+// testAccProviderConfig builds the provider config from env.
+func testAccProviderConfig() string {
+	base := os.Getenv("LOGFIRE_BASE_URL")
+	key := os.Getenv("LOGFIRE_API_KEY")
+	return fmt.Sprintf(`
+provider "logfire" {
+  base_url = %q
+  api_key  = %q
+}
+`, base, key)
 }

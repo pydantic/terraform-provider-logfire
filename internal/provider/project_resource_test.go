@@ -5,7 +5,6 @@ package provider
 
 import (
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/acctest"
@@ -89,21 +88,6 @@ func TestAccProjectResource(t *testing.T) {
 	})
 }
 
-// --- helpers ---
-
-// testAccProviderConfig builds the provider stanza from env.
-func testAccProviderConfig() string {
-	base := os.Getenv("LOGFIRE_BASE_URL")
-	key := os.Getenv("LOGFIRE_API_KEY")
-	return fmt.Sprintf(`
-provider "logfire" {
-  base_url = %q
-  api_key  = %q
-}
-`, base, key)
-}
-
-// testAccProjectResourceConfig builds the resource config.
 // If desc is nil, we render description = null to test clearing values.
 func testAccProjectResourceConfig(name, desc string) string {
 	descLine := ""

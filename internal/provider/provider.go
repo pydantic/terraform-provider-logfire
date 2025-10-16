@@ -101,7 +101,7 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 			path.Root("api_key"),
 			"Missing Logfire API Api Key",
 			"The provider cannot create the Logfire API client as there is a missing or empty value for the Logfire API Api Key. "+
-				"Set the api_key value in the configuration or use the LOGFIRE_api_key environment variable. "+
+				"Set the api_key value in the configuration or use the LOGFIRE_API_KEY environment variable. "+
 				"If either is already set, ensure the value is not empty.",
 		)
 	}
