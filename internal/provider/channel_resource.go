@@ -6,8 +6,10 @@ package provider
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	stringvalidator "github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	rschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -294,14 +296,27 @@ func (r *ChannelResource) Delete(ctx context.Context, req resource.DeleteRequest
 	}
 }
 
-// ///// TODO
 func (r *ChannelResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-
 	if req.ID == "" {
 		resp.Diagnostics.AddError(
 			"Missing import ID",
-			`Expected a non-empty ID. Use: terraform import logfire_project.prod "organization/name"`,
+			`Expected a non-empty ID. Use: terraform import logfire_channel.prod "organization/project/id"`,
 		)
 		return
+	}
+
+	parts := strings.Split(req.ID, "/")
+	switch len(parts) {
+	case 3:
+		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("organization"), parts[0])...)
+		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("project"), parts[1])...)
+		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), parts[2])...)
+	case 1:
+		resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	default:
+		resp.Diagnostics.AddError(
+			"Invalid import ID",
+			`Expected "organization/project/id" or "id".`,
+		)
 	}
 }
