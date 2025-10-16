@@ -12,6 +12,8 @@ import (
 	"time"
 
 	stringvalidator "github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	rschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -32,18 +34,18 @@ type AlertResource struct {
 }
 
 type AlertModel struct {
-	ID           types.String   `tfsdk:"id"`
-	Organization types.String   `tfsdk:"organization"`
-	Project      types.String   `tfsdk:"project"`
-	Name         types.String   `tfsdk:"name"`
-	Description  types.String   `tfsdk:"description"`
-	Query        types.String   `tfsdk:"query"`
-	TimeWindow   types.String   `tfsdk:"time_window"`
-	Frequency    types.String   `tfsdk:"frequency"`
-	Watermark    types.String   `tfsdk:"watermark"`
-	ChannelIDs   []types.String `tfsdk:"channel_ids"`
-	NotifyWhen   types.String   `tfsdk:"notify_when"`
-	Active       types.Bool     `tfsdk:"active"`
+	ID           types.String `tfsdk:"id"`
+	Organization types.String `tfsdk:"organization"`
+	Project      types.String `tfsdk:"project"`
+	Name         types.String `tfsdk:"name"`
+	Description  types.String `tfsdk:"description"`
+	Query        types.String `tfsdk:"query"`
+	TimeWindow   types.String `tfsdk:"time_window"`
+	Frequency    types.String `tfsdk:"frequency"`
+	Watermark    types.String `tfsdk:"watermark"`
+	ChannelIDs   types.Set    `tfsdk:"channel_ids"`
+	NotifyWhen   types.String `tfsdk:"notify_when"`
+	Active       types.Bool   `tfsdk:"active"`
 }
 
 func (r *AlertResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -105,13 +107,16 @@ func (r *AlertResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 				},
 			},
 			"watermark": rschema.StringAttribute{
-				Required:            true,
-				MarkdownDescription: "Watermark (lateness tolerance) as Go duration.",
+				Computed:            true,
+				MarkdownDescription: "Provider-managed watermark (lateness tolerance) sent to the API.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
-			"channel_ids": rschema.ListAttribute{
+			"channel_ids": rschema.SetAttribute{
 				ElementType:         types.StringType,
 				Required:            true,
-				MarkdownDescription: "List of channel IDs to notify.",
+				MarkdownDescription: "Set of channel IDs to notify.",
 			},
 			"notify_when": rschema.StringAttribute{
 				Required:            true,
@@ -224,28 +229,27 @@ func durationCompact(d time.Duration) string {
 	return out
 }
 
+const defaultAlertWatermark = 10 * time.Second
+
 func parseDurationStr(s types.String) (time.Duration, error) {
 	// Interpret as Go duration string (e.g. "5m30s")
 	return time.ParseDuration(s.ValueString())
 }
 
-func alertModelToCreate(m *AlertModel) (AlertCreate, error) {
+func alertModelToCreate(ctx context.Context, m *AlertModel) (AlertCreate, diag.Diagnostics) {
 	tw, err := parseDurationStr(m.TimeWindow)
 	if err != nil {
-		return AlertCreate{}, fmt.Errorf("time_window: %w", err)
+		return AlertCreate{}, diag.Diagnostics{diag.NewErrorDiagnostic("Invalid duration", fmt.Sprintf("time_window: %v", err))}
 	}
 	fr, err := parseDurationStr(m.Frequency)
 	if err != nil {
-		return AlertCreate{}, fmt.Errorf("frequency: %w", err)
+		return AlertCreate{}, diag.Diagnostics{diag.NewErrorDiagnostic("Invalid duration", fmt.Sprintf("frequency: %v", err))}
 	}
-	wm, err := parseDurationStr(m.Watermark)
-	if err != nil {
-		return AlertCreate{}, fmt.Errorf("watermark: %w", err)
-	}
-
-	ch := make([]string, 0, len(m.ChannelIDs))
-	for _, v := range m.ChannelIDs {
-		ch = append(ch, v.ValueString())
+	var ch []string
+	if !m.ChannelIDs.IsNull() && !m.ChannelIDs.IsUnknown() {
+		if diags := m.ChannelIDs.ElementsAs(ctx, &ch, false); diags.HasError() {
+			return AlertCreate{}, diags
+		}
 	}
 	return AlertCreate{
 		Name:        m.Name.ValueString(),
@@ -253,13 +257,13 @@ func alertModelToCreate(m *AlertModel) (AlertCreate, error) {
 		Query:       m.Query.ValueString(),
 		TimeWindow:  durToISO8601(tw),
 		Frequency:   durToISO8601(fr),
-		Watermark:   durToISO8601(wm),
+		Watermark:   durToISO8601(defaultAlertWatermark),
 		ChannelIDs:  ch,
 		NotifyWhen:  m.NotifyWhen.ValueString(),
 	}, nil
 }
 
-func alertReadToModel(a *AlertRead, m *AlertModel) {
+func alertReadToModel(ctx context.Context, a *AlertRead, m *AlertModel) diag.Diagnostics {
 	m.ID = types.StringValue(a.ID)
 	m.Name = types.StringValue(a.Name)
 	m.Description = types.StringValue(a.Description)
@@ -281,12 +285,18 @@ func alertReadToModel(a *AlertRead, m *AlertModel) {
 		m.Watermark = types.StringValue("")
 	}
 
-	m.ChannelIDs = make([]types.String, 0, len(a.Channels))
+	ch := make([]string, 0, len(a.Channels))
 	for _, channel := range a.Channels {
-		m.ChannelIDs = append(m.ChannelIDs, types.StringValue(channel.ID))
+		ch = append(ch, channel.ID)
 	}
+	set, diags := types.SetValueFrom(ctx, types.StringType, ch)
+	if diags.HasError() {
+		return diags
+	}
+	m.ChannelIDs = set
 	m.NotifyWhen = types.StringValue(a.NotifyWhen)
 	m.Active = types.BoolValue(a.Active)
+	return nil
 }
 
 // --- CRUD ---
@@ -305,9 +315,9 @@ func (r *AlertResource) Create(ctx context.Context, req resource.CreateRequest, 
 
 	org := plan.Organization.ValueString()
 	prj := plan.Project.ValueString()
-	in, err := alertModelToCreate(&plan)
-	if err != nil {
-		resp.Diagnostics.AddError("Invalid duration", err.Error())
+	in, diags := alertModelToCreate(ctx, &plan)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
 		return
 	}
 
@@ -317,16 +327,20 @@ func (r *AlertResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 
-	// fresh, _, gerr := r.client.GetAlert(ctx, org, prj, out.ID)
-	// if gerr != nil {
-	// 	fresh = out
-	// }
+	// Refetch alert to populate channel IDs.
+	fresh, _, gerr := r.client.GetAlert(ctx, org, prj, out.ID)
+	if gerr != nil {
+		fresh = out
+	}
 
 	var state AlertModel
 	// Preserve org/project from plan into state
 	state.Organization = plan.Organization
 	state.Project = plan.Project
-	alertReadToModel(out, &state)
+	if diags := alertReadToModel(ctx, fresh, &state); diags.HasError() {
+		resp.Diagnostics.Append(diags...)
+		return
+	}
 
 	tflog.Trace(ctx, "created alert", map[string]any{"id": state.ID.ValueString(), "org": org, "project": prj})
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -360,7 +374,10 @@ func (r *AlertResource) Read(ctx context.Context, req resource.ReadRequest, resp
 
 	orgVal := state.Organization
 	prjVal := state.Project
-	alertReadToModel(out, &state)
+	if diags := alertReadToModel(ctx, out, &state); diags.HasError() {
+		resp.Diagnostics.Append(diags...)
+		return
+	}
 	state.Organization = orgVal
 	state.Project = prjVal
 
@@ -430,23 +447,12 @@ func (r *AlertResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		payload.Frequency = &v
 	}
 
-	if !plan.Watermark.IsNull() && !plan.Watermark.IsUnknown() {
-		d, err := parseDurationStr(plan.Watermark)
-		if err != nil {
-			resp.Diagnostics.AddError("Invalid watermark", err.Error())
+	// For sets, send only when we actually have values in the plan.
+	if !plan.ChannelIDs.IsNull() && !plan.ChannelIDs.IsUnknown() {
+		var ids []string
+		if diags := plan.ChannelIDs.ElementsAs(ctx, &ids, false); diags.HasError() {
+			resp.Diagnostics.Append(diags...)
 			return
-		}
-		v := durToISO8601(d)
-		payload.Watermark = &v
-	}
-
-	// For lists, send only when we actually have values in the plan.
-	if plan.ChannelIDs != nil {
-		ids := make([]string, 0, len(plan.ChannelIDs))
-		for _, cid := range plan.ChannelIDs {
-			if !cid.IsNull() && !cid.IsUnknown() {
-				ids = append(ids, cid.ValueString())
-			}
 		}
 		payload.ChannelIDs = &ids
 	}
@@ -465,7 +471,10 @@ func (r *AlertResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	var newState AlertModel
 	newState.Organization = state.Organization
 	newState.Project = state.Project
-	alertReadToModel(out, &newState)
+	if diags := alertReadToModel(ctx, out, &newState); diags.HasError() {
+		resp.Diagnostics.Append(diags...)
+		return
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &newState)...)
 }
 
@@ -486,18 +495,32 @@ func (r *AlertResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 	id := state.ID.ValueString()
 
 	if err := r.client.DeleteAlert(ctx, org, prj, id); err != nil {
-		// If already gone, treat as successful delete but surface info.
+		// If already gone, treat as successful delete but log warning
 		resp.Diagnostics.AddWarning("Delete alert", fmt.Sprintf("delete returned error: %v", err))
 	}
 }
 
-// ///// TODO
 func (r *AlertResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	if req.ID == "" {
 		resp.Diagnostics.AddError(
 			"Missing import ID",
-			`Expected a non-empty ID. Use: terraform import logfire_project.prod "organization/name"`,
+			`Expected a non-empty ID. Use: terraform import logfire_alert.prod "organization/project/id"`,
 		)
 		return
+	}
+
+	parts := strings.Split(req.ID, "/")
+	switch len(parts) {
+	case 3:
+		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("organization"), parts[0])...)
+		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("project"), parts[1])...)
+		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), parts[2])...)
+	case 1:
+		resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	default:
+		resp.Diagnostics.AddError(
+			"Invalid import ID",
+			`Expected "organization/project/id" or "id".`,
+		)
 	}
 }

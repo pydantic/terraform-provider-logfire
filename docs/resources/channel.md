@@ -3,12 +3,12 @@
 page_title: "logfire_channel Resource - logfire"
 subcategory: ""
 description: |-
-  Manages a Logfire channel.
+  Manages a Logfire alert channel.
 ---
 
 # logfire_channel (Resource)
 
-Manages a Logfire channel.
+Manages a Logfire alert channel.
 
 
 
@@ -17,7 +17,7 @@ Manages a Logfire channel.
 
 ### Required
 
-- `label` (String) Human-friendly channel label.
+- `name` (String) Channel name.
 - `organization` (String) Organization name.
 - `project` (String) Project name.
 
