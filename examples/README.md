@@ -1,5 +1,26 @@
 # Examples
 
-This directory contains examples that are mostly used for documentation, but can also be run/tested manually via the Terraform CLI.
+This directory contains an example on how to setup the logfire provider and create some resources.
 
-The document generation tool looks for files in the following locations by default. All other *.tf files besides the ones mentioned below are ignored by the documentation tool. This is useful for creating examples that can run and/or are testable even if some parts are not relevant for the documentation.
+## Prerequisites
+
+- Terraform CLI `>= 1.5`
+- A [Logfire account](https://pydantic.dev/logfire) and API key
+
+
+## Running the example
+
+Make sure to update the ```api_key``` and ```base_url``` with your account specific values
+```bash
+cd examples
+terraform init
+terraform apply
+```
+
+## Cleanup
+
+Destroy the resources when you finish experimenting:
+
+```bash
+terraform destroy
+```
