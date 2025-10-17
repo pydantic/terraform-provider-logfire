@@ -38,8 +38,15 @@ func (p *LogfireProvider) Metadata(ctx context.Context, req provider.MetadataReq
 func (p *LogfireProvider) Schema(ctx context.Context, req provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Attributes: map[string]schema.Attribute{
-			"base_url": schema.StringAttribute{Required: true, MarkdownDescription: "Base URL for Logfire API."},
-			"api_key":  schema.StringAttribute{Optional: true, Sensitive: true, MarkdownDescription: "Bearer token."},
+			"base_url": schema.StringAttribute{
+				Optional:            true,
+				MarkdownDescription: "Base URL for Logfire API. If omitted, the LOGFIRE_BASE_URL environment variable is used.",
+			},
+			"api_key": schema.StringAttribute{
+				Optional:            true,
+				Sensitive:           true,
+				MarkdownDescription: "Bearer token.",
+			},
 		},
 	}
 }
