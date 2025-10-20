@@ -11,7 +11,7 @@ terraform {
 #   export LOGFIRE_API_KEY="pylf_v1_..."
 provider "logfire" {
   base_url = "https://logfire-us.pydantic.dev"
-  api_key  = "pylf_v1_..."
+#  api_key  = "pylf_v1_..."
 }
 
 variable "organization" {
@@ -57,4 +57,28 @@ resource "logfire_alert" "production_alert_execution_failures" {
   channel_ids = [logfire_channel.alerts_webhook.id]
   notify_when = "has_matches"
   active      = true
+}
+
+resource "logfire_dashboard" "application_overview" {
+  organization = var.organization
+  project      = logfire_project.production.name
+  name         = "Application Overview"
+  slug         = "application-overview"
+
+  definition = jsonencode({
+    kind = "Dashboard"
+    metadata = {
+      name    = "Application Overview"
+      project = logfire_project.production.name
+    }
+    spec = {
+      display         = null
+      datasources     = {}
+      variables       = []
+      panels          = {}
+      layouts         = []
+      duration        = "1h"
+      refreshInterval = "0s"
+    }
+  })
 }

@@ -326,3 +326,74 @@ func (c *APIClient) DeleteChannel(ctx context.Context, org, project, id string) 
 	_, err := c.doJSON(ctx, http.MethodDelete, c.channelPath(org, project, id), nil, nil, http.StatusNoContent)
 	return err
 }
+
+// ---- Dashboards ----
+
+type DashboardCreateRequest struct {
+	Name       string          `json:"name"`
+	Slug       string          `json:"slug"`
+	Definition json.RawMessage `json:"definition"`
+}
+
+type DashboardUpdateRequest struct {
+	Name       *string          `json:"name,omitempty"`
+	Definition *json.RawMessage `json:"definition,omitempty"`
+}
+
+type Dashboard struct {
+	ID            string          `json:"id"`
+	ProjectID     string          `json:"project_id"`
+	CreatedAt     string          `json:"created_at"`
+	UpdatedAt     *string         `json:"updated_at"`
+	CreatedByName *string         `json:"created_by_name"`
+	UpdatedByName *string         `json:"updated_by_name"`
+	DashboardName string          `json:"dashboard_name"`
+	DashboardSlug string          `json:"dashboard_slug"`
+	Definition    json.RawMessage `json:"definition"`
+}
+
+type GetDashboardResponse struct {
+	Dashboard json.RawMessage `json:"dashboard"`
+}
+
+func (c *APIClient) dashboardsBase(org, project string) string {
+	return fmt.Sprintf("api/organizations/%s/projects/%s/dashboards/", url.PathEscape(org), url.PathEscape(project))
+}
+func (c *APIClient) dashboardPath(org, project, slug string) string {
+	return fmt.Sprintf("%s%s/", c.dashboardsBase(org, project), url.PathEscape(slug))
+}
+
+func (c *APIClient) CreateDashboard(ctx context.Context, org, project string, in DashboardCreateRequest) (*Dashboard, error) {
+	var out Dashboard
+	_, err := c.doJSON(ctx, http.MethodPost, c.dashboardsBase(org, project), in, &out, http.StatusCreated, http.StatusOK)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *APIClient) GetDashboard(ctx context.Context, org, project, slug string) (*GetDashboardResponse, int, error) {
+	var out GetDashboardResponse
+	resp, err := c.doJSON(ctx, http.MethodGet, c.dashboardPath(org, project, slug), nil, &out, http.StatusOK)
+	if err != nil {
+		if resp != nil {
+			return nil, resp.StatusCode, err
+		}
+		return nil, 0, err
+	}
+	return &out, http.StatusOK, nil
+}
+
+func (c *APIClient) UpdateDashboard(ctx context.Context, org, project, slug string, in DashboardUpdateRequest) (*Dashboard, error) {
+	var out Dashboard
+	_, err := c.doJSON(ctx, http.MethodPut, c.dashboardPath(org, project, slug), in, &out, http.StatusOK)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *APIClient) DeleteDashboard(ctx context.Context, org, project, slug string) error {
+	_, err := c.doJSON(ctx, http.MethodDelete, c.dashboardPath(org, project, slug), nil, nil, http.StatusNoContent)
+	return err
+}
