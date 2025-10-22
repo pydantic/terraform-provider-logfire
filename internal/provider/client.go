@@ -140,7 +140,7 @@ type ProjectUpdate struct {
 }
 
 func (c *APIClient) projectsBase(org string) string {
-	return fmt.Sprintf("api/organizations/%s/projects/", url.PathEscape(org))
+	return fmt.Sprintf("ui-api/organizations/%s/projects/", url.PathEscape(org))
 }
 func (c *APIClient) projectPath(org, id string) string {
 	return fmt.Sprintf("%s%s/", c.projectsBase(org), url.PathEscape(id))
@@ -220,7 +220,7 @@ type AlertUpdate struct {
 }
 
 func (c *APIClient) alertsBase(org, project string) string {
-	return fmt.Sprintf("api/organizations/%s/projects/%s/alerts/", url.PathEscape(org), url.PathEscape(project))
+	return fmt.Sprintf("ui-api/organizations/%s/projects/%s/alerts/", url.PathEscape(org), url.PathEscape(project))
 }
 func (c *APIClient) alertPath(org, project, id string) string {
 	return fmt.Sprintf("%s%s/", c.alertsBase(org, project), url.PathEscape(id))
@@ -286,7 +286,7 @@ type ChannelUpdate struct {
 }
 
 func (c *APIClient) channelsBase(org, project string) string {
-	return fmt.Sprintf("api/organizations/%s/projects/%s/channels/", url.PathEscape(org), url.PathEscape(project))
+	return fmt.Sprintf("ui-api/organizations/%s/projects/%s/channels/", url.PathEscape(org), url.PathEscape(project))
 }
 func (c *APIClient) channelPath(org, project, id string) string {
 	return fmt.Sprintf("%s%s/", c.channelsBase(org, project), url.PathEscape(id))
@@ -357,7 +357,7 @@ type GetDashboardResponse struct {
 }
 
 func (c *APIClient) dashboardsBase(org, project string) string {
-	return fmt.Sprintf("api/organizations/%s/projects/%s/dashboards/", url.PathEscape(org), url.PathEscape(project))
+	return fmt.Sprintf("ui-api/organizations/%s/projects/%s/dashboards/", url.PathEscape(org), url.PathEscape(project))
 }
 func (c *APIClient) dashboardPath(org, project, slug string) string {
 	return fmt.Sprintf("%s%s/", c.dashboardsBase(org, project), url.PathEscape(slug))
