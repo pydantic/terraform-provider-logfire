@@ -11,7 +11,7 @@ terraform {
 #   export LOGFIRE_API_KEY="pylf_v1_..."
 provider "logfire" {
   base_url = "https://logfire-us.pydantic.dev"
-  api_key  = "pylf_v1_..."
+  #  api_key  = "pylf_v1_..."
 }
 
 variable "organization" {
@@ -57,4 +57,15 @@ resource "logfire_alert" "production_alert_execution_failures" {
   channel_ids = [logfire_channel.alerts_webhook.id]
   notify_when = "has_matches"
   active      = true
+}
+
+resource "logfire_dashboard" "test_dashboard" {
+  organization = var.organization
+  project      = logfire_project.production.name
+  name         = "my dashboard"
+  slug         = "my-dashboard"
+
+  # Export the dashboard JSON from the UI, save it beside this example, and load it directly.
+  # The metadata.name and metadata.project inside the JSON will be replaced with the value from the `name` and `project` attributes above.
+  definition = file("${path.module}/example.json")
 }

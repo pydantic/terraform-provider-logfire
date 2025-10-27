@@ -327,6 +327,50 @@ func (c *APIClient) DeleteChannel(ctx context.Context, org, project, id string) 
 	return err
 }
 
+// ---- Write Tokens ----
+
+type WriteToken struct {
+	ID          string  `json:"id"`
+	ProjectID   string  `json:"project_id"`
+	CreatedAt   string  `json:"created_at"`
+	Description *string `json:"description"`
+	Token       *string `json:"token,omitempty"`
+}
+
+type WriteTokenCreate struct {
+	Description *string `json:"description,omitempty"`
+}
+
+func (c *APIClient) writeTokensBase(projectID string) string {
+	return fmt.Sprintf("api/v1/projects/%s/write-tokens/", url.PathEscape(projectID))
+}
+func (c *APIClient) writeTokenPath(projectID, tokenID string) string {
+	return fmt.Sprintf("%s%s/", c.writeTokensBase(projectID), url.PathEscape(tokenID))
+}
+
+func (c *APIClient) CreateWriteToken(ctx context.Context, projectID string, in WriteTokenCreate) (*WriteToken, error) {
+	var out WriteToken
+	_, err := c.doJSON(ctx, http.MethodPost, c.writeTokensBase(projectID), in, &out, http.StatusOK)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *APIClient) ListWriteTokens(ctx context.Context, projectID string) ([]WriteToken, error) {
+	var out []WriteToken
+	_, err := c.doJSON(ctx, http.MethodGet, c.writeTokensBase(projectID), nil, &out, http.StatusOK)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *APIClient) DeleteWriteToken(ctx context.Context, projectID, tokenID string) error {
+	_, err := c.doJSON(ctx, http.MethodDelete, c.writeTokenPath(projectID, tokenID), nil, nil, http.StatusNoContent)
+	return err
+}
+
 // ---- Dashboards ----
 
 type DashboardCreateRequest struct {

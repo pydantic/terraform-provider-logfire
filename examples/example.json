@@ -1,0 +1,201 @@
+{
+  "kind": "Dashboard",
+  "metadata": {
+    "name": "my dashboard",
+    "createdAt": "2025-10-24T14:27:43.800287Z",
+    "updatedAt": "2025-10-24T15:01:34.061990Z",
+    "version": 0,
+    "project": "production"
+  },
+  "spec": {
+    "display": {
+      "name": "my dashboard",
+      "description": null
+    },
+    "panels": {
+      "asd": {
+        "kind": "Panel",
+        "spec": {
+          "display": {
+            "name": "asd"
+          },
+          "plugin": {
+            "kind": "TimeSeriesChart",
+            "spec": {
+              "legend": {
+                "position": "bottom"
+              },
+              "visual": {
+                "connectNulls": true
+              }
+            }
+          },
+          "queries": [
+            {
+              "kind": "TimeSeriesQuery",
+              "spec": {
+                "plugin": {
+                  "kind": "LogfireTimeSeriesQuery",
+                  "spec": {
+                    "query": "SELECT\n  time_bucket($resolution, start_timestamp) AS x,\n  count(1) as count\nFROM records\nGROUP BY x;"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "asdasd": {
+        "kind": "Panel",
+        "spec": {
+          "display": {
+            "name": "asdasd"
+          },
+          "plugin": {
+            "kind": "TimeSeriesChart",
+            "spec": {
+              "legend": {
+                "position": "bottom"
+              },
+              "visual": {
+                "connectNulls": true
+              }
+            }
+          },
+          "queries": [
+            {
+              "kind": "TimeSeriesQuery",
+              "spec": {
+                "plugin": {
+                  "kind": "LogfireTimeSeriesQuery",
+                  "spec": {
+                    "query": "SELECT\n  time_bucket($resolution, start_timestamp) AS x,\n  count(1) as count\nFROM records\nGROUP BY x;"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "asdasd-1": {
+        "kind": "Panel",
+        "spec": {
+          "display": {
+            "name": "asdasd"
+          },
+          "plugin": {
+            "kind": "TimeSeriesChart",
+            "spec": {
+              "legend": {
+                "position": "bottom"
+              },
+              "visual": {
+                "connectNulls": true
+              }
+            }
+          },
+          "queries": [
+            {
+              "kind": "TimeSeriesQuery",
+              "spec": {
+                "plugin": {
+                  "kind": "LogfireTimeSeriesQuery",
+                  "spec": {
+                    "query": "SELECT\n  time_bucket($resolution, start_timestamp) AS x,\n  count(1) as count\nFROM records\nGROUP BY x;"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "aaaa": {
+        "kind": "Panel",
+        "spec": {
+          "display": {
+            "name": "aaaa"
+          },
+          "plugin": {
+            "kind": "TimeSeriesChart",
+            "spec": {
+              "legend": {
+                "position": "bottom"
+              },
+              "visual": {
+                "connectNulls": true
+              }
+            }
+          },
+          "queries": [
+            {
+              "kind": "TimeSeriesQuery",
+              "spec": {
+                "plugin": {
+                  "kind": "LogfireTimeSeriesQuery",
+                  "spec": {
+                    "query": "SELECT\n  time_bucket($resolution, start_timestamp) AS x,\n  count(1) as count\nFROM records\nGROUP BY x;"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "layouts": [
+      {
+        "kind": "Grid",
+        "spec": {
+          "display": {
+            "title": "Panel Group",
+            "collapse": {
+              "open": true
+            }
+          },
+          "items": [
+            {
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "content": {
+                "$ref": "#/spec/panels/asd"
+              }
+            },
+            {
+              "x": 0,
+              "y": 6,
+              "width": 12,
+              "height": 6,
+              "content": {
+                "$ref": "#/spec/panels/asdasd"
+              }
+            },
+            {
+              "x": 0,
+              "y": 12,
+              "width": 12,
+              "height": 6,
+              "content": {
+                "$ref": "#/spec/panels/asdasd-1"
+              }
+            },
+            {
+              "x": 0,
+              "y": 18,
+              "width": 12,
+              "height": 6,
+              "content": {
+                "$ref": "#/spec/panels/aaaa"
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "variables": [],
+    "duration": "1h",
+    "refreshInterval": "0s",
+    "datasources": {}
+  }
+}
