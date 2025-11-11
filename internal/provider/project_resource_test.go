@@ -29,13 +29,14 @@ func TestAccProjectResource(t *testing.T) {
 		Steps: []resource.TestStep{
 			// CREATE + READ
 			{
-				Config: testAccProjectResourceConfig(baseName, "This is a test project"),
+				Config: testAccProjectResourceConfig(baseName, stringPtr("This is a test project"), nil),
 				// Before Apply, assert that we expect a create of the resource.
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue("logfire_project.test", tfjsonpath.New("id"), knownvalue.NotNull()),
 					statecheck.ExpectKnownValue("logfire_project.test", tfjsonpath.New("organization"), knownvalue.StringExact("terraform-provider-logfire")),
 					statecheck.ExpectKnownValue("logfire_project.test", tfjsonpath.New("name"), knownvalue.StringExact(baseName)),
 					statecheck.ExpectKnownValue("logfire_project.test", tfjsonpath.New("description"), knownvalue.StringExact("This is a test project")),
+					statecheck.ExpectKnownValue("logfire_project.test", tfjsonpath.New("visibility"), knownvalue.StringExact("public")),
 				},
 			},
 
@@ -57,7 +58,7 @@ func TestAccProjectResource(t *testing.T) {
 			},
 			{
 				// Re-apply the exact same config and assert a no-op plan
-				Config: testAccProjectResourceConfig(baseName, "This is a test project"),
+				Config: testAccProjectResourceConfig(baseName, stringPtr("This is a test project"), nil),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectEmptyPlan(),
@@ -67,20 +68,35 @@ func TestAccProjectResource(t *testing.T) {
 
 			// UPDATE 1: clear description -> expect Null in state, and Update action
 			{
-				Config: testAccProjectResourceConfig(baseName, ""),
+				Config: testAccProjectResourceConfig(baseName, nil, nil),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue("logfire_project.test", tfjsonpath.New("id"), knownvalue.NotNull()),
 					statecheck.ExpectKnownValue("logfire_project.test", tfjsonpath.New("organization"), knownvalue.StringExact("terraform-provider-logfire")),
 					statecheck.ExpectKnownValue("logfire_project.test", tfjsonpath.New("name"), knownvalue.StringExact(baseName)),
 					statecheck.ExpectKnownValue("logfire_project.test", tfjsonpath.New("description"), knownvalue.Null()),
+					statecheck.ExpectKnownValue("logfire_project.test", tfjsonpath.New("visibility"), knownvalue.StringExact("public")),
 				},
 			},
 
 			{
-				Config: testAccProjectResourceConfig(renamedName, ""),
+				Config: testAccProjectResourceConfig(renamedName, nil, stringPtr("private")),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue("logfire_project.test", tfjsonpath.New("name"), knownvalue.StringExact(renamedName)),
 					statecheck.ExpectKnownValue("logfire_project.test", tfjsonpath.New("description"), knownvalue.Null()),
+					statecheck.ExpectKnownValue("logfire_project.test", tfjsonpath.New("visibility"), knownvalue.StringExact("private")),
+				},
+			},
+			// IMPORT via ID to confirm the new format works
+			{
+				ResourceName:      "logfire_project.test",
+				ImportState:       true,
+				ImportStateVerify: true,
+				ImportStateIdFunc: func(s *terraform.State) (string, error) {
+					resourceState, ok := s.RootModule().Resources["logfire_project.test"]
+					if !ok || resourceState.Primary == nil {
+						return "", fmt.Errorf("resource state not found in root module")
+					}
+					return resourceState.Primary.Attributes["id"], nil
 				},
 			},
 			// DELETE happens automatically and is verified by CheckDestroy
@@ -88,18 +104,25 @@ func TestAccProjectResource(t *testing.T) {
 	})
 }
 
-// If desc is nil, we render description = null to test clearing values.
-func testAccProjectResourceConfig(name, desc string) string {
+func testAccProjectResourceConfig(name string, desc *string, visibility *string) string {
 	descLine := ""
-	if desc != "" {
-		descLine = fmt.Sprintf("  description  = %q\n", desc)
+	if desc != nil {
+		descLine = fmt.Sprintf("  description  = %q\n", *desc)
+	}
+
+	visibilityLine := ""
+	if visibility != nil {
+		visibilityLine = fmt.Sprintf("  visibility   = %q\n", *visibility)
 	}
 
 	return fmt.Sprintf(`%s
 
 resource "logfire_project" "test" {
-  organization = "terraform-provider-logfire"
   name         = %q
-%s}
-`, testAccProviderConfig(), name, descLine)
+%s%s}
+`, testAccProviderConfig(), name, descLine, visibilityLine)
+}
+
+func stringPtr(s string) *string {
+	return &s
 }
