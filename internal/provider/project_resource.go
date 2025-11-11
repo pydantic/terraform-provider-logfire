@@ -9,10 +9,10 @@ import (
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
-	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	rschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -34,6 +34,7 @@ type ProjectModel struct {
 	Organization types.String `tfsdk:"organization"`
 	Name         types.String `tfsdk:"name"`
 	Description  types.String `tfsdk:"description"`
+	Visibility   types.String `tfsdk:"visibility"`
 }
 
 func (r *ProjectResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -52,9 +53,10 @@ func (r *ProjectResource) Schema(ctx context.Context, req resource.SchemaRequest
 				},
 			},
 			"organization": rschema.StringAttribute{
-				Required:            true,
-				MarkdownDescription: "Organization name.",
+				Computed:            true,
+				MarkdownDescription: "Organization name. Computed from the API and cannot be set.",
 				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
 					stringplanmodifier.RequiresReplace(),
 				},
 				Validators: []validator.String{
@@ -73,6 +75,18 @@ func (r *ProjectResource) Schema(ctx context.Context, req resource.SchemaRequest
 				MarkdownDescription: "Project description.",
 				Validators: []validator.String{
 					stringvalidator.LengthAtLeast(1),
+				},
+			},
+			"visibility": rschema.StringAttribute{
+				Optional:            true,
+				Computed:            true,
+				MarkdownDescription: "Project visibility (`public` or `private`).",
+				Default:             stringdefault.StaticString("public"),
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+				Validators: []validator.String{
+					stringvalidator.OneOf("public", "private"),
 				},
 			},
 		},
@@ -94,20 +108,42 @@ func (r *ProjectResource) Configure(ctx context.Context, req resource.ConfigureR
 // --- Helpers ---
 
 func projectModelToCreate(m *ProjectModel) ProjectCreate {
+	var desc *string
+	if !m.Description.IsNull() && !m.Description.IsUnknown() {
+		value := m.Description.ValueString()
+		if value != "" {
+			desc = &value
+		}
+	}
+	var visibility *string
+	if !m.Visibility.IsNull() && !m.Visibility.IsUnknown() {
+		value := m.Visibility.ValueString()
+		visibility = &value
+	}
 	return ProjectCreate{
 		ProjectName: m.Name.ValueString(),
-		Description: m.Description.ValueString(),
+		Description: desc,
+		Visibility:  visibility,
 	}
 }
 
 func projectReadToModel(p *ProjectRead, m *ProjectModel) {
 	m.ID = types.StringValue(p.ID)
-	m.Organization = types.StringValue(p.OrganizationName)
+	if p.OrganizationName == "" {
+		m.Organization = types.StringNull()
+	} else {
+		m.Organization = types.StringValue(p.OrganizationName)
+	}
 	m.Name = types.StringValue(p.ProjectName)
-	if p.Description == "" {
+	if p.Description == nil || *p.Description == "" {
 		m.Description = types.StringNull()
 	} else {
-		m.Description = types.StringValue(p.Description)
+		m.Description = types.StringValue(*p.Description)
+	}
+	if p.Visibility == "" {
+		m.Visibility = types.StringNull()
+	} else {
+		m.Visibility = types.StringValue(p.Visibility)
 	}
 }
 
@@ -125,10 +161,9 @@ func (r *ProjectResource) Create(ctx context.Context, req resource.CreateRequest
 		return
 	}
 
-	org := plan.Organization.ValueString()
 	in := projectModelToCreate(&plan)
 
-	out, err := r.client.CreateProject(ctx, org, in)
+	out, err := r.client.CreateProject(ctx, in)
 	if err != nil {
 		resp.Diagnostics.AddError("Create project failed", err.Error())
 		return
@@ -137,7 +172,7 @@ func (r *ProjectResource) Create(ctx context.Context, req resource.CreateRequest
 	var state ProjectModel
 	projectReadToModel(out, &state)
 
-	tflog.Trace(ctx, "created project", map[string]any{"id": state.ID.ValueString(), "org": org})
+	tflog.Trace(ctx, "created project", map[string]any{"id": state.ID.ValueString(), "org": state.Organization.ValueString()})
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -153,10 +188,12 @@ func (r *ProjectResource) Read(ctx context.Context, req resource.ReadRequest, re
 		return
 	}
 
-	org := state.Organization.ValueString()
-	name := state.Name.ValueString()
+	if state.ID.IsUnknown() || state.ID.IsNull() {
+		resp.Diagnostics.AddError("Missing ID", "Cannot read project because the state is missing an ID.")
+		return
+	}
 
-	out, status, err := r.client.GetProject(ctx, org, name)
+	out, status, err := r.client.GetProject(ctx, state.ID.ValueString())
 	if err != nil {
 		if status == 404 {
 			resp.State.RemoveResource(ctx)
@@ -193,9 +230,6 @@ func (r *ProjectResource) Update(ctx context.Context, req resource.UpdateRequest
 		return
 	}
 
-	org := state.Organization.ValueString()
-	name := state.Name.ValueString()
-
 	// Build partial update payload
 	var payload ProjectUpdate
 	if !plan.Name.IsNull() && !plan.Name.IsUnknown() {
@@ -203,16 +237,36 @@ func (r *ProjectResource) Update(ctx context.Context, req resource.UpdateRequest
 		payload.ProjectName = &v
 	}
 
-	switch {
-	case !plan.Description.IsNull() && !plan.Description.IsUnknown():
-		v := plan.Description.ValueString()
-		payload.Description = &v
-	case plan.Description.IsNull() && !state.Description.IsNull() && !state.Description.IsUnknown():
-		empty := ""
-		payload.Description = &empty
+	if !plan.Description.IsUnknown() {
+		switch {
+		case plan.Description.IsNull():
+			if !state.Description.IsNull() && !state.Description.IsUnknown() {
+				// API clears descriptions when provided an empty string.
+				payload.Description = NullableFieldValue("")
+			}
+		default:
+			v := plan.Description.ValueString()
+			if state.Description.IsNull() || state.Description.IsUnknown() || state.Description.ValueString() != v {
+				payload.Description = NullableFieldValue(v)
+			}
+		}
 	}
 
-	out, err := r.client.UpdateProject(ctx, org, name, payload)
+	if !plan.Visibility.IsUnknown() {
+		switch {
+		case plan.Visibility.IsNull():
+			if !state.Visibility.IsNull() && !state.Visibility.IsUnknown() {
+				payload.Visibility = NullableFieldNull[string]()
+			}
+		default:
+			v := plan.Visibility.ValueString()
+			if state.Visibility.IsNull() || state.Visibility.IsUnknown() || state.Visibility.ValueString() != v {
+				payload.Visibility = NullableFieldValue(v)
+			}
+		}
+	}
+
+	out, err := r.client.UpdateProject(ctx, state.ID.ValueString(), payload)
 	if err != nil {
 		resp.Diagnostics.AddError("Update project failed", err.Error())
 		return
@@ -235,37 +289,62 @@ func (r *ProjectResource) Delete(ctx context.Context, req resource.DeleteRequest
 		return
 	}
 
-	org := state.Organization.ValueString()
-	name := state.Name.ValueString()
+	if state.ID.IsNull() || state.ID.IsUnknown() {
+		resp.Diagnostics.AddError("Missing ID", "Cannot delete project because the current state has no ID.")
+		return
+	}
 
-	if err := r.client.DeleteProject(ctx, org, name); err != nil {
+	if err := r.client.DeleteProject(ctx, state.ID.ValueString()); err != nil {
 		// If already gone, treat as successful delete but log warning
 		resp.Diagnostics.AddWarning("Delete project", fmt.Sprintf("delete returned error: %v", err))
 	}
 }
 
 func (r *ProjectResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	if req.ID == "" {
+	if r.client == nil {
+		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
+		return
+	}
+
+	rawID := strings.TrimSpace(req.ID)
+	if rawID == "" {
 		resp.Diagnostics.AddError(
 			"Missing import ID",
-			`Expected a non-empty ID. Use: terraform import logfire_project.prod "organization/name"`,
+			`Expected a non-empty ID. Use either the project UUID or the "organization/name" shorthand.`,
 		)
 		return
 	}
 
-	org, name, ok := splitTwo(req.ID)
-	if !ok || org == "" || name == "" {
-		resp.Diagnostics.AddError(
-			"Invalid import ID format",
-			`Expected "organization/name" (also accepts "organization,name" or "organization|name"). Example:
+	projectID := rawID
+
+	if strings.ContainsAny(rawID, "/,|") {
+		org, name, ok := splitTwo(rawID)
+		if !ok || org == "" || name == "" {
+			resp.Diagnostics.AddError(
+				"Invalid import ID format",
+				`Expected "organization/name" (also accepts "organization,name" or "organization|name"). Example:
 terraform import logfire_project.prod "acme/prod-logs"`,
-		)
+			)
+			return
+		}
+
+		id, err := r.findProjectID(ctx, org, name)
+		if err != nil {
+			resp.Diagnostics.AddError("Lookup project ID failed", err.Error())
+			return
+		}
+		projectID = id
+	}
+
+	project, _, err := r.client.GetProject(ctx, projectID)
+	if err != nil {
+		resp.Diagnostics.AddError("Import project failed", fmt.Sprintf("fetching project %q: %v", projectID, err))
 		return
 	}
 
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("organization"), org)...)
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("name"), name)...)
-
+	var state ProjectModel
+	projectReadToModel(project, &state)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
 func splitTwo(s string) (string, string, bool) {
@@ -277,4 +356,17 @@ func splitTwo(s string) (string, string, bool) {
 		}
 	}
 	return "", "", false
+}
+
+func (r *ProjectResource) findProjectID(ctx context.Context, org, name string) (string, error) {
+	list, err := r.client.ListProjects(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, project := range list {
+		if project.ProjectName == name && project.OrganizationName == org {
+			return project.ID, nil
+		}
+	}
+	return "", fmt.Errorf("project %q/%q not found", org, name)
 }
