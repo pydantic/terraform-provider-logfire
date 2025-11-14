@@ -9,9 +9,11 @@ import (
 	"strings"
 
 	stringvalidator "github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	rschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
@@ -30,17 +32,18 @@ type ChannelResource struct {
 }
 
 type ChannelConfigModel struct {
-	Type   types.String `tfsdk:"type"`   // must be "webhook"
-	Format types.String `tfsdk:"format"` // "auto" | "slack-blockkit" | "slack-legacy" | "raw-data"
-	URL    types.String `tfsdk:"url"`
+	// Email config exists in the API but is not exposed via Terraform yet.
+	Type    types.String `tfsdk:"type"` // webhook | opsgenie
+	Format  types.String `tfsdk:"format"`
+	URL     types.String `tfsdk:"url"`
+	AuthKey types.String `tfsdk:"auth_key"`
 }
 
 type ChannelModel struct {
-	ID           types.String        `tfsdk:"id"`
-	Organization types.String        `tfsdk:"organization"`
-	Project      types.String        `tfsdk:"project"`
-	Name         types.String        `tfsdk:"name"`
-	Config       *ChannelConfigModel `tfsdk:"config"`
+	ID     types.String        `tfsdk:"id"`
+	Name   types.String        `tfsdk:"name"`
+	Active types.Bool          `tfsdk:"active"`
+	Config *ChannelConfigModel `tfsdk:"config"`
 }
 
 func (r *ChannelResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -58,23 +61,15 @@ func (r *ChannelResource) Schema(ctx context.Context, req resource.SchemaRequest
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
-			"organization": rschema.StringAttribute{
-				Required:            true,
-				MarkdownDescription: "Organization name.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
-			},
-			"project": rschema.StringAttribute{
-				Required:            true,
-				MarkdownDescription: "Project name.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
-			},
 			"name": rschema.StringAttribute{
 				Required:            true,
 				MarkdownDescription: "Channel name.",
+			},
+			"active": rschema.BoolAttribute{
+				Optional:            true,
+				Computed:            true,
+				MarkdownDescription: "Whether the channel is active.",
+				Default:             booldefault.StaticBool(true),
 			},
 		},
 		Blocks: map[string]rschema.Block{
@@ -83,21 +78,25 @@ func (r *ChannelResource) Schema(ctx context.Context, req resource.SchemaRequest
 				Attributes: map[string]rschema.Attribute{
 					"type": rschema.StringAttribute{
 						Required:            true,
-						MarkdownDescription: "Channel type. Only `webhook` is supported.",
+						MarkdownDescription: "Channel type (`webhook` or `opsgenie`).",
 						Validators: []validator.String{
-							stringvalidator.OneOf("webhook"),
+							stringvalidator.OneOf("webhook", "opsgenie"),
 						},
 					},
 					"format": rschema.StringAttribute{
-						Required:            true,
-						MarkdownDescription: "Payload format.",
+						Optional:            true,
+						MarkdownDescription: "Webhook payload format.",
 						Validators: []validator.String{
 							stringvalidator.OneOf("auto", "slack-blockkit", "slack-legacy", "raw-data"),
 						},
 					},
 					"url": rschema.StringAttribute{
-						Required:            true,
+						Optional:            true,
 						MarkdownDescription: "Webhook URL endpoint.",
+					},
+					"auth_key": rschema.StringAttribute{
+						Optional:            true,
+						MarkdownDescription: "Opsgenie API key.",
 					},
 				},
 			},
@@ -119,26 +118,132 @@ func (r *ChannelResource) Configure(ctx context.Context, req resource.ConfigureR
 
 // --- Helpers ---
 
-func channelModelToCreate(m *ChannelModel) ChannelCreate {
-	cfg := ChannelConfig{
-		Type:   m.Config.Type.ValueString(),
-		Format: m.Config.Format.ValueString(),
-		URL:    m.Config.URL.ValueString(),
+func channelModelToCreate(m *ChannelModel) (ChannelCreate, diag.Diagnostics) {
+	cfg, diags := channelConfigModelToAPI(m.Config)
+	if diags.HasError() {
+		return ChannelCreate{}, diags
 	}
 	return ChannelCreate{
 		Label:  m.Name.ValueString(),
 		Config: cfg,
+	}, nil
+}
+
+func channelConfigModelToAPI(m *ChannelConfigModel) (ChannelConfig, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	if m == nil {
+		diags.Append(diag.NewErrorDiagnostic("Invalid channel config", "config block must be provided."))
+		return ChannelConfig{}, diags
+	}
+	if m.Type.IsNull() || m.Type.IsUnknown() {
+		diags.Append(diag.NewErrorDiagnostic("Invalid channel config", "config.type must be set."))
+		return ChannelConfig{}, diags
+	}
+
+	cfgType := m.Type.ValueString()
+	cfg := ChannelConfig{Type: cfgType}
+
+	switch cfgType {
+	case "webhook":
+		format, fDiags := requiredConfigString(m.Format, "config.format", "webhook")
+		diags.Append(fDiags...)
+		url, uDiags := requiredConfigString(m.URL, "config.url", "webhook")
+		diags.Append(uDiags...)
+		diags.Append(disallowConfigString(m.AuthKey, "config.auth_key", "webhook")...)
+		if diags.HasError() {
+			return ChannelConfig{}, diags
+		}
+		cfg.Format = stringPointer(format)
+		cfg.URL = stringPointer(url)
+	case "opsgenie":
+		key, kDiags := requiredConfigString(m.AuthKey, "config.auth_key", "opsgenie")
+		diags.Append(kDiags...)
+		diags.Append(disallowConfigString(m.Format, "config.format", "opsgenie")...)
+		diags.Append(disallowConfigString(m.URL, "config.url", "opsgenie")...)
+		if diags.HasError() {
+			return ChannelConfig{}, diags
+		}
+		cfg.AuthKey = stringPointer(key)
+	default:
+		diags.Append(diag.NewErrorDiagnostic("Invalid channel config", fmt.Sprintf("unsupported config type %q", cfgType)))
+		return ChannelConfig{}, diags
+	}
+	return cfg, diags
+}
+
+func channelConfigAPIToModel(cfg ChannelConfig) (*ChannelConfigModel, diag.Diagnostics) {
+	model := &ChannelConfigModel{
+		Type:    types.StringValue(cfg.Type),
+		Format:  types.StringNull(),
+		URL:     types.StringNull(),
+		AuthKey: types.StringNull(),
+	}
+
+	switch cfg.Type {
+	case "webhook":
+		if cfg.Format == nil || cfg.URL == nil {
+			return nil, diag.Diagnostics{
+				diag.NewErrorDiagnostic("Invalid channel config", "webhook config missing format or url."),
+			}
+		}
+		model.Format = types.StringValue(*cfg.Format)
+		model.URL = types.StringValue(*cfg.URL)
+	case "opsgenie":
+		if cfg.AuthKey == nil {
+			return nil, diag.Diagnostics{
+				diag.NewErrorDiagnostic("Invalid channel config", "opsgenie config missing auth_key."),
+			}
+		}
+		model.AuthKey = types.StringValue(*cfg.AuthKey)
+	default:
+		return nil, diag.Diagnostics{
+			diag.NewErrorDiagnostic("Invalid channel config", fmt.Sprintf("unsupported config type %q", cfg.Type)),
+		}
+	}
+	return model, nil
+}
+
+func requiredConfigString(val types.String, fieldName, channelType string) (string, diag.Diagnostics) {
+	if val.IsNull() || val.IsUnknown() {
+		return "", diag.Diagnostics{
+			diag.NewErrorDiagnostic("Invalid channel config", fmt.Sprintf("%s must be set for %s channels.", fieldName, channelType)),
+		}
+	}
+	v := strings.TrimSpace(val.ValueString())
+	if v == "" {
+		return "", diag.Diagnostics{
+			diag.NewErrorDiagnostic("Invalid channel config", fmt.Sprintf("%s cannot be empty for %s channels.", fieldName, channelType)),
+		}
+	}
+	return v, nil
+}
+
+func stringPointer(v string) *string {
+	return &v
+}
+
+func disallowConfigString(val types.String, fieldName, channelType string) diag.Diagnostics {
+	if val.IsNull() || val.IsUnknown() {
+		return nil
+	}
+	if strings.TrimSpace(val.ValueString()) == "" {
+		return nil
+	}
+	return diag.Diagnostics{
+		diag.NewErrorDiagnostic("Invalid channel config", fmt.Sprintf("%s cannot be set for %s channels.", fieldName, channelType)),
 	}
 }
 
-func channelReadToModel(c *ChannelRead, m *ChannelModel) {
+func channelReadToModel(c *ChannelRead, m *ChannelModel) diag.Diagnostics {
 	m.ID = types.StringValue(c.ID)
 	m.Name = types.StringValue(c.Label)
-	m.Config = &ChannelConfigModel{
-		Type:   types.StringValue(c.Config.Type),
-		Format: types.StringValue(c.Config.Format),
-		URL:    types.StringValue(c.Config.URL),
+	m.Active = types.BoolValue(c.Active)
+	cfg, diags := channelConfigAPIToModel(c.Config)
+	if diags.HasError() {
+		return diags
 	}
+	m.Config = cfg
+	return nil
 }
 
 // --- CRUD ---
@@ -155,23 +260,38 @@ func (r *ChannelResource) Create(ctx context.Context, req resource.CreateRequest
 		return
 	}
 
-	org := plan.Organization.ValueString()
-	prj := plan.Project.ValueString()
-	in := channelModelToCreate(&plan)
+	in, diags := channelModelToCreate(&plan)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
-	out, err := r.client.CreateChannel(ctx, org, prj, in)
+	out, err := r.client.CreateChannel(ctx, in)
 	if err != nil {
 		resp.Diagnostics.AddError("Create channel failed", err.Error())
 		return
 	}
 
-	var state ChannelModel
-	// preserve org/project from plan
-	state.Organization = plan.Organization
-	state.Project = plan.Project
-	channelReadToModel(out, &state)
+	if !plan.Active.IsNull() && !plan.Active.IsUnknown() {
+		desired := plan.Active.ValueBool()
+		if desired != out.Active {
+			payload := ChannelUpdate{Active: &desired}
+			updated, uerr := r.client.UpdateChannel(ctx, out.ID, payload)
+			if uerr != nil {
+				resp.Diagnostics.AddError("Create channel failed", fmt.Sprintf("setting active flag: %v", uerr))
+				return
+			}
+			out = updated
+		}
+	}
 
-	tflog.Trace(ctx, "created channel", map[string]any{"id": state.ID.ValueString(), "org": org, "project": prj})
+	var state ChannelModel
+	if diags := channelReadToModel(out, &state); diags.HasError() {
+		resp.Diagnostics.Append(diags...)
+		return
+	}
+
+	tflog.Trace(ctx, "created channel", map[string]any{"id": state.ID.ValueString()})
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -187,11 +307,9 @@ func (r *ChannelResource) Read(ctx context.Context, req resource.ReadRequest, re
 		return
 	}
 
-	org := state.Organization.ValueString()
-	prj := state.Project.ValueString()
 	id := state.ID.ValueString()
 
-	out, status, err := r.client.GetChannel(ctx, org, prj, id)
+	out, status, err := r.client.GetChannel(ctx, id)
 	if err != nil {
 		if status == 404 {
 			resp.State.RemoveResource(ctx)
@@ -201,11 +319,10 @@ func (r *ChannelResource) Read(ctx context.Context, req resource.ReadRequest, re
 		return
 	}
 
-	orgVal := state.Organization
-	prjVal := state.Project
-	channelReadToModel(out, &state)
-	state.Organization = orgVal
-	state.Project = prjVal
+	if diags := channelReadToModel(out, &state); diags.HasError() {
+		resp.Diagnostics.Append(diags...)
+		return
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -232,8 +349,6 @@ func (r *ChannelResource) Update(ctx context.Context, req resource.UpdateRequest
 		return
 	}
 
-	org := state.Organization.ValueString()
-	prj := state.Project.ValueString()
 	id := state.ID.ValueString()
 
 	var payload ChannelUpdate
@@ -241,36 +356,32 @@ func (r *ChannelResource) Update(ctx context.Context, req resource.UpdateRequest
 		v := plan.Name.ValueString()
 		payload.Label = &v
 	}
-	if plan.Config != nil {
-		cfg := ChannelConfig{}
-		set := false
-		if !plan.Config.Type.IsNull() && !plan.Config.Type.IsUnknown() {
-			cfg.Type = plan.Config.Type.ValueString()
-			set = true
-		}
-		if !plan.Config.Format.IsNull() && !plan.Config.Format.IsUnknown() {
-			cfg.Format = plan.Config.Format.ValueString()
-			set = true
-		}
-		if !plan.Config.URL.IsNull() && !plan.Config.URL.IsUnknown() {
-			cfg.URL = plan.Config.URL.ValueString()
-			set = true
-		}
-		if set {
-			payload.Config = &cfg
+	if !plan.Active.IsNull() && !plan.Active.IsUnknown() {
+		v := plan.Active.ValueBool()
+		if state.Active.IsNull() || state.Active.IsUnknown() || state.Active.ValueBool() != v {
+			payload.Active = &v
 		}
 	}
+	if plan.Config != nil {
+		cfg, diags := channelConfigModelToAPI(plan.Config)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		payload.Config = &cfg
+	}
 
-	out, err := r.client.UpdateChannel(ctx, org, prj, id, payload)
+	out, err := r.client.UpdateChannel(ctx, id, payload)
 	if err != nil {
 		resp.Diagnostics.AddError("Update channel failed", err.Error())
 		return
 	}
 
 	var newState ChannelModel
-	newState.Organization = state.Organization
-	newState.Project = state.Project
-	channelReadToModel(out, &newState)
+	if diags := channelReadToModel(out, &newState); diags.HasError() {
+		resp.Diagnostics.Append(diags...)
+		return
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &newState)...)
 }
 
@@ -286,11 +397,9 @@ func (r *ChannelResource) Delete(ctx context.Context, req resource.DeleteRequest
 		return
 	}
 
-	org := state.Organization.ValueString()
-	prj := state.Project.ValueString()
 	id := state.ID.ValueString()
 
-	if err := r.client.DeleteChannel(ctx, org, prj, id); err != nil {
+	if err := r.client.DeleteChannel(ctx, id); err != nil {
 		// If already gone, treat as successful delete but log warning
 		resp.Diagnostics.AddWarning("Delete channel", fmt.Sprintf("delete returned error: %v", err))
 	}
@@ -300,23 +409,19 @@ func (r *ChannelResource) ImportState(ctx context.Context, req resource.ImportSt
 	if req.ID == "" {
 		resp.Diagnostics.AddError(
 			"Missing import ID",
-			`Expected a non-empty ID. Use: terraform import logfire_channel.prod "organization/project/id"`,
+			`Expected a non-empty ID. Use: terraform import logfire_channel.prod "<channel_id>"`,
 		)
 		return
 	}
 
 	parts := strings.Split(req.ID, "/")
-	switch len(parts) {
-	case 3:
-		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("organization"), parts[0])...)
-		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("project"), parts[1])...)
-		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), parts[2])...)
-	case 1:
-		resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
-	default:
+	id := parts[len(parts)-1]
+	if id == "" {
 		resp.Diagnostics.AddError(
 			"Invalid import ID",
-			`Expected "organization/project/id" or "id".`,
+			`Expected "<channel_id>".`,
 		)
+		return
 	}
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), id)...)
 }

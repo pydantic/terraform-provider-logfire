@@ -304,15 +304,23 @@ func (c *APIClient) DeleteAlert(ctx context.Context, org, project, id string) er
 // ---- Channels ----
 
 type ChannelConfig struct {
-	Type   string `json:"type"`
-	Format string `json:"format"`
-	URL    string `json:"url"`
+	Type    string  `json:"type"`
+	Format  *string `json:"format,omitempty"`
+	URL     *string `json:"url,omitempty"`
+	Email   *string `json:"email,omitempty"` // reserved for future Terraform support
+	AuthKey *string `json:"auth_key,omitempty"`
 }
 
 type ChannelRead struct {
-	ID     string        `json:"id"`
-	Label  string        `json:"label"`
-	Config ChannelConfig `json:"config"`
+	ID             string        `json:"id"`
+	OrganizationID string        `json:"organization_id"`
+	Label          string        `json:"label"`
+	Active         bool          `json:"active"`
+	CreatedAt      string        `json:"created_at"`
+	UpdatedAt      *string       `json:"updated_at"`
+	CreatedByName  *string       `json:"created_by_name"`
+	UpdatedByName  *string       `json:"updated_by_name"`
+	Config         ChannelConfig `json:"config"`
 }
 
 type ChannelCreate struct {
@@ -323,27 +331,28 @@ type ChannelCreate struct {
 type ChannelUpdate struct {
 	Label  *string        `json:"label,omitempty"`
 	Config *ChannelConfig `json:"config,omitempty"`
+	Active *bool          `json:"active,omitempty"`
 }
 
-func (c *APIClient) channelsBase(org, project string) string {
-	return fmt.Sprintf("ui-api/organizations/%s/projects/%s/channels/", url.PathEscape(org), url.PathEscape(project))
+func (c *APIClient) channelsBase() string {
+	return "/api/v1/channels/"
 }
-func (c *APIClient) channelPath(org, project, id string) string {
-	return fmt.Sprintf("%s%s/", c.channelsBase(org, project), url.PathEscape(id))
+func (c *APIClient) channelPath(id string) string {
+	return fmt.Sprintf("/api/v1/channels/%s/", url.PathEscape(id))
 }
 
-func (c *APIClient) CreateChannel(ctx context.Context, org, project string, in ChannelCreate) (*ChannelRead, error) {
+func (c *APIClient) CreateChannel(ctx context.Context, in ChannelCreate) (*ChannelRead, error) {
 	var out ChannelRead
-	_, err := c.doJSON(ctx, http.MethodPost, c.channelsBase(org, project), in, &out, http.StatusCreated)
+	_, err := c.doJSON(ctx, http.MethodPost, c.channelsBase(), in, &out, http.StatusCreated)
 	if err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
-func (c *APIClient) GetChannel(ctx context.Context, org, project, id string) (*ChannelRead, int, error) {
+func (c *APIClient) GetChannel(ctx context.Context, id string) (*ChannelRead, int, error) {
 	var out ChannelRead
-	resp, err := c.doJSON(ctx, http.MethodGet, c.channelPath(org, project, id), nil, &out, http.StatusOK)
+	resp, err := c.doJSON(ctx, http.MethodGet, c.channelPath(id), nil, &out, http.StatusOK)
 	if err != nil {
 		if resp != nil {
 			return nil, resp.StatusCode, err
@@ -353,17 +362,17 @@ func (c *APIClient) GetChannel(ctx context.Context, org, project, id string) (*C
 	return &out, http.StatusOK, nil
 }
 
-func (c *APIClient) UpdateChannel(ctx context.Context, org, project, id string, in ChannelUpdate) (*ChannelRead, error) {
+func (c *APIClient) UpdateChannel(ctx context.Context, id string, in ChannelUpdate) (*ChannelRead, error) {
 	var out ChannelRead
-	_, err := c.doJSON(ctx, http.MethodPut, c.channelPath(org, project, id), in, &out, http.StatusOK)
+	_, err := c.doJSON(ctx, http.MethodPut, c.channelPath(id), in, &out, http.StatusOK)
 	if err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
-func (c *APIClient) DeleteChannel(ctx context.Context, org, project, id string) error {
-	_, err := c.doJSON(ctx, http.MethodDelete, c.channelPath(org, project, id), nil, nil, http.StatusNoContent)
+func (c *APIClient) DeleteChannel(ctx context.Context, id string) error {
+	_, err := c.doJSON(ctx, http.MethodDelete, c.channelPath(id), nil, nil, http.StatusNoContent)
 	return err
 }
 
