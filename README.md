@@ -30,10 +30,11 @@ resource "logfire_project" "prod" {
 }
 
 resource "logfire_channel" "alerts" {
-  organization = logfire_project.prod.organization
-  project      = logfire_project.prod.name
-  name         = "alerts-webhook"
+  name   = "alerts-webhook"
+  # Optional, defaults to true.
+  active = true
   config {
+    # Also supports "opsgenie" (with `auth_key`). Email channels are not available yet.
     type   = "webhook"
     format = "auto"
     url    = "https://hooks.slack.com/services/xxx/yyy/zzz"
@@ -57,7 +58,7 @@ Run `terraform init && terraform apply` to provision Logfire resources. The `exa
 
 ## Resources
 - `logfire_project` — manage Logfire projects.
-- `logfire_channel` — configure webhook notification channels.
+- `logfire_channel` — configure webhook, email, or Opsgenie notification channels.
 - `logfire_alert` — define alerting rules tied to channels.
 
 Generated documentation for each resource lives in `docs/` and publishes to the Terraform Registry.

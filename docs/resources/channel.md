@@ -18,11 +18,10 @@ Manages a Logfire alert channel.
 ### Required
 
 - `name` (String) Channel name.
-- `organization` (String) Organization name.
-- `project` (String) Project name.
 
 ### Optional
 
+- `active` (Boolean) Whether the channel is active.
 - `config` (Block, Optional) Channel configuration. (see [below for nested schema](#nestedblock--config))
 
 ### Read-Only
@@ -34,6 +33,10 @@ Manages a Logfire alert channel.
 
 Required:
 
-- `format` (String) Payload format.
-- `type` (String) Channel type. Only `webhook` is supported.
+- `type` (String) Channel type (`webhook` or `opsgenie`).
+
+Optional:
+
+- `auth_key` (String) Opsgenie API key.
+- `format` (String) Webhook payload format.
 - `url` (String) Webhook URL endpoint.

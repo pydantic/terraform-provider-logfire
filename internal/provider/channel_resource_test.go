@@ -19,8 +19,6 @@ import (
 func TestAccChannelResource(t *testing.T) {
 	t.Parallel()
 
-	org := "terraform-provider-logfire"
-	projectName := fmt.Sprintf("acc-test-channel-%s", acctest.RandStringFromCharSet(6, acctest.CharSetAlphaNum))
 	channelName := fmt.Sprintf("acc-channel-%s", acctest.RandStringFromCharSet(6, acctest.CharSetAlphaNum))
 	updatedChannelName := fmt.Sprintf("%s-renamed", channelName)
 
@@ -33,12 +31,11 @@ func TestAccChannelResource(t *testing.T) {
 
 		Steps: []resource.TestStep{
 			{
-				Config: testAccChannelResourceConfig(org, projectName, channelName, "auto", initialURL),
+				Config: testAccChannelResourceConfig(channelName, "auto", initialURL),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue("logfire_channel.test", tfjsonpath.New("id"), knownvalue.NotNull()),
-					statecheck.ExpectKnownValue("logfire_channel.test", tfjsonpath.New("organization"), knownvalue.StringExact(org)),
-					statecheck.ExpectKnownValue("logfire_channel.test", tfjsonpath.New("project"), knownvalue.StringExact(projectName)),
 					statecheck.ExpectKnownValue("logfire_channel.test", tfjsonpath.New("name"), knownvalue.StringExact(channelName)),
+					statecheck.ExpectKnownValue("logfire_channel.test", tfjsonpath.New("active"), knownvalue.Bool(true)),
 					statecheck.ExpectKnownValue("logfire_channel.test", tfjsonpath.New("config").AtMapKey("type"), knownvalue.StringExact("webhook")),
 					statecheck.ExpectKnownValue("logfire_channel.test", tfjsonpath.New("config").AtMapKey("format"), knownvalue.StringExact("auto")),
 					statecheck.ExpectKnownValue("logfire_channel.test", tfjsonpath.New("config").AtMapKey("url"), knownvalue.StringExact(initialURL)),
@@ -53,14 +50,12 @@ func TestAccChannelResource(t *testing.T) {
 					if !ok || resourceState.Primary == nil {
 						return "", fmt.Errorf("resource state not found in root module")
 					}
-					org := resourceState.Primary.Attributes["organization"]
-					project := resourceState.Primary.Attributes["project"]
 					id := resourceState.Primary.Attributes["id"]
-					return fmt.Sprintf("%s/%s/%s", org, project, id), nil
+					return id, nil
 				},
 			},
 			{
-				Config: testAccChannelResourceConfig(org, projectName, channelName, "auto", initialURL),
+				Config: testAccChannelResourceConfig(channelName, "auto", initialURL),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectEmptyPlan(),
@@ -68,7 +63,7 @@ func TestAccChannelResource(t *testing.T) {
 				},
 			},
 			{
-				Config: testAccChannelResourceConfig(org, projectName, updatedChannelName, "slack-blockkit", updatedURL),
+				Config: testAccChannelResourceConfig(updatedChannelName, "slack-blockkit", updatedURL),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue("logfire_channel.test", tfjsonpath.New("name"), knownvalue.StringExact(updatedChannelName)),
 					statecheck.ExpectKnownValue("logfire_channel.test", tfjsonpath.New("config").AtMapKey("format"), knownvalue.StringExact("slack-blockkit")),
@@ -79,19 +74,11 @@ func TestAccChannelResource(t *testing.T) {
 	})
 }
 
-func testAccChannelResourceConfig(org, projectName, channelName, format, url string) string {
+func testAccChannelResourceConfig(channelName, format, url string) string {
 	return fmt.Sprintf(`%s
 
-resource "logfire_project" "test" {
-  organization = %q
-  name         = %q
-  description  = "Acceptance test project"
-}
-
 resource "logfire_channel" "test" {
-  organization = %q
-  project      = logfire_project.test.name
-  name         = %q
+  name = %q
 
   config {
     type   = "webhook"
@@ -99,5 +86,5 @@ resource "logfire_channel" "test" {
     url    = %q
   }
 }
-`, testAccProviderConfig(), org, projectName, org, channelName, format, url)
+`, testAccProviderConfig(), channelName, format, url)
 }
