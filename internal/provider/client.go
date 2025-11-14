@@ -303,11 +303,33 @@ func (c *APIClient) DeleteAlert(ctx context.Context, org, project, id string) er
 
 // ---- Channels ----
 
+// Base channel config - never used directly, only for embedding
+type ChannelConfigBase struct {
+	Type string `json:"type"`
+}
+
+type WebhookConfig struct {
+	ChannelConfigBase
+	Format *string `json:"format,omitempty"`
+	URL    *string `json:"url,omitempty"`
+}
+
+type EmailConfig struct {
+	ChannelConfigBase
+	Email *string `json:"email,omitempty"`
+}
+
+type OpsgenieConfig struct {
+	ChannelConfigBase
+	AuthKey *string `json:"auth_key,omitempty"`
+}
+
+// ChannelConfig represents any channel config (used for unmarshaling)
 type ChannelConfig struct {
 	Type    string  `json:"type"`
 	Format  *string `json:"format,omitempty"`
 	URL     *string `json:"url,omitempty"`
-	Email   *string `json:"email,omitempty"` // reserved for future Terraform support
+	Email   *string `json:"email,omitempty"`
 	AuthKey *string `json:"auth_key,omitempty"`
 }
 
@@ -324,14 +346,14 @@ type ChannelRead struct {
 }
 
 type ChannelCreate struct {
-	Label  string        `json:"label"`
-	Config ChannelConfig `json:"config"`
+	Label  string      `json:"label"`
+	Config interface{} `json:"config"` // WebhookConfig, EmailConfig, or OpsgenieConfig
 }
 
 type ChannelUpdate struct {
-	Label  *string        `json:"label,omitempty"`
-	Config *ChannelConfig `json:"config,omitempty"`
-	Active *bool          `json:"active,omitempty"`
+	Label  NullableField[string] `json:"label,omitempty"`
+	Config *interface{}          `json:"config,omitempty"` // WebhookConfig, EmailConfig, or OpsgenieConfig
+	Active NullableField[bool]   `json:"active,omitempty"`
 }
 
 func (c *APIClient) channelsBase() string {
