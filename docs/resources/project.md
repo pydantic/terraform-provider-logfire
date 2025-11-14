@@ -18,12 +18,13 @@ Manages a Logfire project.
 ### Required
 
 - `name` (String) Project name/slug. Must be unique within the organization.
-- `organization` (String) Organization name.
 
 ### Optional
 
 - `description` (String) Project description.
+- `visibility` (String) Project visibility (`public` or `private`).
 
 ### Read-Only
 
 - `id` (String) Opaque backend project ID (not the slug).
+- `organization` (String) Organization name. Computed from the API and cannot be set.

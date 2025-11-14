@@ -5,6 +5,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -129,19 +130,18 @@ func channelModelToCreate(m *ChannelModel) (ChannelCreate, diag.Diagnostics) {
 	}, nil
 }
 
-func channelConfigModelToAPI(m *ChannelConfigModel) (ChannelConfig, diag.Diagnostics) {
+func channelConfigModelToAPI(m *ChannelConfigModel) (interface{}, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	if m == nil {
 		diags.Append(diag.NewErrorDiagnostic("Invalid channel config", "config block must be provided."))
-		return ChannelConfig{}, diags
+		return nil, diags
 	}
 	if m.Type.IsNull() || m.Type.IsUnknown() {
 		diags.Append(diag.NewErrorDiagnostic("Invalid channel config", "config.type must be set."))
-		return ChannelConfig{}, diags
+		return nil, diags
 	}
 
 	cfgType := m.Type.ValueString()
-	cfg := ChannelConfig{Type: cfgType}
 
 	switch cfgType {
 	case "webhook":
@@ -151,53 +151,97 @@ func channelConfigModelToAPI(m *ChannelConfigModel) (ChannelConfig, diag.Diagnos
 		diags.Append(uDiags...)
 		diags.Append(disallowConfigString(m.AuthKey, "config.auth_key", "webhook")...)
 		if diags.HasError() {
-			return ChannelConfig{}, diags
+			return nil, diags
 		}
-		cfg.Format = stringPointer(format)
-		cfg.URL = stringPointer(url)
+		return &WebhookConfig{
+			ChannelConfigBase: ChannelConfigBase{Type: "webhook"},
+			Format:            stringPointer(format),
+			URL:               stringPointer(url),
+		}, diags
 	case "opsgenie":
 		key, kDiags := requiredConfigString(m.AuthKey, "config.auth_key", "opsgenie")
 		diags.Append(kDiags...)
 		diags.Append(disallowConfigString(m.Format, "config.format", "opsgenie")...)
 		diags.Append(disallowConfigString(m.URL, "config.url", "opsgenie")...)
 		if diags.HasError() {
-			return ChannelConfig{}, diags
+			return nil, diags
 		}
-		cfg.AuthKey = stringPointer(key)
+		return &OpsgenieConfig{
+			ChannelConfigBase: ChannelConfigBase{Type: "opsgenie"},
+			AuthKey:           stringPointer(key),
+		}, diags
+	case "email":
+		// Email config exists in API but not exposed in Terraform yet
+		diags.Append(diag.NewErrorDiagnostic("Invalid channel config", "email channels are not yet supported via Terraform."))
+		return nil, diags
 	default:
 		diags.Append(diag.NewErrorDiagnostic("Invalid channel config", fmt.Sprintf("unsupported config type %q", cfgType)))
-		return ChannelConfig{}, diags
+		return nil, diags
 	}
-	return cfg, diags
 }
 
-func channelConfigAPIToModel(cfg ChannelConfig) (*ChannelConfigModel, diag.Diagnostics) {
+func channelConfigAPIToModel(cfg interface{}) (*ChannelConfigModel, diag.Diagnostics) {
+	// Convert to JSON and back to generic ChannelConfig to determine the type
+	jsonBytes, err := json.Marshal(cfg)
+	if err != nil {
+		return nil, diag.Diagnostics{
+			diag.NewErrorDiagnostic("Invalid channel config", fmt.Sprintf("failed to marshal config: %v", err)),
+		}
+	}
+
+	var genericCfg ChannelConfig
+	if err := json.Unmarshal(jsonBytes, &genericCfg); err != nil {
+		return nil, diag.Diagnostics{
+			diag.NewErrorDiagnostic("Invalid channel config", fmt.Sprintf("failed to unmarshal config: %v", err)),
+		}
+	}
+
 	model := &ChannelConfigModel{
-		Type:    types.StringValue(cfg.Type),
+		Type:    types.StringValue(genericCfg.Type),
 		Format:  types.StringNull(),
 		URL:     types.StringNull(),
 		AuthKey: types.StringNull(),
 	}
 
-	switch cfg.Type {
+	switch genericCfg.Type {
 	case "webhook":
-		if cfg.Format == nil || cfg.URL == nil {
-			return nil, diag.Diagnostics{
-				diag.NewErrorDiagnostic("Invalid channel config", "webhook config missing format or url."),
+		// Type assert to WebhookConfig
+		if webhookCfg, ok := cfg.(*WebhookConfig); ok {
+			if webhookCfg.Format != nil {
+				model.Format = types.StringValue(*webhookCfg.Format)
+			}
+			if webhookCfg.URL != nil {
+				model.URL = types.StringValue(*webhookCfg.URL)
+			}
+		} else {
+			// Fallback to generic fields
+			if genericCfg.Format != nil {
+				model.Format = types.StringValue(*genericCfg.Format)
+			}
+			if genericCfg.URL != nil {
+				model.URL = types.StringValue(*genericCfg.URL)
 			}
 		}
-		model.Format = types.StringValue(*cfg.Format)
-		model.URL = types.StringValue(*cfg.URL)
 	case "opsgenie":
-		if cfg.AuthKey == nil {
-			return nil, diag.Diagnostics{
-				diag.NewErrorDiagnostic("Invalid channel config", "opsgenie config missing auth_key."),
+		// Type assert to OpsgenieConfig
+		if opsgenieCfg, ok := cfg.(*OpsgenieConfig); ok {
+			if opsgenieCfg.AuthKey != nil {
+				model.AuthKey = types.StringValue(*opsgenieCfg.AuthKey)
+			}
+		} else {
+			// Fallback to generic fields
+			if genericCfg.AuthKey != nil {
+				model.AuthKey = types.StringValue(*genericCfg.AuthKey)
 			}
 		}
-		model.AuthKey = types.StringValue(*cfg.AuthKey)
+	case "email":
+		// Email channels exist in API but not exposed in Terraform yet
+		return nil, diag.Diagnostics{
+			diag.NewErrorDiagnostic("Unsupported channel config", "email channels are not yet supported via Terraform."),
+		}
 	default:
 		return nil, diag.Diagnostics{
-			diag.NewErrorDiagnostic("Invalid channel config", fmt.Sprintf("unsupported config type %q", cfg.Type)),
+			diag.NewErrorDiagnostic("Invalid channel config", fmt.Sprintf("unsupported config type %q", genericCfg.Type)),
 		}
 	}
 	return model, nil
@@ -275,7 +319,7 @@ func (r *ChannelResource) Create(ctx context.Context, req resource.CreateRequest
 	if !plan.Active.IsNull() && !plan.Active.IsUnknown() {
 		desired := plan.Active.ValueBool()
 		if desired != out.Active {
-			payload := ChannelUpdate{Active: &desired}
+			payload := ChannelUpdate{Active: NullableFieldValue(desired)}
 			updated, uerr := r.client.UpdateChannel(ctx, out.ID, payload)
 			if uerr != nil {
 				resp.Diagnostics.AddError("Create channel failed", fmt.Sprintf("setting active flag: %v", uerr))
@@ -354,12 +398,12 @@ func (r *ChannelResource) Update(ctx context.Context, req resource.UpdateRequest
 	var payload ChannelUpdate
 	if !plan.Name.IsNull() && !plan.Name.IsUnknown() {
 		v := plan.Name.ValueString()
-		payload.Label = &v
+		payload.Label = NullableFieldValue(v)
 	}
 	if !plan.Active.IsNull() && !plan.Active.IsUnknown() {
 		v := plan.Active.ValueBool()
 		if state.Active.IsNull() || state.Active.IsUnknown() || state.Active.ValueBool() != v {
-			payload.Active = &v
+			payload.Active = NullableFieldValue(v)
 		}
 	}
 	if plan.Config != nil {
