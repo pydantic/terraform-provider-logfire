@@ -27,12 +27,17 @@ type WriteTokenResource struct {
 	client *APIClient
 }
 
+const writeTokenDescriptionValue = "Created by OAuth Application"
+
 type WriteTokenModel struct {
-	ID          types.String `tfsdk:"id"`
-	ProjectID   types.String `tfsdk:"project_id"`
-	Description types.String `tfsdk:"description"`
-	Token       types.String `tfsdk:"token"`
-	CreatedAt   types.String `tfsdk:"created_at"`
+	ID            types.String `tfsdk:"id"`
+	ProjectID     types.String `tfsdk:"project_id"`
+	Description   types.String `tfsdk:"description"`
+	Token         types.String `tfsdk:"token"`
+	CreatedAt     types.String `tfsdk:"created_at"`
+	ProjectName   types.String `tfsdk:"project_name"`
+	CreatedByName types.String `tfsdk:"created_by_name"`
+	TokenPrefix   types.String `tfsdk:"token_prefix"`
 }
 
 func (r *WriteTokenResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -61,10 +66,10 @@ func (r *WriteTokenResource) Schema(ctx context.Context, req resource.SchemaRequ
 				},
 			},
 			"description": rschema.StringAttribute{
-				Optional:            true,
-				MarkdownDescription: "Optional description to help identify the token.",
+				Computed:            true,
+				MarkdownDescription: "Description is fixed to \"Created by OAuth Application\" for provider-managed tokens.",
 				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
+					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
 			"token": rschema.StringAttribute{
@@ -78,6 +83,27 @@ func (r *WriteTokenResource) Schema(ctx context.Context, req resource.SchemaRequ
 			"created_at": rschema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "Timestamp when the token was created.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"project_name": rschema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Name of the project that owns the token.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"created_by_name": rschema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Display name of the user that created the token.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"token_prefix": rschema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Prefix of the generated write token.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
@@ -98,14 +124,10 @@ func (r *WriteTokenResource) Configure(ctx context.Context, req resource.Configu
 	r.client = c
 }
 
-func writeTokenCreatePayload(m *WriteTokenModel) WriteTokenCreate {
-	var desc *string
-	if m != nil && !m.Description.IsNull() && !m.Description.IsUnknown() {
-		v := m.Description.ValueString()
-		desc = &v
-	}
+func writeTokenCreatePayload() WriteTokenCreate {
+	desc := writeTokenDescriptionValue
 	return WriteTokenCreate{
-		Description: desc,
+		Description: &desc,
 	}
 }
 
@@ -122,7 +144,7 @@ func (r *WriteTokenResource) Create(ctx context.Context, req resource.CreateRequ
 	}
 
 	projectID := plan.ProjectID.ValueString()
-	payload := writeTokenCreatePayload(&plan)
+	payload := writeTokenCreatePayload()
 
 	out, err := r.client.CreateWriteToken(ctx, projectID, payload)
 	if err != nil {
@@ -147,12 +169,25 @@ func (r *WriteTokenResource) Create(ctx context.Context, req resource.CreateRequ
 		} else {
 			state.CreatedAt = types.StringNull()
 		}
+		if out.ProjectName != "" {
+			state.ProjectName = types.StringValue(out.ProjectName)
+		} else {
+			state.ProjectName = types.StringNull()
+		}
+		if out.CreatedByName != nil {
+			state.CreatedByName = types.StringValue(*out.CreatedByName)
+		} else {
+			state.CreatedByName = types.StringNull()
+		}
+		if out.TokenPrefix != "" {
+			state.TokenPrefix = types.StringValue(out.TokenPrefix)
+		} else {
+			state.TokenPrefix = types.StringNull()
+		}
 		if out.Description != nil {
 			state.Description = types.StringValue(*out.Description)
-		} else if !plan.Description.IsNull() && !plan.Description.IsUnknown() {
-			state.Description = plan.Description
 		} else {
-			state.Description = types.StringNull()
+			state.Description = types.StringValue(writeTokenDescriptionValue)
 		}
 		if out.Token != nil {
 			state.Token = types.StringValue(*out.Token)
@@ -163,12 +198,11 @@ func (r *WriteTokenResource) Create(ctx context.Context, req resource.CreateRequ
 		state.ID = types.StringNull()
 		state.ProjectID = types.StringValue(projectID)
 		state.CreatedAt = types.StringNull()
+		state.ProjectName = types.StringNull()
+		state.CreatedByName = types.StringNull()
+		state.TokenPrefix = types.StringNull()
 		state.Token = types.StringNull()
-		if !plan.Description.IsNull() && !plan.Description.IsUnknown() {
-			state.Description = plan.Description
-		} else {
-			state.Description = types.StringNull()
-		}
+		state.Description = types.StringValue(writeTokenDescriptionValue)
 	}
 
 	tflog.Trace(ctx, "created write token", map[string]any{"id": state.ID.ValueString(), "project_id": state.ProjectID.ValueString()})
@@ -223,11 +257,26 @@ func (r *WriteTokenResource) Read(ctx context.Context, req resource.ReadRequest,
 	} else {
 		newState.CreatedAt = state.CreatedAt
 	}
+	if found.ProjectName != "" {
+		newState.ProjectName = types.StringValue(found.ProjectName)
+	} else {
+		newState.ProjectName = state.ProjectName
+	}
+	if found.CreatedByName != nil {
+		newState.CreatedByName = types.StringValue(*found.CreatedByName)
+	} else {
+		newState.CreatedByName = state.CreatedByName
+	}
+	if found.TokenPrefix != "" {
+		newState.TokenPrefix = types.StringValue(found.TokenPrefix)
+	} else {
+		newState.TokenPrefix = state.TokenPrefix
+	}
 
 	if found.Description != nil {
 		newState.Description = types.StringValue(*found.Description)
 	} else {
-		newState.Description = state.Description
+		newState.Description = types.StringValue(writeTokenDescriptionValue)
 	}
 
 	if found.Token != nil {

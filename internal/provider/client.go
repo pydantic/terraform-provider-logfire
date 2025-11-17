@@ -303,7 +303,7 @@ func (c *APIClient) DeleteAlert(ctx context.Context, org, project, id string) er
 
 // ---- Channels ----
 
-// Base channel config - never used directly, only for embedding
+// Base channel config - never used directly, only for embedding.
 type ChannelConfigBase struct {
 	Type string `json:"type"`
 }
@@ -324,7 +324,7 @@ type OpsgenieConfig struct {
 	AuthKey *string `json:"auth_key,omitempty"`
 }
 
-// ChannelConfig represents any channel config (used for unmarshaling)
+// ChannelConfig represents any channel config (used for unmarshaling).
 type ChannelConfig struct {
 	Type    string  `json:"type"`
 	Format  *string `json:"format,omitempty"`
@@ -401,11 +401,14 @@ func (c *APIClient) DeleteChannel(ctx context.Context, id string) error {
 // ---- Write Tokens ----
 
 type WriteToken struct {
-	ID          string  `json:"id"`
-	ProjectID   string  `json:"project_id"`
-	CreatedAt   string  `json:"created_at"`
-	Description *string `json:"description"`
-	Token       *string `json:"token,omitempty"`
+	ID            string  `json:"id"`
+	ProjectID     string  `json:"project_id"`
+	CreatedAt     string  `json:"created_at"`
+	Description   *string `json:"description"`
+	Token         *string `json:"token,omitempty"`
+	ProjectName   string  `json:"project_name"`
+	CreatedByName *string `json:"created_by_name"`
+	TokenPrefix   string  `json:"token_prefix"`
 }
 
 type WriteTokenCreate struct {
