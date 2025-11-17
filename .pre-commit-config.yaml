@@ -1,7 +1,7 @@
 # .pre-commit-config.yaml
 # Fast, auto-fixers on commit; heavier checks on push.
 minimum_pre_commit_version: "3.0.0"
-default_stages: [commit]
+default_stages: [pre-commit]
 
 repos:
   - repo: local
@@ -43,14 +43,14 @@ repos:
         entry: make build
         language: system
         pass_filenames: false
-        stages: [push]
+        stages: [pre-push]
 
       - id: go-test
         name: unit tests on push (make test)
         entry: make test
         language: system
         pass_filenames: false
-        stages: [push]
+        stages: [pre-push]
 
       # --- Optional: manual acceptance tests (very slow) ---
       - id: go-testacc

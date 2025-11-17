@@ -19,12 +19,12 @@ Manages a Logfire write token.
 
 - `project_id` (String) UUID of the project that owns the token.
 
-### Optional
-
-- `description` (String) Optional description to help identify the token.
-
 ### Read-Only
 
 - `created_at` (String) Timestamp when the token was created.
+- `created_by_name` (String) Display name of the user that created the token.
+- `description` (String) Description is fixed to "Created by OAuth Application" for provider-managed tokens.
 - `id` (String) Write token identifier.
+- `project_name` (String) Name of the project that owns the token.
 - `token` (String, Sensitive) The generated write token. Only returned on creation.
+- `token_prefix` (String) Prefix of the generated write token.
