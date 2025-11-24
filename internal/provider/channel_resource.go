@@ -444,6 +444,10 @@ func (r *ChannelResource) Delete(ctx context.Context, req resource.DeleteRequest
 	id := state.ID.ValueString()
 
 	if err := r.client.DeleteChannel(ctx, id); err != nil {
+		if isRateLimitError(err) {
+			resp.Diagnostics.AddError("Delete channel", fmt.Sprintf("rate limited while deleting channel: %v", err))
+			return
+		}
 		// If already gone, treat as successful delete but log warning
 		resp.Diagnostics.AddWarning("Delete channel", fmt.Sprintf("delete returned error: %v", err))
 	}
