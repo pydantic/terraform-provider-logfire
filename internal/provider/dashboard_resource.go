@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 
 	stringvalidator "github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
@@ -31,12 +32,11 @@ type DashboardResource struct {
 }
 
 type DashboardModel struct {
-	ID           types.String          `tfsdk:"id"`
-	Organization types.String          `tfsdk:"organization"`
-	Project      types.String          `tfsdk:"project"`
-	Name         types.String          `tfsdk:"name"`
-	Slug         types.String          `tfsdk:"slug"`
-	Definition   definitionStringValue `tfsdk:"definition"`
+	ID         types.String          `tfsdk:"id"`
+	ProjectID  types.String          `tfsdk:"project_id"`
+	Name       types.String          `tfsdk:"name"`
+	Slug       types.String          `tfsdk:"slug"`
+	Definition definitionStringValue `tfsdk:"definition"`
 }
 
 func (r *DashboardResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -54,19 +54,9 @@ func (r *DashboardResource) Schema(ctx context.Context, req resource.SchemaReque
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
-			"organization": rschema.StringAttribute{
+			"project_id": rschema.StringAttribute{
 				Required:            true,
-				MarkdownDescription: "Organization slug.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
-				Validators: []validator.String{
-					stringvalidator.LengthAtLeast(1),
-				},
-			},
-			"project": rschema.StringAttribute{
-				Required:            true,
-				MarkdownDescription: "Project slug.",
+				MarkdownDescription: "Project UUID used for API paths.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
@@ -83,7 +73,7 @@ func (r *DashboardResource) Schema(ctx context.Context, req resource.SchemaReque
 			},
 			"slug": rschema.StringAttribute{
 				Required:            true,
-				MarkdownDescription: "Dashboard slug used in URLs and API paths.",
+				MarkdownDescription: "Dashboard slug used in URLs.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
@@ -124,6 +114,18 @@ func (r *DashboardResource) Create(ctx context.Context, req resource.CreateReque
 		return
 	}
 
+	if plan.ProjectID.IsNull() || plan.ProjectID.IsUnknown() || plan.ProjectID.ValueString() == "" {
+		resp.Diagnostics.AddError("Missing project_id", "The dashboard requires a project_id to construct API paths.")
+		return
+	}
+
+	projectID := plan.ProjectID.ValueString()
+	projectName, err := r.projectNameForID(ctx, projectID)
+	if err != nil {
+		resp.Diagnostics.AddError("Resolve project name", err.Error())
+		return
+	}
+
 	_, defRaw, err := normalizeDefinitionString(plan.Definition.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid dashboard definition", err.Error())
@@ -135,39 +137,46 @@ func (r *DashboardResource) Create(ctx context.Context, req resource.CreateReque
 		resp.Diagnostics.AddError("Failed to unmarshal definition", err.Error())
 		return
 	}
-	if meta, ok := defPayload["metadata"].(map[string]any); ok {
-		meta["name"] = plan.Name.ValueString()
-		meta["project"] = plan.Project.ValueString()
+	meta, ok := defPayload["metadata"].(map[string]any)
+	if !ok || meta == nil {
+		meta = map[string]any{}
 	}
+	meta["name"] = plan.Name.ValueString()
+	meta["project"] = projectName
+	defPayload["metadata"] = meta
+
 	finalDefRaw, err := json.Marshal(defPayload)
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to marshal definition", err.Error())
 		return
 	}
 
-	org := plan.Organization.ValueString()
-	prj := plan.Project.ValueString()
 	payload := DashboardCreateRequest{
 		Name:       plan.Name.ValueString(),
 		Slug:       plan.Slug.ValueString(),
 		Definition: finalDefRaw,
 	}
 
-	out, err := r.client.CreateDashboard(ctx, org, prj, payload)
+	out, err := r.client.CreateDashboard(ctx, projectID, payload)
 	if err != nil {
 		resp.Diagnostics.AddError("Create dashboard failed", err.Error())
 		return
 	}
 
 	var state DashboardModel
-	state.Organization = plan.Organization
-	state.Project = plan.Project
 	if err := dashboardReadToModel(out, &state); err != nil {
 		resp.Diagnostics.AddError("Decode dashboard response", err.Error())
 		return
 	}
+	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
+		state.ProjectID = types.StringValue(projectID)
+	}
 
-	tflog.Trace(ctx, "created dashboard", map[string]any{"slug": state.Slug.ValueString(), "org": org, "project": prj})
+	tflog.Trace(ctx, "created dashboard", map[string]any{
+		"dashboard_id": state.ID.ValueString(),
+		"project_id":   state.ProjectID.ValueString(),
+		"slug":         state.Slug.ValueString(),
+	})
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -183,11 +192,19 @@ func (r *DashboardResource) Read(ctx context.Context, req resource.ReadRequest, 
 		return
 	}
 
-	org := state.Organization.ValueString()
-	prj := state.Project.ValueString()
-	slug := state.Slug.ValueString()
+	if state.ID.IsNull() || state.ID.IsUnknown() {
+		resp.Diagnostics.AddError("Missing ID", "Cannot read dashboard because the state is missing an ID.")
+		return
+	}
 
-	detail, status, err := r.client.GetDashboard(ctx, org, prj, slug)
+	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
+		resp.Diagnostics.AddError("Missing project_id", "Cannot read dashboard because the state is missing a project_id.")
+		return
+	}
+
+	projectID := state.ProjectID.ValueString()
+
+	detail, status, err := r.client.GetDashboard(ctx, projectID, state.ID.ValueString())
 	if err != nil {
 		if status == 404 {
 			resp.State.RemoveResource(ctx)
@@ -204,6 +221,7 @@ func (r *DashboardResource) Read(ctx context.Context, req resource.ReadRequest, 
 	}
 
 	state.Definition = newDefinitionStringValue(defStr)
+	state.ProjectID = types.StringValue(projectID)
 	if name, ok := dashboardDefinitionName(detail.Dashboard); ok && name != "" {
 		state.Name = types.StringValue(name)
 	}
@@ -229,9 +247,23 @@ func (r *DashboardResource) Update(ctx context.Context, req resource.UpdateReque
 		return
 	}
 
-	org := state.Organization.ValueString()
-	prj := state.Project.ValueString()
-	slug := state.Slug.ValueString()
+	if state.ID.IsNull() || state.ID.IsUnknown() {
+		resp.Diagnostics.AddError("Missing ID", "Cannot update dashboard because the current state has no ID.")
+		return
+	}
+
+	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
+		resp.Diagnostics.AddError("Missing project_id", "Cannot update dashboard because the current state has no project_id.")
+		return
+	}
+
+	projectID := state.ProjectID.ValueString()
+	projectName, err := r.projectNameForID(ctx, projectID)
+	if err != nil {
+		resp.Diagnostics.AddError("Resolve project name", err.Error())
+		return
+	}
+	dashboardID := state.ID.ValueString()
 
 	var planDefStr string
 	var planDefRaw json.RawMessage
@@ -249,10 +281,13 @@ func (r *DashboardResource) Update(ctx context.Context, req resource.UpdateReque
 			resp.Diagnostics.AddError("Failed to unmarshal definition", err.Error())
 			return
 		}
-		if meta, ok := defPayload["metadata"].(map[string]any); ok {
-			meta["name"] = plan.Name.ValueString()
-			meta["project"] = plan.Project.ValueString()
+		meta, ok := defPayload["metadata"].(map[string]any)
+		if !ok || meta == nil {
+			meta = map[string]any{}
 		}
+		meta["name"] = plan.Name.ValueString()
+		meta["project"] = projectName
+		defPayload["metadata"] = meta
 		planDefRaw, err = json.Marshal(defPayload)
 		if err != nil {
 			resp.Diagnostics.AddError("Failed to marshal definition", err.Error())
@@ -285,18 +320,20 @@ func (r *DashboardResource) Update(ctx context.Context, req resource.UpdateReque
 		return
 	}
 
-	out, err := r.client.UpdateDashboard(ctx, org, prj, slug, payload)
+	out, err := r.client.UpdateDashboard(ctx, projectID, dashboardID, payload)
 	if err != nil {
 		resp.Diagnostics.AddError("Update dashboard failed", err.Error())
 		return
 	}
 
 	var newState DashboardModel
-	newState.Organization = state.Organization
-	newState.Project = state.Project
+	newState.ProjectID = types.StringValue(projectID)
 	if err := dashboardReadToModel(out, &newState); err != nil {
 		resp.Diagnostics.AddError("Decode dashboard response", err.Error())
 		return
+	}
+	if newState.ProjectID.IsNull() || newState.ProjectID.IsUnknown() || newState.ProjectID.ValueString() == "" {
+		newState.ProjectID = types.StringValue(projectID)
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &newState)...)
@@ -314,41 +351,85 @@ func (r *DashboardResource) Delete(ctx context.Context, req resource.DeleteReque
 		return
 	}
 
-	org := state.Organization.ValueString()
-	prj := state.Project.ValueString()
-	slug := state.Slug.ValueString()
+	if state.ID.IsNull() || state.ID.IsUnknown() {
+		resp.Diagnostics.AddError("Missing ID", "Cannot delete dashboard because the current state has no ID.")
+		return
+	}
 
-	if err := r.client.DeleteDashboard(ctx, org, prj, slug); err != nil {
+	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
+		resp.Diagnostics.AddError("Missing project_id", "Cannot delete dashboard because the current state has no project_id.")
+		return
+	}
+
+	projectID := state.ProjectID.ValueString()
+	dashboardID := state.ID.ValueString()
+
+	if err := r.client.DeleteDashboard(ctx, projectID, dashboardID); err != nil {
+		if isRateLimitError(err) {
+			resp.Diagnostics.AddError("Delete dashboard", fmt.Sprintf("rate limited while deleting dashboard: %v", err))
+			return
+		}
 		resp.Diagnostics.AddWarning("Delete dashboard", fmt.Sprintf("delete returned error: %v", err))
 	}
 }
 
 func (r *DashboardResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	if req.ID == "" {
+	rawID := strings.TrimSpace(req.ID)
+	if rawID == "" {
 		resp.Diagnostics.AddError(
 			"Missing import ID",
-			`Expected a non-empty ID. Use: terraform import logfire_dashboard.prod "organization/project/slug"`,
+			`Expected a non-empty ID. Use: terraform import logfire_dashboard.prod "project_id/dashboard_id/slug"`,
 		)
 		return
 	}
 
-	parts := strings.Split(req.ID, "/")
-	switch len(parts) {
-	case 3:
-		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("organization"), parts[0])...)
-		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("project"), parts[1])...)
-		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("slug"), parts[2])...)
-	case 1:
-		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("slug"), parts[0])...)
-	default:
+	parts := strings.FieldsFunc(rawID, func(r rune) bool { return r == '/' || r == ',' || r == '|' })
+	if len(parts) != 3 {
 		resp.Diagnostics.AddError(
 			"Invalid import ID",
-			`Expected "organization/project/slug" or "slug".`,
+			`Expected "project_id/dashboard_id/slug" (also accepts "project_id,dashboard_id,slug" or "project_id|dashboard_id|slug").`,
 		)
+		return
 	}
+
+	projectID := strings.TrimSpace(parts[0])
+	dashboardID := strings.TrimSpace(parts[1])
+	slug := strings.TrimSpace(parts[2])
+	if projectID == "" || dashboardID == "" || slug == "" {
+		resp.Diagnostics.AddError(
+			"Invalid import ID",
+			`Expected "project_id/dashboard_id/slug" with non-empty values.`,
+		)
+		return
+	}
+
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("project_id"), projectID)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), dashboardID)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("slug"), slug)...)
 }
 
 // --- Helpers ---
+
+func (r *DashboardResource) projectNameForID(ctx context.Context, projectID string) (string, error) {
+	if r.client == nil {
+		return "", fmt.Errorf("provider is not configured")
+	}
+	if projectID == "" {
+		return "", fmt.Errorf("project_id is empty")
+	}
+
+	project, status, err := r.client.GetProject(ctx, projectID)
+	if err != nil {
+		if status == http.StatusNotFound {
+			return "", fmt.Errorf("project %q not found", projectID)
+		}
+		return "", fmt.Errorf("fetch project %q: %w", projectID, err)
+	}
+	if project.ProjectName == "" {
+		return "", fmt.Errorf("project %q returned empty name", projectID)
+	}
+	return project.ProjectName, nil
+}
 
 func normalizeDefinitionString(raw string) (string, json.RawMessage, error) {
 	var payload map[string]any
@@ -383,10 +464,10 @@ func scrubDefinitionMetadata(payload map[string]any) {
 	if metaVal, ok := payload["metadata"]; ok {
 		if meta, ok := metaVal.(map[string]any); ok {
 			delete(meta, "name")
+			delete(meta, "project")
 			delete(meta, "createdAt")
 			delete(meta, "updatedAt")
 			delete(meta, "version")
-			delete(meta, "project")
 			payload["metadata"] = meta
 		}
 	}
@@ -410,6 +491,11 @@ func dashboardReadToModel(d *Dashboard, m *DashboardModel) error {
 		return err
 	}
 	m.ID = types.StringValue(d.ID)
+	if d.ProjectID == "" {
+		m.ProjectID = types.StringNull()
+	} else {
+		m.ProjectID = types.StringValue(d.ProjectID)
+	}
 	m.Name = types.StringValue(d.DashboardName)
 	m.Slug = types.StringValue(d.DashboardSlug)
 	m.Definition = newDefinitionStringValue(defStr)

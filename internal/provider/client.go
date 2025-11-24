@@ -474,25 +474,25 @@ type GetDashboardResponse struct {
 	Dashboard json.RawMessage `json:"dashboard"`
 }
 
-func (c *APIClient) dashboardsBase(org, project string) string {
-	return fmt.Sprintf("ui-api/organizations/%s/projects/%s/dashboards/", url.PathEscape(org), url.PathEscape(project))
+func (c *APIClient) dashboardsBase(projectID string) string {
+	return fmt.Sprintf("api/v1/projects/%s/dashboards/", url.PathEscape(projectID))
 }
-func (c *APIClient) dashboardPath(org, project, slug string) string {
-	return fmt.Sprintf("%s%s/", c.dashboardsBase(org, project), url.PathEscape(slug))
+func (c *APIClient) dashboardPath(projectID, dashboardID string) string {
+	return fmt.Sprintf("%s%s/", c.dashboardsBase(projectID), url.PathEscape(dashboardID))
 }
 
-func (c *APIClient) CreateDashboard(ctx context.Context, org, project string, in DashboardCreateRequest) (*Dashboard, error) {
+func (c *APIClient) CreateDashboard(ctx context.Context, projectID string, in DashboardCreateRequest) (*Dashboard, error) {
 	var out Dashboard
-	_, err := c.doJSON(ctx, http.MethodPost, c.dashboardsBase(org, project), in, &out, http.StatusCreated, http.StatusOK)
+	_, err := c.doJSON(ctx, http.MethodPost, c.dashboardsBase(projectID), in, &out, http.StatusOK, http.StatusCreated)
 	if err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
-func (c *APIClient) GetDashboard(ctx context.Context, org, project, slug string) (*GetDashboardResponse, int, error) {
+func (c *APIClient) GetDashboard(ctx context.Context, projectID, dashboardID string) (*GetDashboardResponse, int, error) {
 	var out GetDashboardResponse
-	resp, err := c.doJSON(ctx, http.MethodGet, c.dashboardPath(org, project, slug), nil, &out, http.StatusOK)
+	resp, err := c.doJSON(ctx, http.MethodGet, c.dashboardPath(projectID, dashboardID), nil, &out, http.StatusOK)
 	if err != nil {
 		if resp != nil {
 			return nil, resp.StatusCode, err
@@ -502,16 +502,16 @@ func (c *APIClient) GetDashboard(ctx context.Context, org, project, slug string)
 	return &out, http.StatusOK, nil
 }
 
-func (c *APIClient) UpdateDashboard(ctx context.Context, org, project, slug string, in DashboardUpdateRequest) (*Dashboard, error) {
+func (c *APIClient) UpdateDashboard(ctx context.Context, projectID, dashboardID string, in DashboardUpdateRequest) (*Dashboard, error) {
 	var out Dashboard
-	_, err := c.doJSON(ctx, http.MethodPut, c.dashboardPath(org, project, slug), in, &out, http.StatusOK)
+	_, err := c.doJSON(ctx, http.MethodPut, c.dashboardPath(projectID, dashboardID), in, &out, http.StatusOK)
 	if err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
-func (c *APIClient) DeleteDashboard(ctx context.Context, org, project, slug string) error {
-	_, err := c.doJSON(ctx, http.MethodDelete, c.dashboardPath(org, project, slug), nil, nil, http.StatusNoContent)
+func (c *APIClient) DeleteDashboard(ctx context.Context, projectID, dashboardID string) error {
+	_, err := c.doJSON(ctx, http.MethodDelete, c.dashboardPath(projectID, dashboardID), nil, nil, http.StatusNoContent)
 	return err
 }

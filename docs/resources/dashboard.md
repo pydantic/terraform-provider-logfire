@@ -19,9 +19,8 @@ Manages a Logfire dashboard.
 
 - `definition` (String) Dashboard definition JSON payload.
 - `name` (String) Dashboard display name.
-- `organization` (String) Organization slug.
-- `project` (String) Project slug.
-- `slug` (String) Dashboard slug used in URLs and API paths.
+- `project_id` (String) Project UUID used for API paths.
+- `slug` (String) Dashboard slug used in URLs.
 
 ### Read-Only
 
