@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	stringvalidator "github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
-	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	rschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -214,6 +213,16 @@ func (r *DashboardResource) Read(ctx context.Context, req resource.ReadRequest, 
 		return
 	}
 
+	metaName := ""
+	var raw map[string]any
+	if err := json.Unmarshal(detail.Dashboard, &raw); err == nil {
+		if meta, ok := raw["metadata"].(map[string]any); ok {
+			if n, ok := meta["name"].(string); ok && n != "" {
+				metaName = n
+			}
+		}
+	}
+
 	defStr, err := normalizeDefinitionRaw(detail.Dashboard)
 	if err != nil {
 		resp.Diagnostics.AddError("Decode dashboard definition", err.Error())
@@ -222,6 +231,9 @@ func (r *DashboardResource) Read(ctx context.Context, req resource.ReadRequest, 
 
 	state.Definition = newDefinitionStringValue(defStr)
 	state.ProjectID = types.StringValue(projectID)
+	if metaName != "" {
+		state.Name = types.StringValue(metaName)
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -370,38 +382,107 @@ func (r *DashboardResource) Delete(ctx context.Context, req resource.DeleteReque
 }
 
 func (r *DashboardResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	if r.client == nil {
+		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
+		return
+	}
+
 	rawID := strings.TrimSpace(req.ID)
 	if rawID == "" {
 		resp.Diagnostics.AddError(
 			"Missing import ID",
-			`Expected a non-empty ID. Use: terraform import logfire_dashboard.prod "project_id/dashboard_id/slug"`,
+			`Expected a non-empty ID. Use either "project_id/dashboard_id/slug" or "project_name/dashboard_slug" (also accepts "," or "|").`,
 		)
 		return
 	}
 
-	parts := strings.FieldsFunc(rawID, func(r rune) bool { return r == '/' || r == ',' || r == '|' })
-	if len(parts) != 3 {
+	parts, err := splitImportParts(rawID, 2, 3)
+	if err != nil {
 		resp.Diagnostics.AddError(
 			"Invalid import ID",
-			`Expected "project_id/dashboard_id/slug" (also accepts "project_id,dashboard_id,slug" or "project_id|dashboard_id|slug").`,
+			`Expected "project_id/dashboard_id/slug" or "project_name/dashboard_slug" (also accepts comma or pipe separators).`,
 		)
 		return
 	}
 
-	projectID := strings.TrimSpace(parts[0])
-	dashboardID := strings.TrimSpace(parts[1])
-	slug := strings.TrimSpace(parts[2])
-	if projectID == "" || dashboardID == "" || slug == "" {
-		resp.Diagnostics.AddError(
-			"Invalid import ID",
-			`Expected "project_id/dashboard_id/slug" with non-empty values.`,
-		)
+	projectKey := parts[0]
+	dashboardKey := parts[1]
+
+	var providedSlug string
+	if len(parts) == 3 {
+		providedSlug = parts[2]
+	}
+
+	projectID, projectName, err := findProjectByNameOrID(ctx, r.client, projectKey)
+	if err != nil {
+		resp.Diagnostics.AddError("Import dashboard failed", err.Error())
 		return
 	}
 
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("project_id"), projectID)...)
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), dashboardID)...)
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("slug"), slug)...)
+	dashboards, err := r.client.ListDashboards(ctx, projectID)
+	if err != nil {
+		resp.Diagnostics.AddError("Import dashboard failed", fmt.Sprintf("listing dashboards for project %q: %v", projectID, err))
+		return
+	}
+
+	var (
+		summary     *DashboardSummary
+		slugMatches []*DashboardSummary
+	)
+	for i := range dashboards {
+		d := &dashboards[i]
+		if d.ID == dashboardKey {
+			summary = d
+			break
+		}
+		// If a slug was provided, prefer it; otherwise fall back to matching the key as slug.
+		slugCandidate := dashboardKey
+		if providedSlug != "" {
+			slugCandidate = providedSlug
+		}
+		if d.DashboardSlug == slugCandidate {
+			slugMatches = append(slugMatches, d)
+		}
+	}
+
+	if summary == nil {
+		if len(slugMatches) == 0 {
+			resp.Diagnostics.AddError("Import dashboard failed", fmt.Sprintf("dashboard %q not found in project %q", dashboardKey, projectName))
+			return
+		}
+		summary = slugMatches[0]
+		if len(slugMatches) > 1 {
+			resp.Diagnostics.AddWarning("Import dashboard", fmt.Sprintf("multiple dashboards with slug %q in project %q; imported the first match", slugMatches[0].DashboardSlug, projectName))
+		}
+	}
+
+	if providedSlug != "" && providedSlug != summary.DashboardSlug {
+		resp.Diagnostics.AddWarning("Import dashboard", fmt.Sprintf("provided slug %q does not match dashboard slug %q; using the dashboard found in the API", providedSlug, summary.DashboardSlug))
+	}
+
+	detail, _, err := r.client.GetDashboard(ctx, projectID, summary.ID)
+	if err != nil {
+		resp.Diagnostics.AddError("Import dashboard failed", fmt.Sprintf("fetching dashboard %q: %v", summary.ID, err))
+		return
+	}
+
+	dashboard := &Dashboard{
+		ID:            summary.ID,
+		ProjectID:     projectID,
+		DashboardName: summary.DashboardName,
+		DashboardSlug: summary.DashboardSlug,
+		Definition:    detail.Dashboard,
+	}
+
+	var state DashboardModel
+	if err := dashboardReadToModel(dashboard, &state); err != nil {
+		resp.Diagnostics.AddError("Decode dashboard response", err.Error())
+		return
+	}
+	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
+		state.ProjectID = types.StringValue(projectID)
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
 // --- Helpers ---

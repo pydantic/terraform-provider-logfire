@@ -312,6 +312,15 @@ func (c *APIClient) DeleteAlert(ctx context.Context, projectID, id string) error
 	return err
 }
 
+func (c *APIClient) ListAlerts(ctx context.Context, projectID string) ([]AlertRead, error) {
+	var out []AlertRead
+	_, err := c.doJSON(ctx, http.MethodGet, c.alertsBase(projectID), nil, &out, http.StatusOK)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ---- Channels ----
 
 // Base channel config - never used directly, only for embedding.
@@ -469,6 +478,17 @@ type DashboardUpdateRequest struct {
 	Definition *json.RawMessage `json:"definition,omitempty"`
 }
 
+type DashboardSummary struct {
+	ID            string  `json:"id"`
+	ProjectID     string  `json:"project_id"`
+	CreatedAt     string  `json:"created_at"`
+	UpdatedAt     *string `json:"updated_at"`
+	CreatedByName *string `json:"created_by_name"`
+	UpdatedByName *string `json:"updated_by_name"`
+	DashboardName string  `json:"dashboard_name"`
+	DashboardSlug string  `json:"dashboard_slug"`
+}
+
 type Dashboard struct {
 	ID            string          `json:"id"`
 	ProjectID     string          `json:"project_id"`
@@ -525,4 +545,13 @@ func (c *APIClient) UpdateDashboard(ctx context.Context, projectID, dashboardID 
 func (c *APIClient) DeleteDashboard(ctx context.Context, projectID, dashboardID string) error {
 	_, err := c.doJSON(ctx, http.MethodDelete, c.dashboardPath(projectID, dashboardID), nil, nil, http.StatusNoContent)
 	return err
+}
+
+func (c *APIClient) ListDashboards(ctx context.Context, projectID string) ([]DashboardSummary, error) {
+	var out []DashboardSummary
+	_, err := c.doJSON(ctx, http.MethodGet, c.dashboardsBase(projectID), nil, &out, http.StatusOK)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }

@@ -13,7 +13,6 @@ import (
 
 	stringvalidator "github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
-	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	rschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -542,31 +541,83 @@ func (r *AlertResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 }
 
 func (r *AlertResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	if req.ID == "" {
+	if r.client == nil {
+		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
+		return
+	}
+
+	rawID := strings.TrimSpace(req.ID)
+	if rawID == "" {
 		resp.Diagnostics.AddError(
 			"Missing import ID",
-			`Expected a non-empty ID. Use: terraform import logfire_alert.prod "project_id/alert_id"`,
+			`Expected a non-empty ID. Use either "project_id/alert_id" or "project_name/alert_name" (also accepts "," or "|").`,
 		)
 		return
 	}
 
-	parts := strings.Split(req.ID, "/")
-	if len(parts) != 2 {
+	parts, err := splitImportParts(rawID, 2)
+	if err != nil {
 		resp.Diagnostics.AddError(
 			"Invalid import ID",
-			`Expected "project_id/alert_id".`,
+			`Expected "project_id/alert_id" or "project_name/alert_name" (also accepts "project,alert" or "project|alert").`,
 		)
 		return
 	}
-	projectID := parts[0]
-	alertID := parts[1]
-	if projectID == "" || alertID == "" {
-		resp.Diagnostics.AddError(
-			"Invalid import ID",
-			`Expected "project_id/alert_id".`,
-		)
+
+	projectKey := parts[0]
+	alertKey := parts[1]
+
+	projectID, projectName, err := findProjectByNameOrID(ctx, r.client, projectKey)
+	if err != nil {
+		resp.Diagnostics.AddError("Import alert failed", err.Error())
 		return
 	}
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("project_id"), projectID)...)
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), alertID)...)
+
+	alerts, err := r.client.ListAlerts(ctx, projectID)
+	if err != nil {
+		resp.Diagnostics.AddError("Import alert failed", fmt.Sprintf("listing alerts for project %q: %v", projectID, err))
+		return
+	}
+
+	var (
+		match       *AlertRead
+		nameMatches []*AlertRead
+	)
+	for i := range alerts {
+		a := &alerts[i]
+		if a.ID == alertKey {
+			match = a
+			break
+		}
+		if a.Name == alertKey {
+			nameMatches = append(nameMatches, a)
+		}
+	}
+	if match == nil {
+		if len(nameMatches) == 0 {
+			resp.Diagnostics.AddError("Import alert failed", fmt.Sprintf("alert %q not found in project %q", alertKey, projectName))
+			return
+		}
+		match = nameMatches[0]
+		if len(nameMatches) > 1 {
+			resp.Diagnostics.AddWarning("Import alert", fmt.Sprintf("multiple alerts named %q in project %q; imported the first match", alertKey, projectName))
+		}
+	}
+
+	alert, _, err := r.client.GetAlert(ctx, projectID, match.ID)
+	if err != nil {
+		resp.Diagnostics.AddError("Import alert failed", fmt.Sprintf("fetching alert %q: %v", match.ID, err))
+		return
+	}
+
+	var state AlertModel
+	state.ProjectID = types.StringValue(projectID)
+	if diags := alertReadToModel(ctx, alert, &state); diags.HasError() {
+		resp.Diagnostics.Append(diags...)
+		return
+	}
+	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
+		state.ProjectID = types.StringValue(projectID)
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }

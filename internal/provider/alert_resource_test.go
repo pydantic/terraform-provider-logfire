@@ -72,6 +72,15 @@ func TestAccAlertResource(t *testing.T) {
 				},
 			},
 			{
+				ResourceName:      "logfire_alert.test",
+				ImportState:       true,
+				ImportStateVerify: true,
+				ImportStateIdFunc: func(s *terraform.State) (string, error) {
+					// Import by project name + alert name
+					return fmt.Sprintf("%s/%s", projectName, alertName), nil
+				},
+			},
+			{
 				Config: testAccAlertResourceConfig(
 					projectName,
 					channelPrimaryName,
