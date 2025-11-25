@@ -222,9 +222,6 @@ func (r *DashboardResource) Read(ctx context.Context, req resource.ReadRequest, 
 
 	state.Definition = newDefinitionStringValue(defStr)
 	state.ProjectID = types.StringValue(projectID)
-	if name, ok := dashboardDefinitionName(detail.Dashboard); ok && name != "" {
-		state.Name = types.StringValue(name)
-	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -275,7 +272,6 @@ func (r *DashboardResource) Update(ctx context.Context, req resource.UpdateReque
 			return
 		}
 
-		// Set metadata.name to the resource name
 		var defPayload map[string]any
 		if err := json.Unmarshal(planDefRaw, &defPayload); err != nil {
 			resp.Diagnostics.AddError("Failed to unmarshal definition", err.Error())
@@ -471,18 +467,6 @@ func scrubDefinitionMetadata(payload map[string]any) {
 			payload["metadata"] = meta
 		}
 	}
-}
-
-func dashboardDefinitionName(raw json.RawMessage) (string, bool) {
-	var payload struct {
-		Metadata struct {
-			Name string `json:"name"`
-		} `json:"metadata"`
-	}
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return "", false
-	}
-	return payload.Metadata.Name, payload.Metadata.Name != ""
 }
 
 func dashboardReadToModel(d *Dashboard, m *DashboardModel) error {
