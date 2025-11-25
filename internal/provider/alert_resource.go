@@ -374,6 +374,11 @@ func (r *AlertResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 
+	if state.ID.IsNull() || state.ID.IsUnknown() || state.ID.ValueString() == "" {
+		resp.Diagnostics.AddError("Missing ID", "Cannot read alert because the state is missing an ID.")
+		return
+	}
+
 	projectID := state.ProjectID.ValueString()
 	id := state.ID.ValueString()
 
