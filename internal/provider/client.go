@@ -224,21 +224,32 @@ func (c *APIClient) ListProjects(ctx context.Context) ([]ProjectRead, error) {
 // ---- Alerts ----
 
 type AlertRead struct {
-	ID          string        `json:"id"`
-	Name        string        `json:"name"`
-	Description string        `json:"description"`
-	Query       string        `json:"query"`
-	TimeWindow  string        `json:"time_window"`
-	Frequency   string        `json:"frequency"`
-	Watermark   string        `json:"watermark"`
-	Channels    []ChannelRead `json:"channels"`
-	NotifyWhen  string        `json:"notify_when"`
-	Active      bool          `json:"active"`
+	ID             string          `json:"id"`
+	OrganizationID string          `json:"organization_id"`
+	ProjectID      string          `json:"project_id"`
+	CreatedAt      string          `json:"created_at"`
+	UpdatedAt      *string         `json:"updated_at"`
+	CreatedByName  *string         `json:"created_by_name"`
+	UpdatedByName  *string         `json:"updated_by_name"`
+	Name           string          `json:"name"`
+	Description    *string         `json:"description"`
+	Query          string          `json:"query"`
+	TimeWindow     string          `json:"time_window"`
+	Frequency      string          `json:"frequency"`
+	Watermark      string          `json:"watermark"`
+	Channels       []ChannelRead   `json:"channels"`
+	NotifyWhen     string          `json:"notify_when"`
+	Active         bool            `json:"active"`
+	LastRun        *string         `json:"last_run,omitempty"`
+	HasMatches     *bool           `json:"has_matches,omitempty"`
+	HasErrors      *bool           `json:"has_errors,omitempty"`
+	Result         json.RawMessage `json:"result,omitempty"`
+	ResultLength   *int            `json:"result_length,omitempty"`
 }
 
 type AlertCreate struct {
 	Name        string   `json:"name"`
-	Description string   `json:"description"`
+	Description *string  `json:"description"`
 	Query       string   `json:"query"`
 	TimeWindow  string   `json:"time_window"`
 	Frequency   string   `json:"frequency"`
@@ -259,25 +270,25 @@ type AlertUpdate struct {
 	NotifyWhen  *string   `json:"notify_when,omitempty"`
 }
 
-func (c *APIClient) alertsBase(org, project string) string {
-	return fmt.Sprintf("ui-api/organizations/%s/projects/%s/alerts/", url.PathEscape(org), url.PathEscape(project))
+func (c *APIClient) alertsBase(projectID string) string {
+	return fmt.Sprintf("api/v1/projects/%s/alerts/", url.PathEscape(projectID))
 }
-func (c *APIClient) alertPath(org, project, id string) string {
-	return fmt.Sprintf("%s%s/", c.alertsBase(org, project), url.PathEscape(id))
+func (c *APIClient) alertPath(projectID, id string) string {
+	return fmt.Sprintf("%s%s/", c.alertsBase(projectID), url.PathEscape(id))
 }
 
-func (c *APIClient) CreateAlert(ctx context.Context, org, project string, in AlertCreate) (*AlertRead, error) {
+func (c *APIClient) CreateAlert(ctx context.Context, projectID string, in AlertCreate) (*AlertRead, error) {
 	var out AlertRead
-	_, err := c.doJSON(ctx, http.MethodPost, c.alertsBase(org, project), in, &out, http.StatusCreated)
+	_, err := c.doJSON(ctx, http.MethodPost, c.alertsBase(projectID), in, &out, http.StatusCreated)
 	if err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
-func (c *APIClient) GetAlert(ctx context.Context, org, project, id string) (*AlertRead, int, error) {
+func (c *APIClient) GetAlert(ctx context.Context, projectID, id string) (*AlertRead, int, error) {
 	var out AlertRead
-	resp, err := c.doJSON(ctx, http.MethodGet, c.alertPath(org, project, id), nil, &out, http.StatusOK)
+	resp, err := c.doJSON(ctx, http.MethodGet, c.alertPath(projectID, id), nil, &out, http.StatusOK)
 	if err != nil {
 		if resp != nil {
 			return nil, resp.StatusCode, err
@@ -287,17 +298,17 @@ func (c *APIClient) GetAlert(ctx context.Context, org, project, id string) (*Ale
 	return &out, http.StatusOK, nil
 }
 
-func (c *APIClient) UpdateAlert(ctx context.Context, org, project, id string, in AlertUpdate) (*AlertRead, error) {
+func (c *APIClient) UpdateAlert(ctx context.Context, projectID, id string, in AlertUpdate) (*AlertRead, error) {
 	var out AlertRead
-	_, err := c.doJSON(ctx, http.MethodPut, c.alertPath(org, project, id), in, &out, http.StatusOK)
+	_, err := c.doJSON(ctx, http.MethodPut, c.alertPath(projectID, id), in, &out, http.StatusOK)
 	if err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
-func (c *APIClient) DeleteAlert(ctx context.Context, org, project, id string) error {
-	_, err := c.doJSON(ctx, http.MethodDelete, c.alertPath(org, project, id), nil, nil, http.StatusNoContent)
+func (c *APIClient) DeleteAlert(ctx context.Context, projectID, id string) error {
+	_, err := c.doJSON(ctx, http.MethodDelete, c.alertPath(projectID, id), nil, nil, http.StatusNoContent)
 	return err
 }
 

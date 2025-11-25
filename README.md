@@ -24,7 +24,6 @@ provider "logfire" {
 }
 
 resource "logfire_project" "prod" {
-  organization = "my-org"
   name         = "production"
   description  = "Prod observability project"
 }
@@ -42,8 +41,7 @@ resource "logfire_channel" "alerts" {
 }
 
 resource "logfire_alert" "execution_errors" {
-  organization = logfire_project.prod.organization
-  project      = logfire_project.prod.name
+  project_id   = logfire_project.prod.id
   name         = "execution-errors"
   query        = "select * from records where span_name = 'Alert execution error occurred'"
   time_window  = "24h"

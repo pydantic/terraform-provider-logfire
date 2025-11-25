@@ -19,7 +19,6 @@ import (
 func TestAccAlertResource(t *testing.T) {
 	t.Parallel()
 
-	org := "terraform-provider-logfire"
 	projectName := fmt.Sprintf("acc-test-alert-%s", acctest.RandStringFromCharSet(6, acctest.CharSetAlphaNum))
 	channelPrimaryName := fmt.Sprintf("acc-alert-channel-%s", acctest.RandStringFromCharSet(6, acctest.CharSetAlphaNum))
 	channelSecondaryName := fmt.Sprintf("%s-secondary", channelPrimaryName)
@@ -32,12 +31,11 @@ func TestAccAlertResource(t *testing.T) {
 		Steps: []resource.TestStep{
 			{
 				Config: testAccAlertResourceConfig(
-					org,
 					projectName,
 					channelPrimaryName,
 					channelSecondaryName,
 					alertName,
-					"Initial alert description",
+					stringPtr("Initial alert description"),
 					"select 1",
 					"5m",
 					"5m",
@@ -47,8 +45,7 @@ func TestAccAlertResource(t *testing.T) {
 				),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("id"), knownvalue.NotNull()),
-					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("organization"), knownvalue.StringExact(org)),
-					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("project"), knownvalue.StringExact(projectName)),
+					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("project_id"), knownvalue.NotNull()),
 					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("name"), knownvalue.StringExact(alertName)),
 					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("description"), knownvalue.StringExact("Initial alert description")),
 					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("query"), knownvalue.StringExact("select 1")),
@@ -69,20 +66,18 @@ func TestAccAlertResource(t *testing.T) {
 					if !ok || resourceState.Primary == nil {
 						return "", fmt.Errorf("resource state not found in root module")
 					}
-					org := resourceState.Primary.Attributes["organization"]
-					project := resourceState.Primary.Attributes["project"]
+					projectID := resourceState.Primary.Attributes["project_id"]
 					id := resourceState.Primary.Attributes["id"]
-					return fmt.Sprintf("%s/%s/%s", org, project, id), nil
+					return fmt.Sprintf("%s/%s", projectID, id), nil
 				},
 			},
 			{
 				Config: testAccAlertResourceConfig(
-					org,
 					projectName,
 					channelPrimaryName,
 					channelSecondaryName,
 					alertName,
-					"Initial alert description",
+					stringPtr("Initial alert description"),
 					"select 1",
 					"5m",
 					"5m",
@@ -98,12 +93,11 @@ func TestAccAlertResource(t *testing.T) {
 			},
 			{
 				Config: testAccAlertResourceConfig(
-					org,
 					projectName,
 					channelPrimaryName,
 					channelSecondaryName,
 					alertUpdatedName,
-					"Updated alert description",
+					stringPtr("Updated alert description"),
 					"select 2",
 					"1m",
 					"1m",
@@ -127,24 +121,78 @@ func TestAccAlertResource(t *testing.T) {
 	})
 }
 
-func testAccAlertResourceConfig(org, projectName, channelPrimaryName, channelSecondaryName, alertName, description, query, timeWindow, frequency, notifyWhen string, active bool, includeSecondary bool) string {
+func TestAccAlertResourceClearsDescription(t *testing.T) {
+	t.Parallel()
+
+	projectName := fmt.Sprintf("acc-test-alert-desc-%s", acctest.RandStringFromCharSet(6, acctest.CharSetAlphaNum))
+	channelPrimaryName := fmt.Sprintf("acc-alert-channel-%s", acctest.RandStringFromCharSet(6, acctest.CharSetAlphaNum))
+	channelSecondaryName := fmt.Sprintf("%s-secondary", channelPrimaryName)
+	alertName := fmt.Sprintf("acc-alert-%s", acctest.RandStringFromCharSet(6, acctest.CharSetAlphaNum))
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAlertResourceConfig(
+					projectName,
+					channelPrimaryName,
+					channelSecondaryName,
+					alertName,
+					stringPtr("Initial alert description"),
+					"select 1",
+					"5m",
+					"5m",
+					"has_matches",
+					true,
+					false,
+				),
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("description"), knownvalue.StringExact("Initial alert description")),
+				},
+			},
+			{
+				Config: testAccAlertResourceConfig(
+					projectName,
+					channelPrimaryName,
+					channelSecondaryName,
+					alertName,
+					nil,
+					"select 1",
+					"5m",
+					"5m",
+					"has_matches",
+					true,
+					false,
+				),
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("description"), knownvalue.Null()),
+				},
+			},
+		},
+	})
+}
+
+func testAccAlertResourceConfig(projectName, channelPrimaryName, channelSecondaryName, alertName string, description *string, query, timeWindow, frequency, notifyWhen string, active bool, includeSecondary bool) string {
 	channelIDs := "logfire_channel.primary.id"
 	if includeSecondary {
 		channelIDs = "logfire_channel.primary.id, logfire_channel.secondary.id"
 	}
 
+	descLine := ""
+	if description != nil {
+		descLine = fmt.Sprintf("  description = %q\n", *description)
+	}
+
 	return fmt.Sprintf(`%s
 
 resource "logfire_project" "test" {
-  organization = %q
   name         = %q
   description  = "Acceptance test project"
 }
 
 resource "logfire_channel" "primary" {
-  organization = %q
-  project      = logfire_project.test.name
-  name         = %q
+  name = %q
 
   config {
     type   = "webhook"
@@ -154,9 +202,7 @@ resource "logfire_channel" "primary" {
 }
 
 resource "logfire_channel" "secondary" {
-  organization = %q
-  project      = logfire_project.test.name
-  name         = %q
+  name = %q
 
   config {
     type   = "webhook"
@@ -166,16 +212,14 @@ resource "logfire_channel" "secondary" {
 }
 
 resource "logfire_alert" "test" {
-  organization = %q
-  project      = logfire_project.test.name
-  name         = %q
-  description  = %q
-  query        = %q
-  time_window  = %q
-  frequency    = %q
-  channel_ids  = [%s]
-  notify_when  = %q
-  active       = %t
+  project_id  = logfire_project.test.id
+  name        = %q
+%s  query       = %q
+  time_window = %q
+  frequency   = %q
+  channel_ids = [%s]
+  notify_when = %q
+  active      = %t
 }
-`, testAccProviderConfig(), org, projectName, org, channelPrimaryName, org, channelSecondaryName, org, alertName, description, query, timeWindow, frequency, channelIDs, notifyWhen, active)
+`, testAccProviderConfig(), projectName, channelPrimaryName, channelSecondaryName, alertName, descLine, query, timeWindow, frequency, channelIDs, notifyWhen, active)
 }
