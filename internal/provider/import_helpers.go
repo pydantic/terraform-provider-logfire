@@ -7,6 +7,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	client "github.com/pydantic/terraform-provider-logfire/internal/client"
 )
 
 var importSeps = []rune{'/', ',', '|'}
@@ -41,8 +43,8 @@ func splitImportParts(raw string, allowedCounts ...int) ([]string, error) {
 	return parts, nil
 }
 
-func findProjectByNameOrID(ctx context.Context, client *APIClient, key string) (string, string, error) {
-	list, err := client.ListProjects(ctx)
+func findProjectByNameOrID(ctx context.Context, c *client.APIClient, key string) (string, string, error) {
+	list, err := c.ListProjects(ctx)
 	if err != nil {
 		return "", "", err
 	}

@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
 )
 
 var _ resource.Resource = &DashboardResource{}
@@ -27,7 +28,7 @@ var _ resource.ResourceWithImportState = &DashboardResource{}
 func NewDashboardResource() resource.Resource { return &DashboardResource{} }
 
 type DashboardResource struct {
-	client *APIClient
+	client *logclient.APIClient
 }
 
 type DashboardModel struct {
@@ -93,7 +94,7 @@ func (r *DashboardResource) Configure(ctx context.Context, req resource.Configur
 	if req.ProviderData == nil {
 		return
 	}
-	c, ok := req.ProviderData.(*APIClient)
+	c, ok := req.ProviderData.(*logclient.APIClient)
 	if !ok {
 		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *APIClient, got %T", req.ProviderData))
 		return
@@ -150,7 +151,7 @@ func (r *DashboardResource) Create(ctx context.Context, req resource.CreateReque
 		return
 	}
 
-	payload := DashboardCreateRequest{
+	payload := logclient.DashboardCreateRequest{
 		Name:       plan.Name.ValueString(),
 		Slug:       plan.Slug.ValueString(),
 		Definition: finalDefRaw,
@@ -303,7 +304,7 @@ func (r *DashboardResource) Update(ctx context.Context, req resource.UpdateReque
 		}
 	}
 
-	payload := DashboardUpdateRequest{}
+	payload := logclient.DashboardUpdateRequest{}
 	if !plan.Name.IsNull() && !plan.Name.IsUnknown() {
 		newName := plan.Name.ValueString()
 		if state.Name.IsNull() || state.Name.IsUnknown() || newName != state.Name.ValueString() {
@@ -373,7 +374,7 @@ func (r *DashboardResource) Delete(ctx context.Context, req resource.DeleteReque
 	dashboardID := state.ID.ValueString()
 
 	if err := r.client.DeleteDashboard(ctx, projectID, dashboardID); err != nil {
-		if isRateLimitError(err) {
+		if logclient.IsRateLimitError(err) {
 			resp.Diagnostics.AddError("Delete dashboard", fmt.Sprintf("rate limited while deleting dashboard: %v", err))
 			return
 		}
@@ -426,8 +427,8 @@ func (r *DashboardResource) ImportState(ctx context.Context, req resource.Import
 	}
 
 	var (
-		summary     *DashboardSummary
-		slugMatches []*DashboardSummary
+		summary     *logclient.DashboardSummary
+		slugMatches []*logclient.DashboardSummary
 	)
 	for i := range dashboards {
 		d := &dashboards[i]
@@ -466,7 +467,7 @@ func (r *DashboardResource) ImportState(ctx context.Context, req resource.Import
 		return
 	}
 
-	dashboard := &Dashboard{
+	dashboard := &logclient.Dashboard{
 		ID:            summary.ID,
 		ProjectID:     projectID,
 		DashboardName: summary.DashboardName,
@@ -550,7 +551,7 @@ func scrubDefinitionMetadata(payload map[string]any) {
 	}
 }
 
-func dashboardReadToModel(d *Dashboard, m *DashboardModel) error {
+func dashboardReadToModel(d *logclient.Dashboard, m *DashboardModel) error {
 	defStr, err := normalizeDefinitionRaw(d.Definition)
 	if err != nil {
 		return err

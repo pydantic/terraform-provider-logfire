@@ -20,6 +20,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
 )
 
 var _ resource.Resource = &AlertResource{}
@@ -29,7 +30,7 @@ var _ resource.ResourceWithImportState = &AlertResource{}
 func NewAlertResource() resource.Resource { return &AlertResource{} }
 
 type AlertResource struct {
-	client *APIClient
+	client *logclient.APIClient
 }
 
 type AlertModel struct {
@@ -132,7 +133,7 @@ func (r *AlertResource) Configure(ctx context.Context, req resource.ConfigureReq
 	if req.ProviderData == nil {
 		return
 	}
-	c, ok := req.ProviderData.(*APIClient)
+	c, ok := req.ProviderData.(*logclient.APIClient)
 	if !ok {
 		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *APIClient, got %T", req.ProviderData))
 		return
@@ -230,26 +231,26 @@ func parseDurationStr(s types.String) (time.Duration, error) {
 	return time.ParseDuration(s.ValueString())
 }
 
-func alertModelToCreate(ctx context.Context, m *AlertModel) (AlertCreate, diag.Diagnostics) {
+func alertModelToCreate(ctx context.Context, m *AlertModel) (logclient.AlertCreate, diag.Diagnostics) {
 	tw, err := parseDurationStr(m.TimeWindow)
 	if err != nil {
-		return AlertCreate{}, diag.Diagnostics{diag.NewErrorDiagnostic("Invalid duration", fmt.Sprintf("time_window: %v", err))}
+		return logclient.AlertCreate{}, diag.Diagnostics{diag.NewErrorDiagnostic("Invalid duration", fmt.Sprintf("time_window: %v", err))}
 	}
 	fr, err := parseDurationStr(m.Frequency)
 	if err != nil {
-		return AlertCreate{}, diag.Diagnostics{diag.NewErrorDiagnostic("Invalid duration", fmt.Sprintf("frequency: %v", err))}
+		return logclient.AlertCreate{}, diag.Diagnostics{diag.NewErrorDiagnostic("Invalid duration", fmt.Sprintf("frequency: %v", err))}
 	}
 	var ch []string
 	if !m.ChannelIDs.IsNull() && !m.ChannelIDs.IsUnknown() {
 		if diags := m.ChannelIDs.ElementsAs(ctx, &ch, false); diags.HasError() {
-			return AlertCreate{}, diags
+			return logclient.AlertCreate{}, diags
 		}
 	}
 	desc := ""
 	if !m.Description.IsNull() && !m.Description.IsUnknown() {
 		desc = m.Description.ValueString()
 	}
-	return AlertCreate{
+	return logclient.AlertCreate{
 		Name:        m.Name.ValueString(),
 		Description: &desc,
 		Query:       m.Query.ValueString(),
@@ -261,7 +262,7 @@ func alertModelToCreate(ctx context.Context, m *AlertModel) (AlertCreate, diag.D
 	}, nil
 }
 
-func alertReadToModel(ctx context.Context, a *AlertRead, m *AlertModel) diag.Diagnostics {
+func alertReadToModel(ctx context.Context, a *logclient.AlertRead, m *AlertModel) diag.Diagnostics {
 	m.ID = types.StringValue(a.ID)
 	if a.ProjectID != "" {
 		m.ProjectID = types.StringValue(a.ProjectID)
@@ -427,7 +428,7 @@ func (r *AlertResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	projectID := state.ProjectID.ValueString()
 	id := state.ID.ValueString()
 
-	var payload AlertUpdate
+	var payload logclient.AlertUpdate
 	if !plan.Name.IsNull() && !plan.Name.IsUnknown() {
 		v := plan.Name.ValueString()
 		payload.Name = &v
@@ -531,7 +532,7 @@ func (r *AlertResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 	id := state.ID.ValueString()
 
 	if err := r.client.DeleteAlert(ctx, projectID, id); err != nil {
-		if isRateLimitError(err) {
+		if logclient.IsRateLimitError(err) {
 			resp.Diagnostics.AddError("Delete alert", fmt.Sprintf("rate limited while deleting alert: %v", err))
 			return
 		}
@@ -580,8 +581,8 @@ func (r *AlertResource) ImportState(ctx context.Context, req resource.ImportStat
 	}
 
 	var (
-		match       *AlertRead
-		nameMatches []*AlertRead
+		match       *logclient.AlertRead
+		nameMatches []*logclient.AlertRead
 	)
 	for i := range alerts {
 		a := &alerts[i]

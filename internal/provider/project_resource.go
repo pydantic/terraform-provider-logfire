@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
 )
 
 var _ resource.Resource = &ProjectResource{}
@@ -26,7 +27,7 @@ var _ resource.ResourceWithImportState = &ProjectResource{}
 func NewProjectResource() resource.Resource { return &ProjectResource{} }
 
 type ProjectResource struct {
-	client *APIClient
+	client *logclient.APIClient
 }
 
 type ProjectModel struct {
@@ -97,7 +98,7 @@ func (r *ProjectResource) Configure(ctx context.Context, req resource.ConfigureR
 	if req.ProviderData == nil {
 		return
 	}
-	c, ok := req.ProviderData.(*APIClient)
+	c, ok := req.ProviderData.(*logclient.APIClient)
 	if !ok {
 		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *APIClient, got %T", req.ProviderData))
 		return
@@ -107,7 +108,7 @@ func (r *ProjectResource) Configure(ctx context.Context, req resource.ConfigureR
 
 // --- Helpers ---
 
-func projectModelToCreate(m *ProjectModel) ProjectCreate {
+func projectModelToCreate(m *ProjectModel) logclient.ProjectCreate {
 	var desc *string
 	if !m.Description.IsNull() && !m.Description.IsUnknown() {
 		value := m.Description.ValueString()
@@ -120,14 +121,14 @@ func projectModelToCreate(m *ProjectModel) ProjectCreate {
 		value := m.Visibility.ValueString()
 		visibility = &value
 	}
-	return ProjectCreate{
+	return logclient.ProjectCreate{
 		ProjectName: m.Name.ValueString(),
 		Description: desc,
 		Visibility:  visibility,
 	}
 }
 
-func projectReadToModel(p *ProjectRead, m *ProjectModel) {
+func projectReadToModel(p *logclient.ProjectRead, m *ProjectModel) {
 	m.ID = types.StringValue(p.ID)
 	if p.OrganizationName == "" {
 		m.Organization = types.StringNull()
@@ -231,7 +232,7 @@ func (r *ProjectResource) Update(ctx context.Context, req resource.UpdateRequest
 	}
 
 	// Build partial update payload
-	var payload ProjectUpdate
+	var payload logclient.ProjectUpdate
 	if !plan.Name.IsNull() && !plan.Name.IsUnknown() {
 		v := plan.Name.ValueString()
 		payload.ProjectName = &v
@@ -242,12 +243,12 @@ func (r *ProjectResource) Update(ctx context.Context, req resource.UpdateRequest
 		case plan.Description.IsNull():
 			if !state.Description.IsNull() && !state.Description.IsUnknown() {
 				// API clears descriptions when provided an empty string.
-				payload.Description = NullableFieldValue("")
+				payload.Description = logclient.NullableFieldValue("")
 			}
 		default:
 			v := plan.Description.ValueString()
 			if state.Description.IsNull() || state.Description.IsUnknown() || state.Description.ValueString() != v {
-				payload.Description = NullableFieldValue(v)
+				payload.Description = logclient.NullableFieldValue(v)
 			}
 		}
 	}
@@ -256,12 +257,12 @@ func (r *ProjectResource) Update(ctx context.Context, req resource.UpdateRequest
 		switch {
 		case plan.Visibility.IsNull():
 			if !state.Visibility.IsNull() && !state.Visibility.IsUnknown() {
-				payload.Visibility = NullableFieldNull[string]()
+				payload.Visibility = logclient.NullableFieldNull[string]()
 			}
 		default:
 			v := plan.Visibility.ValueString()
 			if state.Visibility.IsNull() || state.Visibility.IsUnknown() || state.Visibility.ValueString() != v {
-				payload.Visibility = NullableFieldValue(v)
+				payload.Visibility = logclient.NullableFieldValue(v)
 			}
 		}
 	}
@@ -295,7 +296,7 @@ func (r *ProjectResource) Delete(ctx context.Context, req resource.DeleteRequest
 	}
 
 	if err := r.client.DeleteProject(ctx, state.ID.ValueString()); err != nil {
-		if isRateLimitError(err) {
+		if logclient.IsRateLimitError(err) {
 			resp.Diagnostics.AddError("Delete project", fmt.Sprintf("rate limited while deleting project: %v", err))
 			return
 		}

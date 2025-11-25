@@ -16,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
 )
 
 var _ resource.Resource = &WriteTokenResource{}
@@ -24,7 +25,7 @@ var _ resource.ResourceWithConfigure = &WriteTokenResource{}
 func NewWriteTokenResource() resource.Resource { return &WriteTokenResource{} }
 
 type WriteTokenResource struct {
-	client *APIClient
+	client *logclient.APIClient
 }
 
 const writeTokenDescriptionValue = "Created by OAuth Application"
@@ -116,7 +117,7 @@ func (r *WriteTokenResource) Configure(ctx context.Context, req resource.Configu
 	if req.ProviderData == nil {
 		return
 	}
-	c, ok := req.ProviderData.(*APIClient)
+	c, ok := req.ProviderData.(*logclient.APIClient)
 	if !ok {
 		resp.Diagnostics.AddError("Unexpected provider data", "Expected *APIClient.")
 		return
@@ -124,9 +125,9 @@ func (r *WriteTokenResource) Configure(ctx context.Context, req resource.Configu
 	r.client = c
 }
 
-func writeTokenCreatePayload() WriteTokenCreate {
+func writeTokenCreatePayload() logclient.WriteTokenCreate {
 	desc := writeTokenDescriptionValue
-	return WriteTokenCreate{
+	return logclient.WriteTokenCreate{
 		Description: &desc,
 	}
 }
@@ -230,7 +231,7 @@ func (r *WriteTokenResource) Read(ctx context.Context, req resource.ReadRequest,
 		return
 	}
 
-	var found *WriteToken
+	var found *logclient.WriteToken
 	for i := range items {
 		if items[i].ID == tokenID {
 			found = &items[i]
@@ -310,7 +311,7 @@ func (r *WriteTokenResource) Delete(ctx context.Context, req resource.DeleteRequ
 	tokenID := state.ID.ValueString()
 
 	if err := r.client.DeleteWriteToken(ctx, projectID, tokenID); err != nil {
-		var apiErr *APIError
+		var apiErr *logclient.APIError
 		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
 			return
 		}

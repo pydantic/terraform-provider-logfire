@@ -20,6 +20,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
 )
 
 var _ resource.Resource = &ChannelResource{}
@@ -29,7 +30,7 @@ var _ resource.ResourceWithImportState = &ChannelResource{}
 func NewChannelResource() resource.Resource { return &ChannelResource{} }
 
 type ChannelResource struct {
-	client *APIClient
+	client *logclient.APIClient
 }
 
 type ChannelConfigModel struct {
@@ -109,7 +110,7 @@ func (r *ChannelResource) Configure(ctx context.Context, req resource.ConfigureR
 	if req.ProviderData == nil {
 		return
 	}
-	c, ok := req.ProviderData.(*APIClient)
+	c, ok := req.ProviderData.(*logclient.APIClient)
 	if !ok {
 		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *APIClient, got %T", req.ProviderData))
 		return
@@ -119,12 +120,12 @@ func (r *ChannelResource) Configure(ctx context.Context, req resource.ConfigureR
 
 // --- Helpers ---
 
-func channelModelToCreate(m *ChannelModel) (ChannelCreate, diag.Diagnostics) {
+func channelModelToCreate(m *ChannelModel) (logclient.ChannelCreate, diag.Diagnostics) {
 	cfg, diags := channelConfigModelToAPI(m.Config)
 	if diags.HasError() {
-		return ChannelCreate{}, diags
+		return logclient.ChannelCreate{}, diags
 	}
-	return ChannelCreate{
+	return logclient.ChannelCreate{
 		Label:  m.Name.ValueString(),
 		Config: cfg,
 	}, nil
@@ -153,8 +154,8 @@ func channelConfigModelToAPI(m *ChannelConfigModel) (interface{}, diag.Diagnosti
 		if diags.HasError() {
 			return nil, diags
 		}
-		return &WebhookConfig{
-			ChannelConfigBase: ChannelConfigBase{Type: "webhook"},
+		return &logclient.WebhookConfig{
+			ChannelConfigBase: logclient.ChannelConfigBase{Type: "webhook"},
 			Format:            stringPointer(format),
 			URL:               stringPointer(url),
 		}, diags
@@ -166,8 +167,8 @@ func channelConfigModelToAPI(m *ChannelConfigModel) (interface{}, diag.Diagnosti
 		if diags.HasError() {
 			return nil, diags
 		}
-		return &OpsgenieConfig{
-			ChannelConfigBase: ChannelConfigBase{Type: "opsgenie"},
+		return &logclient.OpsgenieConfig{
+			ChannelConfigBase: logclient.ChannelConfigBase{Type: "opsgenie"},
 			AuthKey:           stringPointer(key),
 		}, diags
 	case "email":
@@ -189,7 +190,7 @@ func channelConfigAPIToModel(cfg interface{}) (*ChannelConfigModel, diag.Diagnos
 		}
 	}
 
-	var genericCfg ChannelConfig
+	var genericCfg logclient.ChannelConfig
 	if err := json.Unmarshal(jsonBytes, &genericCfg); err != nil {
 		return nil, diag.Diagnostics{
 			diag.NewErrorDiagnostic("Invalid channel config", fmt.Sprintf("failed to unmarshal config: %v", err)),
@@ -206,7 +207,7 @@ func channelConfigAPIToModel(cfg interface{}) (*ChannelConfigModel, diag.Diagnos
 	switch genericCfg.Type {
 	case "webhook":
 		// Type assert to WebhookConfig
-		if webhookCfg, ok := cfg.(*WebhookConfig); ok {
+		if webhookCfg, ok := cfg.(*logclient.WebhookConfig); ok {
 			if webhookCfg.Format != nil {
 				model.Format = types.StringValue(*webhookCfg.Format)
 			}
@@ -224,7 +225,7 @@ func channelConfigAPIToModel(cfg interface{}) (*ChannelConfigModel, diag.Diagnos
 		}
 	case "opsgenie":
 		// Type assert to OpsgenieConfig
-		if opsgenieCfg, ok := cfg.(*OpsgenieConfig); ok {
+		if opsgenieCfg, ok := cfg.(*logclient.OpsgenieConfig); ok {
 			if opsgenieCfg.AuthKey != nil {
 				model.AuthKey = types.StringValue(*opsgenieCfg.AuthKey)
 			}
@@ -278,7 +279,7 @@ func disallowConfigString(val types.String, fieldName, channelType string) diag.
 	}
 }
 
-func channelReadToModel(c *ChannelRead, m *ChannelModel) diag.Diagnostics {
+func channelReadToModel(c *logclient.ChannelRead, m *ChannelModel) diag.Diagnostics {
 	m.ID = types.StringValue(c.ID)
 	m.Name = types.StringValue(c.Label)
 	m.Active = types.BoolValue(c.Active)
@@ -319,7 +320,7 @@ func (r *ChannelResource) Create(ctx context.Context, req resource.CreateRequest
 	if !plan.Active.IsNull() && !plan.Active.IsUnknown() {
 		desired := plan.Active.ValueBool()
 		if desired != out.Active {
-			payload := ChannelUpdate{Active: NullableFieldValue(desired)}
+			payload := logclient.ChannelUpdate{Active: logclient.NullableFieldValue(desired)}
 			updated, uerr := r.client.UpdateChannel(ctx, out.ID, payload)
 			if uerr != nil {
 				resp.Diagnostics.AddError("Create channel failed", fmt.Sprintf("setting active flag: %v", uerr))
@@ -395,15 +396,15 @@ func (r *ChannelResource) Update(ctx context.Context, req resource.UpdateRequest
 
 	id := state.ID.ValueString()
 
-	var payload ChannelUpdate
+	var payload logclient.ChannelUpdate
 	if !plan.Name.IsNull() && !plan.Name.IsUnknown() {
 		v := plan.Name.ValueString()
-		payload.Label = NullableFieldValue(v)
+		payload.Label = logclient.NullableFieldValue(v)
 	}
 	if !plan.Active.IsNull() && !plan.Active.IsUnknown() {
 		v := plan.Active.ValueBool()
 		if state.Active.IsNull() || state.Active.IsUnknown() || state.Active.ValueBool() != v {
-			payload.Active = NullableFieldValue(v)
+			payload.Active = logclient.NullableFieldValue(v)
 		}
 	}
 	if plan.Config != nil {
@@ -444,7 +445,7 @@ func (r *ChannelResource) Delete(ctx context.Context, req resource.DeleteRequest
 	id := state.ID.ValueString()
 
 	if err := r.client.DeleteChannel(ctx, id); err != nil {
-		if isRateLimitError(err) {
+		if logclient.IsRateLimitError(err) {
 			resp.Diagnostics.AddError("Delete channel", fmt.Sprintf("rate limited while deleting channel: %v", err))
 			return
 		}

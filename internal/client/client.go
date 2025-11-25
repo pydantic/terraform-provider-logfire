@@ -1,8 +1,8 @@
 // Copyright (c) Pydantic, Inc.
 // SPDX-License-Identifier: MPL-2.0
 
-// client.go
-package provider
+// Package client provides the HTTP client and Logfire domain types.
+package client
 
 import (
 	"bytes"
@@ -119,8 +119,6 @@ func (c *APIClient) doJSON(ctx context.Context, method, path string, in any, out
 
 	return resp, nil
 }
-
-// ---- Projects ----
 
 // NullableField helps send explicit nulls (to clear values) while still allowing
 // us to omit fields for partial updates.

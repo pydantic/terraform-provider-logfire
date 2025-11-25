@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+	"github.com/pydantic/terraform-provider-logfire/internal/client"
 )
 
 // Interface assertions.
@@ -118,7 +119,7 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 	}
 
 	tflog.Debug(ctx, "logfire endpoint", map[string]interface{}{"base_url": base_url})
-	apiClient, err := NewAPIClient(
+	apiClient, err := client.NewAPIClient(
 		base_url,
 		api_key,
 		nil)
