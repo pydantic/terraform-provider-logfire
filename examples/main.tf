@@ -35,7 +35,7 @@ resource "logfire_channel" "alerts_webhook" {
 
 resource "logfire_alert" "production_alert_execution_failures" {
   project_id  = logfire_project.production.id
-  name        = "execution-errorss"
+  name        = "execution-errors"
   description = "Fire when spans named 'Alert execution error occurred' are ingested"
   # Heredoc strings for multiline queries https://developer.hashicorp.com/terraform/language/expressions/strings#heredoc-strings
   query       = <<-SQL

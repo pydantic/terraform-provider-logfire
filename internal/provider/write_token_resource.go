@@ -144,6 +144,11 @@ func (r *WriteTokenResource) Create(ctx context.Context, req resource.CreateRequ
 		return
 	}
 
+	if plan.ProjectID.IsNull() || plan.ProjectID.IsUnknown() || plan.ProjectID.ValueString() == "" {
+		resp.Diagnostics.AddError("Missing project_id", "The write token requires a project_id to construct API paths.")
+		return
+	}
+
 	projectID := plan.ProjectID.ValueString()
 	payload := writeTokenCreatePayload()
 
@@ -188,7 +193,7 @@ func (r *WriteTokenResource) Create(ctx context.Context, req resource.CreateRequ
 		if out.Description != nil {
 			state.Description = types.StringValue(*out.Description)
 		} else {
-			state.Description = types.StringValue(writeTokenDescriptionValue)
+			state.Description = types.StringNull()
 		}
 		if out.Token != nil {
 			state.Token = types.StringValue(*out.Token)
@@ -203,7 +208,7 @@ func (r *WriteTokenResource) Create(ctx context.Context, req resource.CreateRequ
 		state.CreatedByName = types.StringNull()
 		state.TokenPrefix = types.StringNull()
 		state.Token = types.StringNull()
-		state.Description = types.StringValue(writeTokenDescriptionValue)
+		state.Description = types.StringNull()
 	}
 
 	tflog.Trace(ctx, "created write token", map[string]any{"id": state.ID.ValueString(), "project_id": state.ProjectID.ValueString()})
@@ -219,6 +224,15 @@ func (r *WriteTokenResource) Read(ctx context.Context, req resource.ReadRequest,
 	var state WriteTokenModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
+		resp.Diagnostics.AddError("Missing project_id", "Cannot read write token because the state is missing a project_id.")
+		return
+	}
+	if state.ID.IsNull() || state.ID.IsUnknown() || state.ID.ValueString() == "" {
+		resp.Diagnostics.AddError("Missing ID", "Cannot read write token because the state is missing an ID.")
 		return
 	}
 
@@ -277,7 +291,7 @@ func (r *WriteTokenResource) Read(ctx context.Context, req resource.ReadRequest,
 	if found.Description != nil {
 		newState.Description = types.StringValue(*found.Description)
 	} else {
-		newState.Description = types.StringValue(writeTokenDescriptionValue)
+		newState.Description = types.StringNull()
 	}
 
 	if found.Token != nil {
@@ -304,6 +318,15 @@ func (r *WriteTokenResource) Delete(ctx context.Context, req resource.DeleteRequ
 	var state WriteTokenModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
+		resp.Diagnostics.AddError("Missing project_id", "Cannot delete write token because the state is missing a project_id.")
+		return
+	}
+	if state.ID.IsNull() || state.ID.IsUnknown() || state.ID.ValueString() == "" {
+		resp.Diagnostics.AddError("Missing ID", "Cannot delete write token because the state is missing an ID.")
 		return
 	}
 

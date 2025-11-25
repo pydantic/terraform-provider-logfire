@@ -168,7 +168,7 @@ type ProjectUpdate struct {
 }
 
 func (c *APIClient) projectsBase() string {
-	return "api/v1/projects/"
+	return "/api/v1/projects/"
 }
 
 func (c *APIClient) projectPath(id string) string {
@@ -269,7 +269,7 @@ type AlertUpdate struct {
 }
 
 func (c *APIClient) alertsBase(projectID string) string {
-	return fmt.Sprintf("api/v1/projects/%s/alerts/", url.PathEscape(projectID))
+	return fmt.Sprintf("/api/v1/projects/%s/alerts/", url.PathEscape(projectID))
 }
 func (c *APIClient) alertPath(projectID, id string) string {
 	return fmt.Sprintf("%s%s/", c.alertsBase(projectID), url.PathEscape(id))
@@ -434,7 +434,7 @@ type WriteTokenCreate struct {
 }
 
 func (c *APIClient) writeTokensBase(projectID string) string {
-	return fmt.Sprintf("api/v1/projects/%s/write-tokens/", url.PathEscape(projectID))
+	return fmt.Sprintf("/api/v1/projects/%s/write-tokens/", url.PathEscape(projectID))
 }
 func (c *APIClient) writeTokenPath(projectID, tokenID string) string {
 	return fmt.Sprintf("%s%s/", c.writeTokensBase(projectID), url.PathEscape(tokenID))
@@ -504,7 +504,7 @@ type GetDashboardResponse struct {
 }
 
 func (c *APIClient) dashboardsBase(projectID string) string {
-	return fmt.Sprintf("api/v1/projects/%s/dashboards/", url.PathEscape(projectID))
+	return fmt.Sprintf("/api/v1/projects/%s/dashboards/", url.PathEscape(projectID))
 }
 func (c *APIClient) dashboardPath(projectID, dashboardID string) string {
 	return fmt.Sprintf("%s%s/", c.dashboardsBase(projectID), url.PathEscape(dashboardID))
