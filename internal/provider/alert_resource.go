@@ -13,7 +13,6 @@ import (
 
 	stringvalidator "github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
-	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	rschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -34,18 +33,17 @@ type AlertResource struct {
 }
 
 type AlertModel struct {
-	ID           types.String `tfsdk:"id"`
-	Organization types.String `tfsdk:"organization"`
-	Project      types.String `tfsdk:"project"`
-	Name         types.String `tfsdk:"name"`
-	Description  types.String `tfsdk:"description"`
-	Query        types.String `tfsdk:"query"`
-	TimeWindow   types.String `tfsdk:"time_window"`
-	Frequency    types.String `tfsdk:"frequency"`
-	Watermark    types.String `tfsdk:"watermark"`
-	ChannelIDs   types.Set    `tfsdk:"channel_ids"`
-	NotifyWhen   types.String `tfsdk:"notify_when"`
-	Active       types.Bool   `tfsdk:"active"`
+	ID          types.String `tfsdk:"id"`
+	ProjectID   types.String `tfsdk:"project_id"`
+	Name        types.String `tfsdk:"name"`
+	Description types.String `tfsdk:"description"`
+	Query       types.String `tfsdk:"query"`
+	TimeWindow  types.String `tfsdk:"time_window"`
+	Frequency   types.String `tfsdk:"frequency"`
+	Watermark   types.String `tfsdk:"watermark"`
+	ChannelIDs  types.Set    `tfsdk:"channel_ids"`
+	NotifyWhen  types.String `tfsdk:"notify_when"`
+	Active      types.Bool   `tfsdk:"active"`
 }
 
 func (r *AlertResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -66,18 +64,14 @@ func (r *AlertResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
-			"organization": rschema.StringAttribute{
+			"project_id": rschema.StringAttribute{
 				Required:            true,
-				MarkdownDescription: "Organization name.",
+				MarkdownDescription: "Project ID (UUID) used for alert API paths.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
-			},
-			"project": rschema.StringAttribute{
-				Required:            true,
-				MarkdownDescription: "Project name.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
 				},
 			},
 			"name": rschema.StringAttribute{
@@ -251,9 +245,13 @@ func alertModelToCreate(ctx context.Context, m *AlertModel) (AlertCreate, diag.D
 			return AlertCreate{}, diags
 		}
 	}
+	desc := ""
+	if !m.Description.IsNull() && !m.Description.IsUnknown() {
+		desc = m.Description.ValueString()
+	}
 	return AlertCreate{
 		Name:        m.Name.ValueString(),
-		Description: m.Description.ValueString(),
+		Description: &desc,
 		Query:       m.Query.ValueString(),
 		TimeWindow:  durToISO8601(tw),
 		Frequency:   durToISO8601(fr),
@@ -265,8 +263,15 @@ func alertModelToCreate(ctx context.Context, m *AlertModel) (AlertCreate, diag.D
 
 func alertReadToModel(ctx context.Context, a *AlertRead, m *AlertModel) diag.Diagnostics {
 	m.ID = types.StringValue(a.ID)
+	if a.ProjectID != "" {
+		m.ProjectID = types.StringValue(a.ProjectID)
+	}
 	m.Name = types.StringValue(a.Name)
-	m.Description = types.StringValue(a.Description)
+	if a.Description == nil || *a.Description == "" {
+		m.Description = types.StringNull()
+	} else {
+		m.Description = types.StringValue(*a.Description)
+	}
 	m.Query = types.StringValue(a.Query)
 
 	if d, err := iso8601ToDuration(a.TimeWindow); err == nil {
@@ -313,36 +318,41 @@ func (r *AlertResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 
-	org := plan.Organization.ValueString()
-	prj := plan.Project.ValueString()
+	if plan.ProjectID.IsNull() || plan.ProjectID.IsUnknown() || plan.ProjectID.ValueString() == "" {
+		resp.Diagnostics.AddError("Missing project_id", "The alert requires a project_id to construct API paths.")
+		return
+	}
+
+	projectID := plan.ProjectID.ValueString()
 	in, diags := alertModelToCreate(ctx, &plan)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	out, err := r.client.CreateAlert(ctx, org, prj, in)
+	out, err := r.client.CreateAlert(ctx, projectID, in)
 	if err != nil {
 		resp.Diagnostics.AddError("Create alert failed", err.Error())
 		return
 	}
 
 	// Refetch alert to populate channel IDs.
-	fresh, _, gerr := r.client.GetAlert(ctx, org, prj, out.ID)
+	fresh, _, gerr := r.client.GetAlert(ctx, projectID, out.ID)
 	if gerr != nil {
 		fresh = out
 	}
 
 	var state AlertModel
-	// Preserve org/project from plan into state
-	state.Organization = plan.Organization
-	state.Project = plan.Project
+	state.ProjectID = plan.ProjectID
 	if diags := alertReadToModel(ctx, fresh, &state); diags.HasError() {
 		resp.Diagnostics.Append(diags...)
 		return
 	}
+	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
+		state.ProjectID = plan.ProjectID
+	}
 
-	tflog.Trace(ctx, "created alert", map[string]any{"id": state.ID.ValueString(), "org": org, "project": prj})
+	tflog.Trace(ctx, "created alert", map[string]any{"id": state.ID.ValueString(), "project_id": projectID})
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -358,11 +368,15 @@ func (r *AlertResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 
-	org := state.Organization.ValueString()
-	prj := state.Project.ValueString()
+	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
+		resp.Diagnostics.AddError("Missing project_id", "Cannot read alert because the state is missing a project_id.")
+		return
+	}
+
+	projectID := state.ProjectID.ValueString()
 	id := state.ID.ValueString()
 
-	out, status, err := r.client.GetAlert(ctx, org, prj, id)
+	out, status, err := r.client.GetAlert(ctx, projectID, id)
 	if err != nil {
 		if status == 404 {
 			resp.State.RemoveResource(ctx)
@@ -372,14 +386,13 @@ func (r *AlertResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 
-	orgVal := state.Organization
-	prjVal := state.Project
 	if diags := alertReadToModel(ctx, out, &state); diags.HasError() {
 		resp.Diagnostics.Append(diags...)
 		return
 	}
-	state.Organization = orgVal
-	state.Project = prjVal
+	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
+		state.ProjectID = types.StringValue(projectID)
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -406,8 +419,12 @@ func (r *AlertResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		return
 	}
 
-	org := state.Organization.ValueString()
-	prj := state.Project.ValueString()
+	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
+		resp.Diagnostics.AddError("Missing project_id", "Cannot update alert because the current state has no project_id.")
+		return
+	}
+
+	projectID := state.ProjectID.ValueString()
 	id := state.ID.ValueString()
 
 	var payload AlertUpdate
@@ -415,8 +432,21 @@ func (r *AlertResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		v := plan.Name.ValueString()
 		payload.Name = &v
 	}
-	if !plan.Description.IsNull() && !plan.Description.IsUnknown() {
-		v := plan.Description.ValueString()
+	if !plan.Description.IsUnknown() {
+		switch {
+		case plan.Description.IsNull():
+			if !state.Description.IsNull() && !state.Description.IsUnknown() {
+				empty := ""
+				payload.Description = &empty
+			}
+		default:
+			v := plan.Description.ValueString()
+			if state.Description.IsNull() || state.Description.IsUnknown() || state.Description.ValueString() != v {
+				payload.Description = &v
+			}
+		}
+	} else if !state.Description.IsNull() && !state.Description.IsUnknown() {
+		v := state.Description.ValueString()
 		payload.Description = &v
 	}
 	if !plan.Active.IsNull() && !plan.Active.IsUnknown() {
@@ -462,18 +492,20 @@ func (r *AlertResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		payload.NotifyWhen = &v
 	}
 
-	out, err := r.client.UpdateAlert(ctx, org, prj, id, payload)
+	out, err := r.client.UpdateAlert(ctx, projectID, id, payload)
 	if err != nil {
 		resp.Diagnostics.AddError("Update alert failed", err.Error())
 		return
 	}
 
 	var newState AlertModel
-	newState.Organization = state.Organization
-	newState.Project = state.Project
+	newState.ProjectID = state.ProjectID
 	if diags := alertReadToModel(ctx, out, &newState); diags.HasError() {
 		resp.Diagnostics.Append(diags...)
 		return
+	}
+	if newState.ProjectID.IsNull() || newState.ProjectID.IsUnknown() || newState.ProjectID.ValueString() == "" {
+		newState.ProjectID = state.ProjectID
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &newState)...)
 }
@@ -490,11 +522,15 @@ func (r *AlertResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 		return
 	}
 
-	org := state.Organization.ValueString()
-	prj := state.Project.ValueString()
+	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
+		resp.Diagnostics.AddError("Missing project_id", "Cannot delete alert because the state is missing a project_id.")
+		return
+	}
+
+	projectID := state.ProjectID.ValueString()
 	id := state.ID.ValueString()
 
-	if err := r.client.DeleteAlert(ctx, org, prj, id); err != nil {
+	if err := r.client.DeleteAlert(ctx, projectID, id); err != nil {
 		if isRateLimitError(err) {
 			resp.Diagnostics.AddError("Delete alert", fmt.Sprintf("rate limited while deleting alert: %v", err))
 			return
@@ -505,26 +541,83 @@ func (r *AlertResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 }
 
 func (r *AlertResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	if req.ID == "" {
+	if r.client == nil {
+		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
+		return
+	}
+
+	rawID := strings.TrimSpace(req.ID)
+	if rawID == "" {
 		resp.Diagnostics.AddError(
 			"Missing import ID",
-			`Expected a non-empty ID. Use: terraform import logfire_alert.prod "organization/project/id"`,
+			`Expected a non-empty ID. Use either "project_id/alert_id" or "project_name/alert_name" (also accepts "," or "|").`,
 		)
 		return
 	}
 
-	parts := strings.Split(req.ID, "/")
-	switch len(parts) {
-	case 3:
-		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("organization"), parts[0])...)
-		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("project"), parts[1])...)
-		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), parts[2])...)
-	case 1:
-		resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
-	default:
+	parts, err := splitImportParts(rawID, 2)
+	if err != nil {
 		resp.Diagnostics.AddError(
 			"Invalid import ID",
-			`Expected "organization/project/id" or "id".`,
+			`Expected "project_id/alert_id" or "project_name/alert_name" (also accepts "project,alert" or "project|alert").`,
 		)
+		return
 	}
+
+	projectKey := parts[0]
+	alertKey := parts[1]
+
+	projectID, projectName, err := findProjectByNameOrID(ctx, r.client, projectKey)
+	if err != nil {
+		resp.Diagnostics.AddError("Import alert failed", err.Error())
+		return
+	}
+
+	alerts, err := r.client.ListAlerts(ctx, projectID)
+	if err != nil {
+		resp.Diagnostics.AddError("Import alert failed", fmt.Sprintf("listing alerts for project %q: %v", projectID, err))
+		return
+	}
+
+	var (
+		match       *AlertRead
+		nameMatches []*AlertRead
+	)
+	for i := range alerts {
+		a := &alerts[i]
+		if a.ID == alertKey {
+			match = a
+			break
+		}
+		if a.Name == alertKey {
+			nameMatches = append(nameMatches, a)
+		}
+	}
+	if match == nil {
+		if len(nameMatches) == 0 {
+			resp.Diagnostics.AddError("Import alert failed", fmt.Sprintf("alert %q not found in project %q", alertKey, projectName))
+			return
+		}
+		match = nameMatches[0]
+		if len(nameMatches) > 1 {
+			resp.Diagnostics.AddWarning("Import alert", fmt.Sprintf("multiple alerts named %q in project %q; imported the first match", alertKey, projectName))
+		}
+	}
+
+	alert, _, err := r.client.GetAlert(ctx, projectID, match.ID)
+	if err != nil {
+		resp.Diagnostics.AddError("Import alert failed", fmt.Sprintf("fetching alert %q: %v", match.ID, err))
+		return
+	}
+
+	var state AlertModel
+	state.ProjectID = types.StringValue(projectID)
+	if diags := alertReadToModel(ctx, alert, &state); diags.HasError() {
+		resp.Diagnostics.Append(diags...)
+		return
+	}
+	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
+		state.ProjectID = types.StringValue(projectID)
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }

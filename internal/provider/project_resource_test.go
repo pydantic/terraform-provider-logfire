@@ -122,7 +122,3 @@ resource "logfire_project" "test" {
 %s%s}
 `, testAccProviderConfig(), name, descLine, visibilityLine)
 }
-
-func stringPtr(s string) *string {
-	return &s
-}

@@ -319,22 +319,33 @@ func (r *ProjectResource) ImportState(ctx context.Context, req resource.ImportSt
 		return
 	}
 
-	projectID := rawID
-
-	if strings.ContainsAny(rawID, "/,|") {
-		org, name, ok := splitTwo(rawID)
-		if !ok || org == "" || name == "" {
-			resp.Diagnostics.AddError(
-				"Invalid import ID format",
-				`Expected "organization/name" (also accepts "organization,name" or "organization|name"). Example:
+	parts, err := splitImportParts(rawID, 1, 2)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Invalid import ID format",
+			`Expected "organization/name" (also accepts "organization,name" or "organization|name"), or a single project UUID/name. Example:
 terraform import logfire_project.prod "acme/prod-logs"`,
-			)
-			return
-		}
+		)
+		return
+	}
 
+	projectID := ""
+	switch len(parts) {
+	case 2:
+		org, name := parts[0], parts[1]
 		id, err := r.findProjectID(ctx, org, name)
 		if err != nil {
 			resp.Diagnostics.AddError("Lookup project ID failed", err.Error())
+			return
+		}
+		projectID = id
+	case 1:
+		id, _, err := findProjectByNameOrID(ctx, r.client, parts[0])
+		if err != nil {
+			resp.Diagnostics.AddError(
+				"Import project failed",
+				fmt.Sprintf("Project %q not found. Use the project UUID or the \"organization/name\" shorthand.", rawID),
+			)
 			return
 		}
 		projectID = id
@@ -349,17 +360,6 @@ terraform import logfire_project.prod "acme/prod-logs"`,
 	var state ProjectModel
 	projectReadToModel(project, &state)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
-}
-
-func splitTwo(s string) (string, string, bool) {
-	// Accept a few common separators to be user-friendly
-	seps := []string{"/", ",", "|"}
-	for _, sep := range seps {
-		if parts := strings.SplitN(s, sep, 2); len(parts) == 2 {
-			return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), true
-		}
-	}
-	return "", "", false
 }
 
 func (r *ProjectResource) findProjectID(ctx context.Context, org, name string) (string, error) {

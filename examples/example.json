@@ -1,23 +1,24 @@
 {
   "kind": "Dashboard",
   "metadata": {
-    "name": "my dashboard",
-    "createdAt": "2025-10-24T14:27:43.800287Z",
-    "updatedAt": "2025-10-24T15:01:34.061990Z",
+    "name": "production-overview",
+    "createdAt": "2025-11-25T12:50:16.475482Z",
+    "updatedAt": "2025-11-25T12:50:16.475482Z",
     "version": 0,
     "project": "production"
   },
   "spec": {
     "display": {
-      "name": "my dashboard",
+      "name": "production-overview",
       "description": null
     },
     "panels": {
-      "asd": {
+      "panel": {
         "kind": "Panel",
         "spec": {
           "display": {
-            "name": "asd"
+            "name": "panel",
+            "description": "example panel"
           },
           "plugin": {
             "kind": "TimeSeriesChart",
@@ -45,75 +46,12 @@
           ]
         }
       },
-      "asdasd": {
+      "panel2": {
         "kind": "Panel",
         "spec": {
           "display": {
-            "name": "asdasd"
-          },
-          "plugin": {
-            "kind": "TimeSeriesChart",
-            "spec": {
-              "legend": {
-                "position": "bottom"
-              },
-              "visual": {
-                "connectNulls": true
-              }
-            }
-          },
-          "queries": [
-            {
-              "kind": "TimeSeriesQuery",
-              "spec": {
-                "plugin": {
-                  "kind": "LogfireTimeSeriesQuery",
-                  "spec": {
-                    "query": "SELECT\n  time_bucket($resolution, start_timestamp) AS x,\n  count(1) as count\nFROM records\nGROUP BY x;"
-                  }
-                }
-              }
-            }
-          ]
-        }
-      },
-      "asdasd-1": {
-        "kind": "Panel",
-        "spec": {
-          "display": {
-            "name": "asdasd"
-          },
-          "plugin": {
-            "kind": "TimeSeriesChart",
-            "spec": {
-              "legend": {
-                "position": "bottom"
-              },
-              "visual": {
-                "connectNulls": true
-              }
-            }
-          },
-          "queries": [
-            {
-              "kind": "TimeSeriesQuery",
-              "spec": {
-                "plugin": {
-                  "kind": "LogfireTimeSeriesQuery",
-                  "spec": {
-                    "query": "SELECT\n  time_bucket($resolution, start_timestamp) AS x,\n  count(1) as count\nFROM records\nGROUP BY x;"
-                  }
-                }
-              }
-            }
-          ]
-        }
-      },
-      "aaaa": {
-        "kind": "Panel",
-        "spec": {
-          "display": {
-            "name": "aaaa"
+            "name": "panel2",
+            "description": "second panel"
           },
           "plugin": {
             "kind": "TimeSeriesChart",
@@ -147,7 +85,7 @@
         "kind": "Grid",
         "spec": {
           "display": {
-            "title": "Panel Group",
+            "title": "First",
             "collapse": {
               "open": true
             }
@@ -159,37 +97,31 @@
               "width": 12,
               "height": 6,
               "content": {
-                "$ref": "#/spec/panels/asd"
+                "$ref": "#/spec/panels/panel"
               }
             },
             {
-              "x": 0,
-              "y": 6,
+              "x": 12,
+              "y": 0,
               "width": 12,
               "height": 6,
               "content": {
-                "$ref": "#/spec/panels/asdasd"
-              }
-            },
-            {
-              "x": 0,
-              "y": 12,
-              "width": 12,
-              "height": 6,
-              "content": {
-                "$ref": "#/spec/panels/asdasd-1"
-              }
-            },
-            {
-              "x": 0,
-              "y": 18,
-              "width": 12,
-              "height": 6,
-              "content": {
-                "$ref": "#/spec/panels/aaaa"
+                "$ref": "#/spec/panels/panel2"
               }
             }
           ]
+        }
+      },
+      {
+        "kind": "Grid",
+        "spec": {
+          "display": {
+            "title": "Second",
+            "collapse": {
+              "open": true
+            }
+          },
+          "items": []
         }
       }
     ],
