@@ -185,11 +185,7 @@ func (r *WriteTokenResource) Create(ctx context.Context, req resource.CreateRequ
 		} else {
 			state.CreatedByName = types.StringNull()
 		}
-		if out.TokenPrefix != "" {
-			state.TokenPrefix = types.StringValue(out.TokenPrefix)
-		} else {
-			state.TokenPrefix = types.StringNull()
-		}
+		state.TokenPrefix = types.StringValue(out.TokenPrefix)
 		if out.Description != nil {
 			state.Description = types.StringValue(*out.Description)
 		} else {
@@ -282,9 +278,8 @@ func (r *WriteTokenResource) Read(ctx context.Context, req resource.ReadRequest,
 	} else {
 		newState.CreatedByName = state.CreatedByName
 	}
-	if found.TokenPrefix != "" {
-		newState.TokenPrefix = types.StringValue(found.TokenPrefix)
-	} else {
+	newState.TokenPrefix = types.StringValue(found.TokenPrefix)
+	if found.TokenPrefix == "" && !state.TokenPrefix.IsNull() && !state.TokenPrefix.IsUnknown() {
 		newState.TokenPrefix = state.TokenPrefix
 	}
 

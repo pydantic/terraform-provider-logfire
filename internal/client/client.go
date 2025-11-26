@@ -8,17 +8,333 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math/rand"
+	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
+
+const (
+	defaultRequestTimeout        = 90 * time.Second
+	defaultRequestsPerMinute     = 50
+	defaultRequestsPerHour       = 1000
+	defaultRetryMaxAttempts      = 5
+	defaultRetryBaseDelay        = 500 * time.Millisecond
+	defaultRetryMaxDelay         = 15 * time.Second
+	defaultMaxIdleConns          = 50
+	defaultMaxIdleConnsPerHost   = 10
+	defaultMaxConnsPerHost       = 10
+	defaultIdleConnTimeout       = 90 * time.Second
+	defaultResponseHeaderTimeout = 60 * time.Second
+	defaultUserAgent             = "terraform-provider-logfire"
+)
+
+var (
+	defaultLimiter = newRateLimiter(defaultRequestsPerMinute, defaultRequestsPerHour)
+	jitterRand     = rand.New(rand.NewSource(time.Now().UnixNano()))
+	jitterMu       sync.Mutex
+)
+
+type rateLimitedTransport struct {
+	next    http.RoundTripper
+	limiter *rateLimiter
+}
+
+func (t *rateLimitedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if t.limiter != nil {
+		if err := t.limiter.Wait(req.Context()); err != nil {
+			return nil, err
+		}
+	}
+	return t.next.RoundTrip(req)
+}
+
+type retryingTransport struct {
+	next        http.RoundTripper
+	maxAttempts int
+	baseDelay   time.Duration
+	maxDelay    time.Duration
+}
+
+func (t *retryingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	attempts := t.maxAttempts
+	if attempts <= 0 {
+		attempts = 1
+	}
+
+	var resp *http.Response
+	var err error
+	for attempt := 0; attempt < attempts; attempt++ {
+		if attempt > 0 {
+			switch {
+			case req.GetBody != nil:
+				body, getErr := req.GetBody()
+				if getErr != nil {
+					return nil, getErr
+				}
+				req.Body = body
+			case req.Body != nil:
+				return nil, fmt.Errorf("cannot retry request with body: GetBody is nil")
+			}
+		}
+
+		resp, err = t.next.RoundTrip(req)
+
+		retry, delay := t.shouldRetry(req.Context(), resp, err, attempt, attempts)
+		if !retry {
+			return resp, err
+		}
+
+		drainResponse(resp)
+
+		if err := waitWithContext(req.Context(), delay); err != nil {
+			return nil, err
+		}
+	}
+
+	return resp, err
+}
+
+func (t *retryingTransport) shouldRetry(ctx context.Context, resp *http.Response, err error, attempt, maxAttempts int) (bool, time.Duration) {
+	if attempt >= maxAttempts-1 {
+		return false, 0
+	}
+
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+			return false, 0
+		}
+
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			return true, retryDelay(nil, t.baseDelay, t.maxDelay, attempt)
+		}
+
+		var opErr *net.OpError
+		if errors.As(err, &opErr) {
+			return true, retryDelay(nil, t.baseDelay, t.maxDelay, attempt)
+		}
+
+		return false, 0
+	}
+
+	if resp == nil {
+		return false, 0
+	}
+
+	status := resp.StatusCode
+	if status == http.StatusTooManyRequests ||
+		status == http.StatusRequestTimeout ||
+		status == http.StatusBadGateway ||
+		status == http.StatusServiceUnavailable ||
+		status == http.StatusGatewayTimeout ||
+		(status >= 500 && status < 600) {
+		return true, retryDelay(resp, t.baseDelay, t.maxDelay, attempt)
+	}
+
+	return false, 0
+}
+
+func drainResponse(resp *http.Response) {
+	if resp == nil || resp.Body == nil {
+		return
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+}
+
+func waitWithContext(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func retryDelay(resp *http.Response, base, maxDelay time.Duration, attempt int) time.Duration {
+	if base <= 0 {
+		base = 500 * time.Millisecond
+	}
+	if maxDelay <= 0 {
+		maxDelay = 15 * time.Second
+	}
+
+	if resp != nil {
+		if ra := resp.Header.Get("Retry-After"); ra != "" {
+			if seconds, err := strconv.Atoi(ra); err == nil && seconds >= 0 {
+				return time.Duration(seconds) * time.Second
+			}
+			if t, err := http.ParseTime(ra); err == nil {
+				if delay := time.Until(t); delay > 0 {
+					return delay
+				}
+			}
+		}
+	}
+
+	delay := base * time.Duration(1<<attempt)
+	if delay > maxDelay {
+		delay = maxDelay
+	}
+
+	// Add jitter to avoid thundering herd on retries.
+	jitterMu.Lock()
+	jitter := time.Duration(jitterRand.Int63n(int64(delay / 2)))
+	jitterMu.Unlock()
+	return delay/2 + jitter
+}
+
+type rateLimiter struct {
+	perMinute *rateGate
+	perHour   *rateGate
+}
+
+func newRateLimiter(requestsPerMinute, requestsPerHour int) *rateLimiter {
+	if requestsPerMinute <= 0 {
+		requestsPerMinute = 1
+	}
+	if requestsPerHour <= 0 {
+		requestsPerHour = 1
+	}
+
+	minuteInterval := time.Minute / time.Duration(requestsPerMinute)
+	hourInterval := time.Hour / time.Duration(requestsPerHour)
+	minuteBurst := requestsPerMinute
+	hourBurst := requestsPerMinute
+
+	return &rateLimiter{
+		perMinute: newRateGate(minuteInterval, minuteBurst),
+		perHour:   newRateGate(hourInterval, hourBurst),
+	}
+}
+
+func (l *rateLimiter) Wait(ctx context.Context) error {
+	if err := l.perMinute.take(ctx); err != nil {
+		return err
+	}
+	return l.perHour.take(ctx)
+}
+
+func (l *rateLimiter) Close() {
+	if l.perMinute != nil {
+		l.perMinute.stop()
+	}
+	if l.perHour != nil {
+		l.perHour.stop()
+	}
+}
+
+type rateGate struct {
+	tokens chan struct{}
+	ticker *time.Ticker
+	stopCh chan struct{}
+}
+
+func newRateGate(refillInterval time.Duration, burst int) *rateGate {
+	if refillInterval <= 0 {
+		refillInterval = time.Second
+	}
+	if burst <= 0 {
+		burst = 1
+	}
+
+	g := &rateGate{
+		tokens: make(chan struct{}, burst),
+		ticker: time.NewTicker(refillInterval),
+		stopCh: make(chan struct{}),
+	}
+	for i := 0; i < burst; i++ {
+		g.tokens <- struct{}{}
+	}
+
+	go func() {
+		defer g.ticker.Stop()
+		for {
+			select {
+			case <-g.stopCh:
+				return
+			case <-g.ticker.C:
+				select {
+				case g.tokens <- struct{}{}:
+				default:
+				}
+			}
+		}
+	}()
+
+	return g
+}
+
+func (g *rateGate) take(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-g.tokens:
+		return nil
+	}
+}
+
+func (g *rateGate) stop() {
+	select {
+	case <-g.stopCh:
+		return
+	default:
+		close(g.stopCh)
+	}
+}
+
+func newDefaultHTTPClient() *http.Client {
+	baseTransport := defaultTransport()
+	limitedTransport := &rateLimitedTransport{
+		next:    baseTransport,
+		limiter: defaultLimiter,
+	}
+	return &http.Client{
+		Timeout: defaultRequestTimeout,
+		Transport: &retryingTransport{
+			next:        limitedTransport,
+			maxAttempts: defaultRetryMaxAttempts,
+			baseDelay:   defaultRetryBaseDelay,
+			maxDelay:    defaultRetryMaxDelay,
+		},
+	}
+}
+
+func defaultTransport() http.RoundTripper {
+	if t, ok := http.DefaultTransport.(*http.Transport); ok {
+		clone := t.Clone()
+		clone.MaxIdleConns = defaultMaxIdleConns
+		clone.MaxIdleConnsPerHost = defaultMaxIdleConnsPerHost
+		clone.MaxConnsPerHost = defaultMaxConnsPerHost
+		clone.IdleConnTimeout = defaultIdleConnTimeout
+		clone.ResponseHeaderTimeout = defaultResponseHeaderTimeout
+		return clone
+	}
+	return http.DefaultTransport
+}
 
 type APIClient struct {
 	BaseURL *url.URL
 	HTTP    *http.Client
 	Token   string
+
+	userAgent string
+	headers   http.Header
 }
 
 type APIError struct {
@@ -48,9 +364,35 @@ func isStatusExpected(statusCode int, expectedStatuses []int) bool {
 	return false
 }
 
-func NewAPIClient(baseURL, token string, httpClient *http.Client) (*APIClient, error) {
+type Option func(*APIClient)
+
+func WithUserAgent(ua string) Option {
+	return func(c *APIClient) {
+		if trimmed := strings.TrimSpace(ua); trimmed != "" {
+			c.userAgent = trimmed
+		}
+	}
+}
+
+func WithAdditionalHeaders(headers http.Header) Option {
+	return func(c *APIClient) {
+		if headers == nil {
+			return
+		}
+		if c.headers == nil {
+			c.headers = make(http.Header)
+		}
+		for k, vals := range headers {
+			for _, v := range vals {
+				c.headers.Add(k, v)
+			}
+		}
+	}
+}
+
+func NewAPIClient(baseURL, token string, httpClient *http.Client, opts ...Option) (*APIClient, error) {
 	if httpClient == nil {
-		httpClient = http.DefaultClient
+		httpClient = newDefaultHTTPClient()
 	}
 	if !strings.HasSuffix(baseURL, "/") {
 		baseURL += "/"
@@ -59,21 +401,31 @@ func NewAPIClient(baseURL, token string, httpClient *http.Client) (*APIClient, e
 	if err != nil {
 		return nil, fmt.Errorf("invalid endpoint: %w", err)
 	}
-	return &APIClient{
-		BaseURL: u,
-		HTTP:    httpClient,
-		Token:   token,
-	}, nil
+	apiClient := &APIClient{
+		BaseURL:   u,
+		HTTP:      httpClient,
+		Token:     token,
+		userAgent: defaultUserAgent,
+		headers:   make(http.Header),
+	}
+
+	for _, opt := range opts {
+		opt(apiClient)
+	}
+
+	return apiClient, nil
 }
 
 func (c *APIClient) doJSON(ctx context.Context, method, path string, in any, out any, expectedStatus ...int) (*http.Response, error) {
-	var body io.Reader
+	var body io.ReadCloser
+	var bodyBytes []byte
 	if in != nil {
 		b, err := json.Marshal(in)
 		if err != nil {
 			return nil, fmt.Errorf("marshal request body: %w", err)
 		}
-		body = bytes.NewReader(b)
+		bodyBytes = b
+		body = io.NopCloser(bytes.NewReader(bodyBytes))
 	}
 
 	u := c.BaseURL.ResolveReference(&url.URL{Path: path})
@@ -81,12 +433,25 @@ func (c *APIClient) doJSON(ctx context.Context, method, path string, in any, out
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
+	if len(bodyBytes) > 0 {
+		req.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(bodyBytes)), nil
+		}
+	}
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Accept", "application/json")
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	if c.userAgent != "" {
+		req.Header.Set("User-Agent", c.userAgent)
+	}
+	for k, vals := range c.headers {
+		for _, v := range vals {
+			req.Header.Add(k, v)
+		}
 	}
 
 	resp, err := c.HTTP.Do(req)
