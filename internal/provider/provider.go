@@ -5,6 +5,8 @@ package provider
 
 import (
 	"context"
+	"fmt"
+	"net/http"
 	"os"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -119,10 +121,22 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 	}
 
 	tflog.Debug(ctx, "logfire endpoint", map[string]interface{}{"base_url": base_url})
+	ua := "terraform-provider-logfire"
+	if p.version != "" {
+		ua = fmt.Sprintf("%s/%s", ua, p.version)
+	}
+
+	headers := http.Header{}
+	if p.version != "" {
+		headers.Set("X-Terraform-Provider-Version", p.version)
+	}
+
 	apiClient, err := client.NewAPIClient(
 		base_url,
 		api_key,
-		nil)
+		nil,
+		client.WithUserAgent(ua),
+		client.WithAdditionalHeaders(headers))
 
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid provider configuration", err.Error())
