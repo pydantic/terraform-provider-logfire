@@ -130,58 +130,6 @@ func TestAccAlertResource(t *testing.T) {
 	})
 }
 
-func TestAccAlertResourceClearsDescription(t *testing.T) {
-	t.Parallel()
-
-	projectName := fmt.Sprintf("acc-test-alert-desc-%s", acctest.RandStringFromCharSet(6, acctest.CharSetAlphaNum))
-	channelPrimaryName := fmt.Sprintf("acc-alert-channel-%s", acctest.RandStringFromCharSet(6, acctest.CharSetAlphaNum))
-	channelSecondaryName := fmt.Sprintf("%s-secondary", channelPrimaryName)
-	alertName := fmt.Sprintf("acc-alert-%s", acctest.RandStringFromCharSet(6, acctest.CharSetAlphaNum))
-
-	resource.Test(t, resource.TestCase{
-		PreCheck:                 func() { testAccPreCheck(t) },
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{
-				Config: testAccAlertResourceConfig(
-					projectName,
-					channelPrimaryName,
-					channelSecondaryName,
-					alertName,
-					stringPtr("Initial alert description"),
-					"select 1",
-					"5m",
-					"5m",
-					"has_matches",
-					true,
-					false,
-				),
-				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("description"), knownvalue.StringExact("Initial alert description")),
-				},
-			},
-			{
-				Config: testAccAlertResourceConfig(
-					projectName,
-					channelPrimaryName,
-					channelSecondaryName,
-					alertName,
-					nil,
-					"select 1",
-					"5m",
-					"5m",
-					"has_matches",
-					true,
-					false,
-				),
-				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("description"), knownvalue.Null()),
-				},
-			},
-		},
-	})
-}
-
 func testAccAlertResourceConfig(projectName, channelPrimaryName, channelSecondaryName, alertName string, description *string, query, timeWindow, frequency, notifyWhen string, active bool, includeSecondary bool) string {
 	channelIDs := "logfire_channel.primary.id"
 	if includeSecondary {

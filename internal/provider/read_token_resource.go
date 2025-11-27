@@ -17,16 +17,16 @@ import (
 	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
 )
 
-var _ resource.Resource = &WriteTokenResource{}
-var _ resource.ResourceWithConfigure = &WriteTokenResource{}
+var _ resource.Resource = &ReadTokenResource{}
+var _ resource.ResourceWithConfigure = &ReadTokenResource{}
 
-func NewWriteTokenResource() resource.Resource { return &WriteTokenResource{} }
+func NewReadTokenResource() resource.Resource { return &ReadTokenResource{} }
 
-type WriteTokenResource struct {
+type ReadTokenResource struct {
 	client *logclient.APIClient
 }
 
-type WriteTokenModel struct {
+type ReadTokenModel struct {
 	ID            types.String `tfsdk:"id"`
 	ProjectID     types.String `tfsdk:"project_id"`
 	Description   types.String `tfsdk:"description"`
@@ -37,17 +37,17 @@ type WriteTokenModel struct {
 	TokenPrefix   types.String `tfsdk:"token_prefix"`
 }
 
-func (r *WriteTokenResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
-	resp.TypeName = req.ProviderTypeName + "_write_token"
+func (r *ReadTokenResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_read_token"
 }
 
-func (r *WriteTokenResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
+func (r *ReadTokenResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = rschema.Schema{
-		MarkdownDescription: "Manages a Logfire write token.",
+		MarkdownDescription: "Manages a Logfire read token.",
 		Attributes: map[string]rschema.Attribute{
 			"id": rschema.StringAttribute{
 				Computed:            true,
-				MarkdownDescription: "Write token identifier.",
+				MarkdownDescription: "Read token identifier.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
@@ -72,7 +72,7 @@ func (r *WriteTokenResource) Schema(ctx context.Context, req resource.SchemaRequ
 			"token": rschema.StringAttribute{
 				Computed:            true,
 				Sensitive:           true,
-				MarkdownDescription: "The generated write token. Only returned on creation.",
+				MarkdownDescription: "The generated read token. Only returned on creation.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
@@ -100,7 +100,7 @@ func (r *WriteTokenResource) Schema(ctx context.Context, req resource.SchemaRequ
 			},
 			"token_prefix": rschema.StringAttribute{
 				Computed:            true,
-				MarkdownDescription: "Prefix of the generated write token.",
+				MarkdownDescription: "Prefix of the generated read token.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
@@ -109,10 +109,11 @@ func (r *WriteTokenResource) Schema(ctx context.Context, req resource.SchemaRequ
 	}
 }
 
-func (r *WriteTokenResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
+func (r *ReadTokenResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	if req.ProviderData == nil {
 		return
 	}
+
 	c, ok := req.ProviderData.(*logclient.APIClient)
 	if !ok {
 		resp.Diagnostics.AddError("Unexpected provider data", "Expected *APIClient.")
@@ -121,64 +122,75 @@ func (r *WriteTokenResource) Configure(ctx context.Context, req resource.Configu
 	r.client = c
 }
 
-func (r *WriteTokenResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+func (r *ReadTokenResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	if r.client == nil {
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
 		return
 	}
 
-	var plan WriteTokenModel
+	var plan ReadTokenModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
 	if plan.ProjectID.IsNull() || plan.ProjectID.IsUnknown() || plan.ProjectID.ValueString() == "" {
-		resp.Diagnostics.AddError("Missing project_id", "The write token requires a project_id to construct API paths.")
+		resp.Diagnostics.AddError("Missing project_id", "The read token requires a project_id to construct API paths.")
 		return
 	}
 
 	projectID := plan.ProjectID.ValueString()
 
-	out, err := r.client.CreateWriteToken(ctx, projectID)
+	out, err := r.client.CreateReadToken(ctx, projectID)
 	if err != nil {
-		resp.Diagnostics.AddError("Create write token failed", err.Error())
+		resp.Diagnostics.AddError("Create read token failed", err.Error())
 		return
 	}
 
-	var state WriteTokenModel
+	var state ReadTokenModel
 	if out != nil {
 		if out.ID != "" {
 			state.ID = types.StringValue(out.ID)
 		} else {
 			state.ID = types.StringNull()
 		}
+
 		if out.ProjectID != "" {
 			state.ProjectID = types.StringValue(out.ProjectID)
 		} else {
 			state.ProjectID = types.StringValue(projectID)
 		}
+
 		if out.CreatedAt != "" {
 			state.CreatedAt = types.StringValue(out.CreatedAt)
 		} else {
 			state.CreatedAt = types.StringNull()
 		}
+
 		if out.ProjectName != "" {
 			state.ProjectName = types.StringValue(out.ProjectName)
 		} else {
 			state.ProjectName = types.StringNull()
 		}
+
 		if out.CreatedByName != nil {
 			state.CreatedByName = types.StringValue(*out.CreatedByName)
 		} else {
 			state.CreatedByName = types.StringNull()
 		}
-		state.TokenPrefix = types.StringValue(out.TokenPrefix)
+
+		if out.TokenPrefix != "" {
+			state.TokenPrefix = types.StringValue(out.TokenPrefix)
+		} else {
+			state.TokenPrefix = types.StringNull()
+		}
+
 		if out.Description != nil {
 			state.Description = types.StringValue(*out.Description)
 		} else {
 			state.Description = types.StringNull()
 		}
+
 		if out.Token != nil {
 			state.Token = types.StringValue(*out.Token)
 		} else {
@@ -195,41 +207,41 @@ func (r *WriteTokenResource) Create(ctx context.Context, req resource.CreateRequ
 		state.Description = types.StringNull()
 	}
 
-	tflog.Trace(ctx, "created write token", map[string]any{"id": state.ID.ValueString(), "project_id": state.ProjectID.ValueString()})
+	tflog.Trace(ctx, "created read token", map[string]any{"id": state.ID.ValueString(), "project_id": state.ProjectID.ValueString()})
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-func (r *WriteTokenResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+func (r *ReadTokenResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	if r.client == nil {
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
 		return
 	}
 
-	var state WriteTokenModel
+	var state ReadTokenModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
 	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
-		resp.Diagnostics.AddError("Missing project_id", "Cannot read write token because the state is missing a project_id.")
+		resp.Diagnostics.AddError("Missing project_id", "Cannot read read token because the state is missing a project_id.")
 		return
 	}
 	if state.ID.IsNull() || state.ID.IsUnknown() || state.ID.ValueString() == "" {
-		resp.Diagnostics.AddError("Missing ID", "Cannot read write token because the state is missing an ID.")
+		resp.Diagnostics.AddError("Missing ID", "Cannot read read token because the state is missing an ID.")
 		return
 	}
 
 	projectID := state.ProjectID.ValueString()
 	tokenID := state.ID.ValueString()
 
-	items, err := r.client.ListWriteTokens(ctx, projectID)
+	items, err := r.client.ListReadTokens(ctx, projectID)
 	if err != nil {
-		resp.Diagnostics.AddError("List write tokens failed", err.Error())
+		resp.Diagnostics.AddError("List read tokens failed", err.Error())
 		return
 	}
 
-	var found *logclient.WriteToken
+	var found *logclient.ReadToken
 	for i := range items {
 		if items[i].ID == tokenID {
 			found = &items[i]
@@ -242,7 +254,7 @@ func (r *WriteTokenResource) Read(ctx context.Context, req resource.ReadRequest,
 		return
 	}
 
-	var newState WriteTokenModel
+	var newState ReadTokenModel
 	newState.ID = types.StringValue(found.ID)
 
 	if found.ProjectID != "" {
@@ -256,19 +268,25 @@ func (r *WriteTokenResource) Read(ctx context.Context, req resource.ReadRequest,
 	} else {
 		newState.CreatedAt = state.CreatedAt
 	}
+
 	if found.ProjectName != "" {
 		newState.ProjectName = types.StringValue(found.ProjectName)
 	} else {
 		newState.ProjectName = state.ProjectName
 	}
+
 	if found.CreatedByName != nil {
 		newState.CreatedByName = types.StringValue(*found.CreatedByName)
 	} else {
 		newState.CreatedByName = state.CreatedByName
 	}
-	newState.TokenPrefix = types.StringValue(found.TokenPrefix)
-	if found.TokenPrefix == "" && !state.TokenPrefix.IsNull() && !state.TokenPrefix.IsUnknown() {
+
+	if found.TokenPrefix != "" {
+		newState.TokenPrefix = types.StringValue(found.TokenPrefix)
+	} else if !state.TokenPrefix.IsNull() && !state.TokenPrefix.IsUnknown() {
 		newState.TokenPrefix = state.TokenPrefix
+	} else {
+		newState.TokenPrefix = types.StringNull()
 	}
 
 	if found.Description != nil {
@@ -288,39 +306,39 @@ func (r *WriteTokenResource) Read(ctx context.Context, req resource.ReadRequest,
 	resp.Diagnostics.Append(resp.State.Set(ctx, &newState)...)
 }
 
-func (r *WriteTokenResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	resp.Diagnostics.AddError("Update not supported", "Write tokens cannot be updated; Terraform should plan a replacement.")
+func (r *ReadTokenResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	resp.Diagnostics.AddError("Update not supported", "Read tokens cannot be updated; Terraform should plan a replacement.")
 }
 
-func (r *WriteTokenResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+func (r *ReadTokenResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	if r.client == nil {
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
 		return
 	}
 
-	var state WriteTokenModel
+	var state ReadTokenModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
 	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
-		resp.Diagnostics.AddError("Missing project_id", "Cannot delete write token because the state is missing a project_id.")
+		resp.Diagnostics.AddError("Missing project_id", "Cannot delete read token because the state is missing a project_id.")
 		return
 	}
 	if state.ID.IsNull() || state.ID.IsUnknown() || state.ID.ValueString() == "" {
-		resp.Diagnostics.AddError("Missing ID", "Cannot delete write token because the state is missing an ID.")
+		resp.Diagnostics.AddError("Missing ID", "Cannot delete read token because the state is missing an ID.")
 		return
 	}
 
 	projectID := state.ProjectID.ValueString()
 	tokenID := state.ID.ValueString()
 
-	if err := r.client.DeleteWriteToken(ctx, projectID, tokenID); err != nil {
+	if err := r.client.DeleteReadToken(ctx, projectID, tokenID); err != nil {
 		if logclient.IsNotFoundError(err) {
 			// Already gone, treat as successful delete
 			return
 		}
-		resp.Diagnostics.AddError("Delete write token failed", err.Error())
+		resp.Diagnostics.AddError("Delete read token failed", err.Error())
 	}
 }

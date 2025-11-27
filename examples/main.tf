@@ -72,3 +72,13 @@ output "production_write_token" {
   value       = logfire_write_token.production_ingest.token
   sensitive   = true
 }
+
+resource "logfire_read_token" "production_read" {
+  project_id = logfire_project.production.id
+}
+
+output "production_read_token" {
+  description = "Read token for reading data on the production project"
+  value       = logfire_read_token.production_read.token
+  sensitive   = true
+}

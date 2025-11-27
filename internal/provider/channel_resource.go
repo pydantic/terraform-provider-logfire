@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	stringvalidator "github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
@@ -66,6 +67,9 @@ func (r *ChannelResource) Schema(ctx context.Context, req resource.SchemaRequest
 			"name": rschema.StringAttribute{
 				Required:            true,
 				MarkdownDescription: "Channel name.",
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
+				},
 			},
 			"active": rschema.BoolAttribute{
 				Optional:            true,
@@ -95,9 +99,16 @@ func (r *ChannelResource) Schema(ctx context.Context, req resource.SchemaRequest
 					"url": rschema.StringAttribute{
 						Optional:            true,
 						MarkdownDescription: "Webhook URL endpoint.",
+						Validators: []validator.String{
+							stringvalidator.RegexMatches(
+								regexp.MustCompile(`^https?://`),
+								"must be a valid HTTP or HTTPS URL",
+							),
+						},
 					},
 					"auth_key": rschema.StringAttribute{
 						Optional:            true,
+						Sensitive:           true,
 						MarkdownDescription: "Opsgenie API key.",
 					},
 				},
@@ -445,16 +456,20 @@ func (r *ChannelResource) Delete(ctx context.Context, req resource.DeleteRequest
 	id := state.ID.ValueString()
 
 	if err := r.client.DeleteChannel(ctx, id); err != nil {
-		if logclient.IsRateLimitError(err) {
-			resp.Diagnostics.AddError("Delete channel", fmt.Sprintf("rate limited while deleting channel: %v", err))
+		if logclient.IsNotFoundError(err) {
+			// Already gone, treat as successful delete
 			return
 		}
-		// If already gone, treat as successful delete but log warning
-		resp.Diagnostics.AddWarning("Delete channel", fmt.Sprintf("delete returned error: %v", err))
+		resp.Diagnostics.AddError("Delete channel failed", err.Error())
 	}
 }
 
 func (r *ChannelResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	if r.client == nil {
+		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
+		return
+	}
+
 	if req.ID == "" {
 		resp.Diagnostics.AddError(
 			"Missing import ID",

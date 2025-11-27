@@ -34,6 +34,7 @@ const (
 	defaultIdleConnTimeout       = 90 * time.Second
 	defaultResponseHeaderTimeout = 60 * time.Second
 	defaultUserAgent             = "terraform-provider-logfire"
+	maxErrorBodySize             = 8192 // 8KB limit for error response bodies
 )
 
 var (
@@ -215,7 +216,7 @@ func newRateLimiter(requestsPerMinute, requestsPerHour int) *rateLimiter {
 	minuteInterval := time.Minute / time.Duration(requestsPerMinute)
 	hourInterval := time.Hour / time.Duration(requestsPerHour)
 	minuteBurst := requestsPerMinute
-	hourBurst := requestsPerMinute
+	hourBurst := requestsPerHour
 
 	return &rateLimiter{
 		perMinute: newRateGate(minuteInterval, minuteBurst),
@@ -331,7 +332,7 @@ func defaultTransport() http.RoundTripper {
 type APIClient struct {
 	BaseURL *url.URL
 	HTTP    *http.Client
-	Token   string
+	token   string
 
 	userAgent string
 	headers   http.Header
@@ -404,7 +405,7 @@ func NewAPIClient(baseURL, token string, httpClient *http.Client, opts ...Option
 	apiClient := &APIClient{
 		BaseURL:   u,
 		HTTP:      httpClient,
-		Token:     token,
+		token:     token,
 		userAgent: defaultUserAgent,
 		headers:   make(http.Header),
 	}
@@ -442,8 +443,8 @@ func (c *APIClient) doJSON(ctx context.Context, method, path string, in any, out
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Accept", "application/json")
-	if c.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.Token)
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 	if c.userAgent != "" {
 		req.Header.Set("User-Agent", c.userAgent)
@@ -467,10 +468,14 @@ func (c *APIClient) doJSON(ctx context.Context, method, path string, in any, out
 	}()
 
 	if !isStatusExpected(resp.StatusCode, expectedStatus) {
-		b, _ := io.ReadAll(resp.Body)
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodySize))
+		msg := string(b)
+		if len(b) == maxErrorBodySize {
+			msg += "... (truncated)"
+		}
 		return resp, &APIError{
 			StatusCode: resp.StatusCode,
-			Message:    string(b),
+			Message:    msg,
 		}
 	}
 
@@ -781,6 +786,49 @@ func (c *APIClient) DeleteChannel(ctx context.Context, id string) error {
 	return err
 }
 
+// ---- Read Tokens ----
+
+type ReadToken struct {
+	ID            string  `json:"id"`
+	ProjectID     string  `json:"project_id"`
+	CreatedAt     string  `json:"created_at"`
+	Description   *string `json:"description"`
+	Token         *string `json:"token,omitempty"`
+	ProjectName   string  `json:"project_name"`
+	CreatedByName *string `json:"created_by_name"`
+	TokenPrefix   string  `json:"token_prefix"`
+}
+
+func (c *APIClient) readTokensBase(projectID string) string {
+	return fmt.Sprintf("/api/v1/projects/%s/read-tokens/", url.PathEscape(projectID))
+}
+func (c *APIClient) readTokenPath(projectID, tokenID string) string {
+	return fmt.Sprintf("%s%s/", c.readTokensBase(projectID), url.PathEscape(tokenID))
+}
+
+func (c *APIClient) CreateReadToken(ctx context.Context, projectID string) (*ReadToken, error) {
+	var out ReadToken
+	_, err := c.doJSON(ctx, http.MethodPost, c.readTokensBase(projectID), nil, &out, http.StatusOK)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *APIClient) ListReadTokens(ctx context.Context, projectID string) ([]ReadToken, error) {
+	var out []ReadToken
+	_, err := c.doJSON(ctx, http.MethodGet, c.readTokensBase(projectID), nil, &out, http.StatusOK)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *APIClient) DeleteReadToken(ctx context.Context, projectID, tokenID string) error {
+	_, err := c.doJSON(ctx, http.MethodDelete, c.readTokenPath(projectID, tokenID), nil, nil, http.StatusNoContent)
+	return err
+}
+
 // ---- Write Tokens ----
 
 type WriteToken struct {
@@ -794,10 +842,6 @@ type WriteToken struct {
 	TokenPrefix   string  `json:"token_prefix"`
 }
 
-type WriteTokenCreate struct {
-	Description *string `json:"description,omitempty"`
-}
-
 func (c *APIClient) writeTokensBase(projectID string) string {
 	return fmt.Sprintf("/api/v1/projects/%s/write-tokens/", url.PathEscape(projectID))
 }
@@ -805,9 +849,9 @@ func (c *APIClient) writeTokenPath(projectID, tokenID string) string {
 	return fmt.Sprintf("%s%s/", c.writeTokensBase(projectID), url.PathEscape(tokenID))
 }
 
-func (c *APIClient) CreateWriteToken(ctx context.Context, projectID string, in WriteTokenCreate) (*WriteToken, error) {
+func (c *APIClient) CreateWriteToken(ctx context.Context, projectID string) (*WriteToken, error) {
 	var out WriteToken
-	_, err := c.doJSON(ctx, http.MethodPost, c.writeTokensBase(projectID), in, &out, http.StatusOK)
+	_, err := c.doJSON(ctx, http.MethodPost, c.writeTokensBase(projectID), nil, &out, http.StatusOK)
 	if err != nil {
 		return nil, err
 	}
