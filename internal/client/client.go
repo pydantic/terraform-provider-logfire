@@ -781,6 +781,49 @@ func (c *APIClient) DeleteChannel(ctx context.Context, id string) error {
 	return err
 }
 
+// ---- Read Tokens ----
+
+type ReadToken struct {
+	ID            string  `json:"id"`
+	ProjectID     string  `json:"project_id"`
+	CreatedAt     string  `json:"created_at"`
+	Description   *string `json:"description"`
+	Token         *string `json:"token,omitempty"`
+	ProjectName   string  `json:"project_name"`
+	CreatedByName *string `json:"created_by_name"`
+	TokenPrefix   string  `json:"token_prefix"`
+}
+
+func (c *APIClient) readTokensBase(projectID string) string {
+	return fmt.Sprintf("/api/v1/projects/%s/read-tokens/", url.PathEscape(projectID))
+}
+func (c *APIClient) readTokenPath(projectID, tokenID string) string {
+	return fmt.Sprintf("%s%s/", c.readTokensBase(projectID), url.PathEscape(tokenID))
+}
+
+func (c *APIClient) CreateReadToken(ctx context.Context, projectID string) (*ReadToken, error) {
+	var out ReadToken
+	_, err := c.doJSON(ctx, http.MethodPost, c.readTokensBase(projectID), nil, &out, http.StatusOK)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *APIClient) ListReadTokens(ctx context.Context, projectID string) ([]ReadToken, error) {
+	var out []ReadToken
+	_, err := c.doJSON(ctx, http.MethodGet, c.readTokensBase(projectID), nil, &out, http.StatusOK)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *APIClient) DeleteReadToken(ctx context.Context, projectID, tokenID string) error {
+	_, err := c.doJSON(ctx, http.MethodDelete, c.readTokenPath(projectID, tokenID), nil, nil, http.StatusNoContent)
+	return err
+}
+
 // ---- Write Tokens ----
 
 type WriteToken struct {
