@@ -374,11 +374,11 @@ func (r *DashboardResource) Delete(ctx context.Context, req resource.DeleteReque
 	dashboardID := state.ID.ValueString()
 
 	if err := r.client.DeleteDashboard(ctx, projectID, dashboardID); err != nil {
-		if logclient.IsRateLimitError(err) {
-			resp.Diagnostics.AddError("Delete dashboard", fmt.Sprintf("rate limited while deleting dashboard: %v", err))
+		if logclient.IsNotFoundError(err) {
+			// Already gone, treat as successful delete
 			return
 		}
-		resp.Diagnostics.AddWarning("Delete dashboard", fmt.Sprintf("delete returned error: %v", err))
+		resp.Diagnostics.AddError("Delete dashboard failed", err.Error())
 	}
 }
 

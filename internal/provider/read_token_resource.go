@@ -5,8 +5,6 @@ package provider
 
 import (
 	"context"
-	"errors"
-	"net/http"
 
 	stringvalidator "github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -66,7 +64,7 @@ func (r *ReadTokenResource) Schema(ctx context.Context, req resource.SchemaReque
 			},
 			"description": rschema.StringAttribute{
 				Computed:            true,
-				MarkdownDescription: "Description assigned by the Logfire API.",
+				MarkdownDescription: "Description is fixed to \"Created by Public API\" for provider-managed tokens.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
@@ -337,8 +335,8 @@ func (r *ReadTokenResource) Delete(ctx context.Context, req resource.DeleteReque
 	tokenID := state.ID.ValueString()
 
 	if err := r.client.DeleteReadToken(ctx, projectID, tokenID); err != nil {
-		var apiErr *logclient.APIError
-		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+		if logclient.IsNotFoundError(err) {
+			// Already gone, treat as successful delete
 			return
 		}
 		resp.Diagnostics.AddError("Delete read token failed", err.Error())

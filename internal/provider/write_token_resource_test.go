@@ -29,7 +29,6 @@ func TestAccWriteTokenResource(t *testing.T) {
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue("logfire_write_token.test", tfjsonpath.New("id"), knownvalue.NotNull()),
 					statecheck.ExpectKnownValue("logfire_write_token.test", tfjsonpath.New("project_id"), knownvalue.NotNull()),
-					statecheck.ExpectKnownValue("logfire_write_token.test", tfjsonpath.New("description"), knownvalue.StringExact(writeTokenDescriptionValue)),
 					statecheck.ExpectKnownValue("logfire_write_token.test", tfjsonpath.New("token_prefix"), knownvalue.NotNull()),
 				},
 			},

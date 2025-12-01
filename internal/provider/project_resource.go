@@ -296,12 +296,11 @@ func (r *ProjectResource) Delete(ctx context.Context, req resource.DeleteRequest
 	}
 
 	if err := r.client.DeleteProject(ctx, state.ID.ValueString()); err != nil {
-		if logclient.IsRateLimitError(err) {
-			resp.Diagnostics.AddError("Delete project", fmt.Sprintf("rate limited while deleting project: %v", err))
+		if logclient.IsNotFoundError(err) {
+			// Already gone, treat as successful delete
 			return
 		}
-		// If already gone, treat as successful delete but log warning
-		resp.Diagnostics.AddWarning("Delete project", fmt.Sprintf("delete returned error: %v", err))
+		resp.Diagnostics.AddError("Delete project failed", err.Error())
 	}
 }
 

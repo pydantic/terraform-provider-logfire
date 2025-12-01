@@ -5,8 +5,6 @@ package provider
 
 import (
 	"context"
-	"errors"
-	"net/http"
 
 	stringvalidator "github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -27,8 +25,6 @@ func NewWriteTokenResource() resource.Resource { return &WriteTokenResource{} }
 type WriteTokenResource struct {
 	client *logclient.APIClient
 }
-
-const writeTokenDescriptionValue = "Created by OAuth Application"
 
 type WriteTokenModel struct {
 	ID            types.String `tfsdk:"id"`
@@ -68,7 +64,7 @@ func (r *WriteTokenResource) Schema(ctx context.Context, req resource.SchemaRequ
 			},
 			"description": rschema.StringAttribute{
 				Computed:            true,
-				MarkdownDescription: "Description is fixed to \"Created by OAuth Application\" for provider-managed tokens.",
+				MarkdownDescription: "Description is fixed to \"Created by Public API\" for provider-managed tokens.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
@@ -125,13 +121,6 @@ func (r *WriteTokenResource) Configure(ctx context.Context, req resource.Configu
 	r.client = c
 }
 
-func writeTokenCreatePayload() logclient.WriteTokenCreate {
-	desc := writeTokenDescriptionValue
-	return logclient.WriteTokenCreate{
-		Description: &desc,
-	}
-}
-
 func (r *WriteTokenResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	if r.client == nil {
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
@@ -150,9 +139,8 @@ func (r *WriteTokenResource) Create(ctx context.Context, req resource.CreateRequ
 	}
 
 	projectID := plan.ProjectID.ValueString()
-	payload := writeTokenCreatePayload()
 
-	out, err := r.client.CreateWriteToken(ctx, projectID, payload)
+	out, err := r.client.CreateWriteToken(ctx, projectID)
 	if err != nil {
 		resp.Diagnostics.AddError("Create write token failed", err.Error())
 		return
@@ -329,8 +317,8 @@ func (r *WriteTokenResource) Delete(ctx context.Context, req resource.DeleteRequ
 	tokenID := state.ID.ValueString()
 
 	if err := r.client.DeleteWriteToken(ctx, projectID, tokenID); err != nil {
-		var apiErr *logclient.APIError
-		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+		if logclient.IsNotFoundError(err) {
+			// Already gone, treat as successful delete
 			return
 		}
 		resp.Diagnostics.AddError("Delete write token failed", err.Error())

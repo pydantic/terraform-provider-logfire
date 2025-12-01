@@ -37,6 +37,6 @@ Required:
 
 Optional:
 
-- `auth_key` (String) Opsgenie API key.
+- `auth_key` (String, Sensitive) Opsgenie API key.
 - `format` (String) Webhook payload format.
 - `url` (String) Webhook URL endpoint.

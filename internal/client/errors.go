@@ -16,3 +16,12 @@ func IsRateLimitError(err error) bool {
 	}
 	return false
 }
+
+// IsNotFoundError reports whether the error represents an HTTP 404.
+func IsNotFoundError(err error) bool {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode == http.StatusNotFound
+	}
+	return false
+}

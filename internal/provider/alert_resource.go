@@ -78,6 +78,9 @@ func (r *AlertResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 			"name": rschema.StringAttribute{
 				Required:            true,
 				MarkdownDescription: "Alert name (unique per project).",
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
+				},
 			},
 			"description": rschema.StringAttribute{
 				Optional:            true,
@@ -537,12 +540,11 @@ func (r *AlertResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 	id := state.ID.ValueString()
 
 	if err := r.client.DeleteAlert(ctx, projectID, id); err != nil {
-		if logclient.IsRateLimitError(err) {
-			resp.Diagnostics.AddError("Delete alert", fmt.Sprintf("rate limited while deleting alert: %v", err))
+		if logclient.IsNotFoundError(err) {
+			// Already gone, treat as successful delete
 			return
 		}
-		// If already gone, treat as successful delete but log warning
-		resp.Diagnostics.AddWarning("Delete alert", fmt.Sprintf("delete returned error: %v", err))
+		resp.Diagnostics.AddError("Delete alert failed", err.Error())
 	}
 }
 
