@@ -808,7 +808,7 @@ func (c *APIClient) readTokenPath(projectID, tokenID string) string {
 
 func (c *APIClient) CreateReadToken(ctx context.Context, projectID string) (*ReadToken, error) {
 	var out ReadToken
-	_, err := c.doJSON(ctx, http.MethodPost, c.readTokensBase(projectID), nil, &out, http.StatusOK)
+	_, err := c.doJSON(ctx, http.MethodPost, c.readTokensBase(projectID), nil, &out, http.StatusCreated, http.StatusOK)
 	if err != nil {
 		return nil, err
 	}
@@ -851,7 +851,7 @@ func (c *APIClient) writeTokenPath(projectID, tokenID string) string {
 
 func (c *APIClient) CreateWriteToken(ctx context.Context, projectID string) (*WriteToken, error) {
 	var out WriteToken
-	_, err := c.doJSON(ctx, http.MethodPost, c.writeTokensBase(projectID), nil, &out, http.StatusOK)
+	_, err := c.doJSON(ctx, http.MethodPost, c.writeTokensBase(projectID), nil, &out, http.StatusCreated, http.StatusOK)
 	if err != nil {
 		return nil, err
 	}
