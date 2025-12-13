@@ -6,6 +6,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
@@ -69,6 +70,10 @@ func (r *ProjectResource) Schema(ctx context.Context, req resource.SchemaRequest
 				MarkdownDescription: "Project name/slug. Must be unique within the organization.",
 				Validators: []validator.String{
 					stringvalidator.LengthAtLeast(2),
+					stringvalidator.RegexMatches(
+						regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`),
+						"must use lowercase letters, numbers, and internal hyphens (no spaces or uppercase characters)",
+					),
 				},
 			},
 			"description": rschema.StringAttribute{
