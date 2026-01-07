@@ -1,4 +1,4 @@
-## 0.1.0 (Unreleased)
+## 0.0.1
 
 FEATURES:
 - Initial release of the Terraform provider for Pydantic Logfire.
