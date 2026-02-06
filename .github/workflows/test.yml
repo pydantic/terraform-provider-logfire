@@ -98,6 +98,7 @@ jobs:
           TF_ACC: "1"
           LOGFIRE_BASE_URL: ${{ secrets.LOGFIRE_BASE_URL }}
           LOGFIRE_API_KEY: ${{ secrets.LOGFIRE_API_KEY }}
+          LOGFIRE_EXPECTED_ORG: "terraform-provider-logfire"
         run: go test -v -cover ./internal/provider/
         timeout-minutes: 10
       - name: Skip acceptance tests

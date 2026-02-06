@@ -92,6 +92,7 @@ output "prod_read_token" {
 Run `terraform init && terraform apply` to provision Logfire resources. The `examples/` directory holds a runnable copy of this configuration with setup instructions.
 
 ## Resources
+- `logfire_organization` — manage organizations (self-hosted only; requires a special organization scope) with default-on deletion protection.
 - `logfire_project` — manage Logfire projects.
 - `logfire_channel` — configure webhook or Opsgenie notification channels (email coming soon).
 - `logfire_alert` — define alerting rules tied to channels.

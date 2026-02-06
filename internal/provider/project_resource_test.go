@@ -5,6 +5,7 @@ package provider
 
 import (
 	"fmt"
+	"os"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/acctest"
@@ -21,6 +22,7 @@ func TestAccProjectResource(t *testing.T) {
 
 	baseName := fmt.Sprintf("acc-test-project-%s", acctest.RandStringFromCharSet(6, acctest.CharSetAlphaNum))
 	renamedName := fmt.Sprintf("%s-renamed", baseName)
+	expectedOrgCheck := expectedProjectOrganizationCheck()
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
@@ -33,7 +35,7 @@ func TestAccProjectResource(t *testing.T) {
 				// Before Apply, assert that we expect a create of the resource.
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue("logfire_project.test", tfjsonpath.New("id"), knownvalue.NotNull()),
-					statecheck.ExpectKnownValue("logfire_project.test", tfjsonpath.New("organization"), knownvalue.StringExact("terraform-provider-logfire")),
+					statecheck.ExpectKnownValue("logfire_project.test", tfjsonpath.New("organization"), expectedOrgCheck),
 					statecheck.ExpectKnownValue("logfire_project.test", tfjsonpath.New("name"), knownvalue.StringExact(baseName)),
 					statecheck.ExpectKnownValue("logfire_project.test", tfjsonpath.New("description"), knownvalue.StringExact("This is a test project")),
 					statecheck.ExpectKnownValue("logfire_project.test", tfjsonpath.New("visibility"), knownvalue.StringExact("public")),
@@ -71,7 +73,7 @@ func TestAccProjectResource(t *testing.T) {
 				Config: testAccProjectResourceConfig(baseName, nil, nil),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue("logfire_project.test", tfjsonpath.New("id"), knownvalue.NotNull()),
-					statecheck.ExpectKnownValue("logfire_project.test", tfjsonpath.New("organization"), knownvalue.StringExact("terraform-provider-logfire")),
+					statecheck.ExpectKnownValue("logfire_project.test", tfjsonpath.New("organization"), expectedOrgCheck),
 					statecheck.ExpectKnownValue("logfire_project.test", tfjsonpath.New("name"), knownvalue.StringExact(baseName)),
 					statecheck.ExpectKnownValue("logfire_project.test", tfjsonpath.New("description"), knownvalue.Null()),
 					statecheck.ExpectKnownValue("logfire_project.test", tfjsonpath.New("visibility"), knownvalue.StringExact("public")),
@@ -102,6 +104,13 @@ func TestAccProjectResource(t *testing.T) {
 			// DELETE happens automatically and is verified by CheckDestroy
 		},
 	})
+}
+
+func expectedProjectOrganizationCheck() knownvalue.Check {
+	if org := os.Getenv("LOGFIRE_EXPECTED_ORG"); org != "" {
+		return knownvalue.StringExact(org)
+	}
+	return knownvalue.NotNull()
 }
 
 func testAccProjectResourceConfig(name string, desc *string, visibility *string) string {

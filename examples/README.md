@@ -1,6 +1,6 @@
 # Examples
 
-This directory contains an example on how to setup the logfire provider and create some resources.
+This directory contains examples for setting up the Logfire provider and creating resources.
 
 ## Prerequisites
 
@@ -8,11 +8,24 @@ This directory contains an example on how to setup the logfire provider and crea
 - A [Logfire account](https://pydantic.dev/logfire) and API key
 
 
-## Running the example
+## Available examples
 
-Make sure to update the ```api_key``` and ```base_url``` with your account specific values
+- `main.tf`: SaaS-compatible example (project/channel/alert/dashboard/token resources).
+- `self-hosted-organization/main.tf`: self-hosted only example for `logfire_organization` (requires a special organization scope).
+
+## Running the SaaS-compatible example
+
+Make sure to update the `api_key` and `base_url` with your account specific values.
 ```bash
 cd examples
+terraform init
+terraform apply
+```
+
+## Running the self-hosted organization example
+
+```bash
+cd examples/self-hosted-organization
 terraform init
 terraform apply
 ```

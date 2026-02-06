@@ -516,6 +516,106 @@ func (n NullableField[T]) MarshalJSON() ([]byte, error) {
 	return json.Marshal(*n.Value)
 }
 
+type OrganizationLink struct {
+	URL  string `json:"url"`
+	Icon string `json:"icon"`
+	Name string `json:"name"`
+}
+
+type OrganizationRead struct {
+	ID                        string             `json:"id"`
+	OrganizationName          string             `json:"organization_name"`
+	SubscriptionPlan          *string            `json:"subscription_plan"`
+	HasAdminPanel             bool               `json:"has_admin_panel"`
+	CreatedAt                 string             `json:"created_at"`
+	UpdatedAt                 string             `json:"updated_at"`
+	BillingEmail              *string            `json:"billing_email"`
+	OrganizationDisplayName   *string            `json:"organization_display_name"`
+	GithubHandle              *string            `json:"github_handle"`
+	Location                  *string            `json:"location"`
+	Avatar                    *string            `json:"avatar"`
+	Links                     []OrganizationLink `json:"links"`
+	Description               *string            `json:"description"`
+	SpendingCap               *int               `json:"spending_cap"`
+	SpendingCapReachedAt      *string            `json:"spending_cap_reached_at"`
+	PlanlessGracePeriodEndsAt *string            `json:"planless_grace_period_ends_at"`
+	GatewayEnabled            bool               `json:"gateway_enabled"`
+	AIEnabled                 bool               `json:"ai_enabled"`
+}
+
+type OrganizationCreate struct {
+	OrganizationName        string             `json:"organization_name"`
+	OrganizationDisplayName *string            `json:"organization_display_name,omitempty"`
+	GithubHandle            *string            `json:"github_handle,omitempty"`
+	Location                *string            `json:"location,omitempty"`
+	Avatar                  *string            `json:"avatar,omitempty"`
+	Links                   []OrganizationLink `json:"links,omitempty"`
+	Description             *string            `json:"description,omitempty"`
+}
+
+type OrganizationUpdate struct {
+	OrganizationName        *string             `json:"organization_name,omitempty"`
+	BillingEmail            *string             `json:"billing_email,omitempty"`
+	OrganizationDisplayName *string             `json:"organization_display_name,omitempty"`
+	GithubHandle            *string             `json:"github_handle,omitempty"`
+	Location                *string             `json:"location,omitempty"`
+	Avatar                  *string             `json:"avatar,omitempty"`
+	Links                   *[]OrganizationLink `json:"links,omitempty"`
+	Description             *string             `json:"description,omitempty"`
+}
+
+func (c *APIClient) organizationsBase() string {
+	return "/api/v1/organizations/"
+}
+
+func (c *APIClient) organizationPath(id string) string {
+	return fmt.Sprintf("%s%s/", c.organizationsBase(), url.PathEscape(id))
+}
+
+func (c *APIClient) CreateOrganization(ctx context.Context, in OrganizationCreate) (*OrganizationRead, error) {
+	var out OrganizationRead
+	_, err := c.doJSON(ctx, http.MethodPost, c.organizationsBase(), in, &out, http.StatusCreated, http.StatusOK)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *APIClient) GetOrganization(ctx context.Context, id string) (*OrganizationRead, int, error) {
+	var out OrganizationRead
+	resp, err := c.doJSON(ctx, http.MethodGet, c.organizationPath(id), nil, &out, http.StatusOK)
+	if err != nil {
+		if resp != nil {
+			return nil, resp.StatusCode, err
+		}
+		return nil, 0, err
+	}
+	return &out, http.StatusOK, nil
+}
+
+func (c *APIClient) UpdateOrganization(ctx context.Context, id string, in OrganizationUpdate) (*OrganizationRead, error) {
+	var out OrganizationRead
+	_, err := c.doJSON(ctx, http.MethodPut, c.organizationPath(id), in, &out, http.StatusOK)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *APIClient) DeleteOrganization(ctx context.Context, id string) error {
+	_, err := c.doJSON(ctx, http.MethodDelete, c.organizationPath(id), nil, nil, http.StatusNoContent)
+	return err
+}
+
+func (c *APIClient) ListOrganizations(ctx context.Context) ([]OrganizationRead, error) {
+	var out []OrganizationRead
+	_, err := c.doJSON(ctx, http.MethodGet, c.organizationsBase(), nil, &out, http.StatusOK)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 type ProjectRead struct {
 	ID               string  `json:"id"`
 	ProjectName      string  `json:"project_name"`
