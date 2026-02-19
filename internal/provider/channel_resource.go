@@ -81,7 +81,7 @@ func (r *ChannelResource) Schema(ctx context.Context, req resource.SchemaRequest
 		},
 		Blocks: map[string]rschema.Block{
 			"config": rschema.SingleNestedBlock{
-				MarkdownDescription: "Channel configuration.",
+				MarkdownDescription: "Required channel configuration.",
 				Validators: []validator.Object{
 					objectvalidator.IsRequired(),
 				},

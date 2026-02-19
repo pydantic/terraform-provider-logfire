@@ -87,7 +87,7 @@ func (r *WriteTokenResource) Schema(ctx context.Context, req resource.SchemaRequ
 			},
 			"expires_at": rschema.StringAttribute{
 				Optional:            true,
-				MarkdownDescription: "Optional RFC3339 expiration timestamp for the token. If omitted, the token does not expire.",
+				MarkdownDescription: "Optional RFC3339 expiration timestamp for the token (for example `2026-12-31T23:59:59Z`). If omitted, the token does not expire.",
 				Validators: []validator.String{
 					newOptionalRFC3339Validator(),
 				},

@@ -92,14 +92,14 @@ func (r *AlertResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 			},
 			"time_window": rschema.StringAttribute{
 				Required:            true,
-				MarkdownDescription: "Lookback window as Go duration ",
+				MarkdownDescription: "Lookback window as Go duration.",
 				Validators: []validator.String{
 					stringvalidator.OneOf(time_constraint...),
 				},
 			},
 			"frequency": rschema.StringAttribute{
 				Required:            true,
-				MarkdownDescription: "Evaluation frequency as Go duration",
+				MarkdownDescription: "Evaluation frequency as Go duration.",
 				Validators: []validator.String{
 					stringvalidator.OneOf(time_constraint...),
 				},

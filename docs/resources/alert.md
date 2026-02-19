@@ -18,12 +18,12 @@ Manages a Logfire alert.
 ### Required
 
 - `channel_ids` (Set of String) Set of channel IDs to notify.
-- `frequency` (String) Evaluation frequency as Go duration
+- `frequency` (String) Evaluation frequency as Go duration.
 - `name` (String) Alert name (unique per project).
 - `notify_when` (String) Notification rule. Must match API enum.
 - `project_id` (String) Project ID (UUID) used for alert API paths.
 - `query` (String) SQL / query string used by the alert.
-- `time_window` (String) Lookback window as Go duration
+- `time_window` (String) Lookback window as Go duration.
 
 ### Optional
 

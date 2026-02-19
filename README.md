@@ -3,8 +3,9 @@
 Manage [Pydantic Logfire](https://pydantic.dev/logfire) projects, alerting, dashboards, and API tokens with Terraform. The provider is published at `registry.terraform.io/pydantic/logfire`.
 
 ## Requirements
-- Terraform CLI 1.5 or newer
-- A Logfire account and API key (via config or `LOGFIRE_BASE_URL`/`LOGFIRE_API_KEY`)
+- Terraform CLI 1.8 or newer
+- A Logfire API key (`api_key` argument or `LOGFIRE_API_KEY`)
+- A Logfire base URL (`base_url` argument or `LOGFIRE_BASE_URL`)
 
 ## Quick Start
 ```hcl
@@ -33,7 +34,7 @@ resource "logfire_channel" "alerts" {
   # Optional, defaults to true.
   active = true
   config {
-    # Also supports "opsgenie" (with `auth_key`). Email channels are not available yet.
+    # Also supports "opsgenie" (with `auth_key`).
     type   = "webhook"
     format = "auto"
     url    = "https://hooks.slack.com/services/xxx/yyy/zzz"
@@ -70,31 +71,39 @@ resource "logfire_dashboard" "prod_overview" {
 
 resource "logfire_write_token" "prod_ingest" {
   project_id = logfire_project.prod.id
+  # Optional RFC3339 timestamp.
+  # expires_at = "2099-12-31T23:59:59Z"
 }
 
 output "prod_write_token" {
-  description = "Write token for sending data to the production project"
+  description = "Write token for the production project"
   value       = logfire_write_token.prod_ingest.token
   sensitive   = true
 }
 
 resource "logfire_read_token" "prod_read" {
   project_id = logfire_project.prod.id
+  # Optional RFC3339 timestamp.
+  # expires_at = "2099-12-31T23:59:59Z"
 }
 
 output "prod_read_token" {
-  description = "Read token for querying the production project"
+  description = "Read token for the production project"
   value       = logfire_read_token.prod_read.token
   sensitive   = true
 }
 ```
 
-Run `terraform init && terraform apply` to provision Logfire resources. The `examples/` directory holds a runnable copy of this configuration with setup instructions.
+Run `terraform init && terraform apply` to provision Logfire resources.
+
+## Examples
+- `examples/main.tf` contains a SaaS-compatible end-to-end setup (project, channel, alert, dashboard, and read/write tokens).
+- `examples/self-hosted-organization/main.tf` contains the self-hosted-only `logfire_organization` example.
 
 ## Resources
 - `logfire_organization` — manage organizations (self-hosted only; requires a special organization scope) with default-on deletion protection.
 - `logfire_project` — manage Logfire projects.
-- `logfire_channel` — configure webhook or Opsgenie notification channels (email coming soon).
+- `logfire_channel` — configure webhook or Opsgenie notification channels.
 - `logfire_alert` — define alerting rules tied to channels.
 - `logfire_dashboard` — provision dashboards from exported definitions.
 - `logfire_write_token` — issue write tokens for ingesting data.

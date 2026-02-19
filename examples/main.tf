@@ -1,5 +1,5 @@
 terraform {
-  #required_version = ">= 1.5"
+  required_version = ">= 1.8"
 
   required_providers {
     logfire = {
@@ -19,11 +19,11 @@ provider "logfire" {
 
 resource "logfire_project" "production" {
   name        = "production"
-  description = "Production observability projects"
+  description = "Production observability project"
 }
 
 resource "logfire_channel" "alerts_webhook" {
-  name   = "alerts-webhooks"
+  name   = "alerts-webhook"
   active = true
 
   config {
@@ -70,7 +70,7 @@ resource "logfire_write_token" "production_ingest" {
 }
 
 output "production_write_token" {
-  description = "Write token for the project."
+  description = "Write token for the project"
   value       = logfire_write_token.production_ingest.token
   sensitive   = true
 }
@@ -82,7 +82,7 @@ resource "logfire_read_token" "production_read" {
 }
 
 output "production_read_token" {
-  description = "Read token for the project."
+  description = "Read token for the project"
   value       = logfire_read_token.production_read.token
   sensitive   = true
 }

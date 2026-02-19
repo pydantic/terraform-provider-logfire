@@ -22,7 +22,7 @@ Manages a Logfire alert channel.
 ### Optional
 
 - `active` (Boolean) Whether the channel is active.
-- `config` (Block, Optional) Channel configuration. (see [below for nested schema](#nestedblock--config))
+- `config` (Block, Optional) Required channel configuration. (see [below for nested schema](#nestedblock--config))
 
 ### Read-Only
 
