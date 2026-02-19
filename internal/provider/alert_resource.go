@@ -157,13 +157,13 @@ func durToISO8601(d time.Duration) string {
 	b := strings.Builder{}
 	b.WriteString("PT")
 	if h > 0 {
-		b.WriteString(fmt.Sprintf("%dH", h))
+		_, _ = fmt.Fprintf(&b, "%dH", h)
 	}
 	if m > 0 {
-		b.WriteString(fmt.Sprintf("%dM", m))
+		_, _ = fmt.Fprintf(&b, "%dM", m)
 	}
 	if s > 0 || (h == 0 && m == 0) {
-		b.WriteString(fmt.Sprintf("%dS", s))
+		_, _ = fmt.Fprintf(&b, "%dS", s)
 	}
 	return b.String()
 }

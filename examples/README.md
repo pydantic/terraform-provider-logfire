@@ -10,7 +10,7 @@ This directory contains examples for setting up the Logfire provider and creatin
 
 ## Available examples
 
-- `main.tf`: SaaS-compatible example (project/channel/alert/dashboard/token resources).
+- `main.tf`: SaaS-compatible example (project/channel/alert/dashboard/resources + one read/write token).
 - `self-hosted-organization/main.tf`: self-hosted only example for `logfire_organization` (requires a special organization scope).
 
 ## Running the SaaS-compatible example
@@ -20,6 +20,18 @@ Make sure to update the `api_key` and `base_url` with your account specific valu
 cd examples
 terraform init
 terraform apply
+```
+
+### Token expiration E2E in `main.tf`
+
+The example provisions one read token and one write token with no expiration by default.
+To test expiration, set `expires_at` on either token resource to an RFC3339 timestamp.
+
+Inspect results after apply:
+
+```bash
+terraform state show logfire_write_token.production_ingest
+terraform state show logfire_read_token.production_read
 ```
 
 ## Running the self-hosted organization example

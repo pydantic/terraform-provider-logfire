@@ -19,6 +19,10 @@ Manages a Logfire read token.
 
 - `project_id` (String) UUID of the project that owns the token.
 
+### Optional
+
+- `expires_at` (String) Optional RFC3339 expiration timestamp for the token. If omitted, the token does not expire.
+
 ### Read-Only
 
 - `created_at` (String) Timestamp when the token was created.

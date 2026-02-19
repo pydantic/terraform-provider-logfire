@@ -65,20 +65,24 @@ resource "logfire_dashboard" "production_overview" {
 
 resource "logfire_write_token" "production_ingest" {
   project_id = logfire_project.production.id
+  # Optional RFC3339 expiration:
+  # expires_at = "2099-12-31T23:59:59Z"
 }
 
 output "production_write_token" {
-  description = "Write token for sending data to the production project"
+  description = "Write token for the project."
   value       = logfire_write_token.production_ingest.token
   sensitive   = true
 }
 
 resource "logfire_read_token" "production_read" {
   project_id = logfire_project.production.id
+  # Optional RFC3339 expiration:
+  # expires_at = "2099-12-31T23:59:59Z"
 }
 
 output "production_read_token" {
-  description = "Read token for reading data on the production project"
+  description = "Read token for the project."
   value       = logfire_read_token.production_read.token
   sensitive   = true
 }
