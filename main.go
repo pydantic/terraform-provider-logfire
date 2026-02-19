@@ -1,4 +1,4 @@
-// Copyright (c) Pydantic, Inc.
+// Copyright Pydantic, Inc. 2025
 // SPDX-License-Identifier: MPL-2.0
 
 package main
