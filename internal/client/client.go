@@ -1,4 +1,4 @@
-// Copyright (c) Pydantic, Inc.
+// Copyright Pydantic, Inc. 2025
 // SPDX-License-Identifier: MPL-2.0
 
 // Package client provides the HTTP client and Logfire domain types.
@@ -892,11 +892,16 @@ type ReadToken struct {
 	ID            string  `json:"id"`
 	ProjectID     string  `json:"project_id"`
 	CreatedAt     string  `json:"created_at"`
+	ExpiresAt     *string `json:"expires_at"`
 	Description   *string `json:"description"`
 	Token         *string `json:"token,omitempty"`
 	ProjectName   string  `json:"project_name"`
 	CreatedByName *string `json:"created_by_name"`
 	TokenPrefix   string  `json:"token_prefix"`
+}
+
+type CreateReadTokenInput struct {
+	ExpiresAt *string `json:"expires_at,omitempty"`
 }
 
 func (c *APIClient) readTokensBase(projectID string) string {
@@ -906,9 +911,9 @@ func (c *APIClient) readTokenPath(projectID, tokenID string) string {
 	return fmt.Sprintf("%s%s/", c.readTokensBase(projectID), url.PathEscape(tokenID))
 }
 
-func (c *APIClient) CreateReadToken(ctx context.Context, projectID string) (*ReadToken, error) {
+func (c *APIClient) CreateReadToken(ctx context.Context, projectID string, in CreateReadTokenInput) (*ReadToken, error) {
 	var out ReadToken
-	_, err := c.doJSON(ctx, http.MethodPost, c.readTokensBase(projectID), nil, &out, http.StatusCreated, http.StatusOK)
+	_, err := c.doJSON(ctx, http.MethodPost, c.readTokensBase(projectID), in, &out, http.StatusCreated, http.StatusOK)
 	if err != nil {
 		return nil, err
 	}
@@ -935,11 +940,16 @@ type WriteToken struct {
 	ID            string  `json:"id"`
 	ProjectID     string  `json:"project_id"`
 	CreatedAt     string  `json:"created_at"`
+	ExpiresAt     *string `json:"expires_at"`
 	Description   *string `json:"description"`
 	Token         *string `json:"token,omitempty"`
 	ProjectName   string  `json:"project_name"`
 	CreatedByName *string `json:"created_by_name"`
 	TokenPrefix   string  `json:"token_prefix"`
+}
+
+type CreateWriteTokenInput struct {
+	ExpiresAt *string `json:"expires_at,omitempty"`
 }
 
 func (c *APIClient) writeTokensBase(projectID string) string {
@@ -949,9 +959,9 @@ func (c *APIClient) writeTokenPath(projectID, tokenID string) string {
 	return fmt.Sprintf("%s%s/", c.writeTokensBase(projectID), url.PathEscape(tokenID))
 }
 
-func (c *APIClient) CreateWriteToken(ctx context.Context, projectID string) (*WriteToken, error) {
+func (c *APIClient) CreateWriteToken(ctx context.Context, projectID string, in CreateWriteTokenInput) (*WriteToken, error) {
 	var out WriteToken
-	_, err := c.doJSON(ctx, http.MethodPost, c.writeTokensBase(projectID), nil, &out, http.StatusCreated, http.StatusOK)
+	_, err := c.doJSON(ctx, http.MethodPost, c.writeTokensBase(projectID), in, &out, http.StatusCreated, http.StatusOK)
 	if err != nil {
 		return nil, err
 	}

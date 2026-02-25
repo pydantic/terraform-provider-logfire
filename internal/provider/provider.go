@@ -1,4 +1,4 @@
-// Copyright (c) Pydantic, Inc.
+// Copyright Pydantic, Inc. 2025
 // SPDX-License-Identifier: MPL-2.0
 
 package provider
@@ -40,6 +40,7 @@ func (p *LogfireProvider) Metadata(ctx context.Context, req provider.MetadataReq
 
 func (p *LogfireProvider) Schema(ctx context.Context, req provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
+		MarkdownDescription: "Configure the Logfire API endpoint and credentials used by all resources.",
 		Attributes: map[string]schema.Attribute{
 			"base_url": schema.StringAttribute{
 				Optional:            true,
@@ -48,7 +49,7 @@ func (p *LogfireProvider) Schema(ctx context.Context, req provider.SchemaRequest
 			"api_key": schema.StringAttribute{
 				Optional:            true,
 				Sensitive:           true,
-				MarkdownDescription: "Bearer token.",
+				MarkdownDescription: "Bearer token. If omitted, the LOGFIRE_API_KEY environment variable is used.",
 			},
 		},
 	}

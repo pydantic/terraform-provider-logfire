@@ -1,4 +1,4 @@
-// Copyright (c) Pydantic, Inc.
+// Copyright Pydantic, Inc. 2025
 // SPDX-License-Identifier: MPL-2.0
 
 package provider
@@ -32,6 +32,7 @@ type WriteTokenModel struct {
 	Description   types.String `tfsdk:"description"`
 	Token         types.String `tfsdk:"token"`
 	CreatedAt     types.String `tfsdk:"created_at"`
+	ExpiresAt     types.String `tfsdk:"expires_at"`
 	ProjectName   types.String `tfsdk:"project_name"`
 	CreatedByName types.String `tfsdk:"created_by_name"`
 	TokenPrefix   types.String `tfsdk:"token_prefix"`
@@ -82,6 +83,16 @@ func (r *WriteTokenResource) Schema(ctx context.Context, req resource.SchemaRequ
 				MarkdownDescription: "Timestamp when the token was created.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"expires_at": rschema.StringAttribute{
+				Optional:            true,
+				MarkdownDescription: "Optional RFC3339 expiration timestamp for the token (for example `2026-12-31T23:59:59Z`). If omitted, the token does not expire.",
+				Validators: []validator.String{
+					newOptionalRFC3339Validator(),
+				},
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"project_name": rschema.StringAttribute{
@@ -139,8 +150,13 @@ func (r *WriteTokenResource) Create(ctx context.Context, req resource.CreateRequ
 	}
 
 	projectID := plan.ProjectID.ValueString()
+	expiresAt, err := parseOptionalRFC3339(plan.ExpiresAt)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid expires_at", err.Error())
+		return
+	}
 
-	out, err := r.client.CreateWriteToken(ctx, projectID)
+	out, err := r.client.CreateWriteToken(ctx, projectID, logclient.CreateWriteTokenInput{ExpiresAt: expiresAt})
 	if err != nil {
 		resp.Diagnostics.AddError("Create write token failed", err.Error())
 		return
@@ -162,6 +178,11 @@ func (r *WriteTokenResource) Create(ctx context.Context, req resource.CreateRequ
 			state.CreatedAt = types.StringValue(out.CreatedAt)
 		} else {
 			state.CreatedAt = types.StringNull()
+		}
+		if out.ExpiresAt != nil {
+			state.ExpiresAt = types.StringValue(*out.ExpiresAt)
+		} else {
+			state.ExpiresAt = types.StringNull()
 		}
 		if out.ProjectName != "" {
 			state.ProjectName = types.StringValue(out.ProjectName)
@@ -188,6 +209,7 @@ func (r *WriteTokenResource) Create(ctx context.Context, req resource.CreateRequ
 		state.ID = types.StringNull()
 		state.ProjectID = types.StringValue(projectID)
 		state.CreatedAt = types.StringNull()
+		state.ExpiresAt = types.StringNull()
 		state.ProjectName = types.StringNull()
 		state.CreatedByName = types.StringNull()
 		state.TokenPrefix = types.StringNull()
@@ -255,6 +277,11 @@ func (r *WriteTokenResource) Read(ctx context.Context, req resource.ReadRequest,
 		newState.CreatedAt = types.StringValue(found.CreatedAt)
 	} else {
 		newState.CreatedAt = state.CreatedAt
+	}
+	if found.ExpiresAt != nil {
+		newState.ExpiresAt = types.StringValue(*found.ExpiresAt)
+	} else {
+		newState.ExpiresAt = types.StringNull()
 	}
 	if found.ProjectName != "" {
 		newState.ProjectName = types.StringValue(found.ProjectName)

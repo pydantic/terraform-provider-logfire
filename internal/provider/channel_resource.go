@@ -1,4 +1,4 @@
-// Copyright (c) Pydantic, Inc.
+// Copyright Pydantic, Inc. 2025
 // SPDX-License-Identifier: MPL-2.0
 
 package provider
@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 
+	objectvalidator "github.com/hashicorp/terraform-plugin-framework-validators/objectvalidator"
 	stringvalidator "github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -80,7 +81,10 @@ func (r *ChannelResource) Schema(ctx context.Context, req resource.SchemaRequest
 		},
 		Blocks: map[string]rschema.Block{
 			"config": rschema.SingleNestedBlock{
-				MarkdownDescription: "Channel configuration.",
+				MarkdownDescription: "Required channel configuration.",
+				Validators: []validator.Object{
+					objectvalidator.IsRequired(),
+				},
 				Attributes: map[string]rschema.Attribute{
 					"type": rschema.StringAttribute{
 						Required:            true,
