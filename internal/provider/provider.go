@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -21,6 +22,11 @@ import (
 
 // Interface assertions.
 var _ provider.Provider = &LogfireProvider{}
+
+const (
+	defaultUSBaseURL = "https://logfire-us.pydantic.dev"
+	defaultEUBaseURL = "https://logfire-eu.pydantic.dev"
+)
 
 func New(version string) func() provider.Provider {
 	return func() provider.Provider { return &LogfireProvider{version: version} }
@@ -44,7 +50,7 @@ func (p *LogfireProvider) Schema(ctx context.Context, req provider.SchemaRequest
 		Attributes: map[string]schema.Attribute{
 			"base_url": schema.StringAttribute{
 				Optional:            true,
-				MarkdownDescription: "Base URL for Logfire API. If omitted, the LOGFIRE_BASE_URL environment variable is used.",
+				MarkdownDescription: "Base URL for the Logfire API. If omitted, the provider uses LOGFIRE_BASE_URL or infers the SaaS endpoint from the api_key region. Self-hosted customers should set this explicitly.",
 			},
 			"api_key": schema.StringAttribute{
 				Optional:            true,
@@ -97,16 +103,6 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 		api_key = config.ApiKey.ValueString()
 	}
 
-	if base_url == "" {
-		resp.Diagnostics.AddAttributeError(
-			path.Root("base_url"),
-			"Missing Logfire API Base URL",
-			"The provider cannot create the Logfire API client as there is a missing or empty value for the Logfire API base url. "+
-				"Set the base_url value in the configuration or use the LOGFIRE_BASE_URL environment variable. "+
-				"If either is already set, ensure the value is not empty.",
-		)
-	}
-
 	if api_key == "" {
 		resp.Diagnostics.AddAttributeError(
 			path.Root("api_key"),
@@ -119,6 +115,22 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 
 	if resp.Diagnostics.HasError() {
 		return
+	}
+
+	if base_url == "" {
+		inferredBaseURL, err := inferBaseURLFromAPIKey(api_key)
+		if err != nil {
+			resp.Diagnostics.AddAttributeError(
+				path.Root("base_url"),
+				"Unable to infer Logfire API Base URL",
+				"The provider cannot create the Logfire API client because base_url was not set and the api_key does not identify a supported Logfire SaaS region. "+
+					fmt.Sprintf("Reason: %s. ", err)+
+					"Set the base_url value in the configuration or use the LOGFIRE_BASE_URL environment variable. "+
+					"Self-hosted customers should always set base_url explicitly.",
+			)
+			return
+		}
+		base_url = inferredBaseURL
 	}
 
 	tflog.Debug(ctx, "logfire endpoint", map[string]interface{}{"base_url": base_url})
@@ -147,6 +159,42 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 	resp.DataSourceData = apiClient
 	resp.ResourceData = apiClient
 	tflog.Info(ctx, "Logfire client configured successfully")
+}
+
+// Cloud API keys encode the target region as pylf_v{1,2}_{region}_...
+func inferBaseURLFromAPIKey(apiKey string) (string, error) {
+	region, err := apiKeyRegion(apiKey)
+	if err != nil {
+		return "", err
+	}
+
+	switch region {
+	case "us":
+		return defaultUSBaseURL, nil
+	case "eu":
+		return defaultEUBaseURL, nil
+	default:
+		return "", fmt.Errorf("unsupported api_key region %q", region)
+	}
+}
+
+func apiKeyRegion(apiKey string) (string, error) {
+	parts := strings.SplitN(apiKey, "_", 5)
+	if len(parts) < 4 || parts[0] != "pylf" {
+		return "", fmt.Errorf("invalid api_key format")
+	}
+
+	switch parts[1] {
+	case "v1":
+		return parts[2], nil
+	case "v2":
+		if len(parts) < 5 {
+			return "", fmt.Errorf("invalid api_key format")
+		}
+		return parts[2], nil
+	default:
+		return "", fmt.Errorf("unsupported api_key format %q", parts[1])
+	}
 }
 
 func (p *LogfireProvider) DataSources(ctx context.Context) []func() datasource.DataSource {

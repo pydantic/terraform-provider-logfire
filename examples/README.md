@@ -14,12 +14,13 @@ This directory contains runnable Terraform examples for the Logfire provider.
 
 ## Running the SaaS-compatible example
 
-Set credentials and endpoint in your shell:
+Set credentials in your shell:
 
 ```bash
-export LOGFIRE_BASE_URL="https://logfire-us.pydantic.dev"
 export LOGFIRE_API_KEY="pylf_v1_..."
 ```
+
+The provider infers the SaaS endpoint from the API key region. Self-hosted deployments should set `LOGFIRE_BASE_URL` explicitly.
 
 Then run:
 

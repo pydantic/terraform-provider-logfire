@@ -5,7 +5,7 @@ Manage [Pydantic Logfire](https://pydantic.dev/logfire) projects, alerting, dash
 ## Requirements
 - Terraform CLI 1.8 or newer
 - A Logfire API key (`api_key` argument or `LOGFIRE_API_KEY`)
-- A Logfire base URL (`base_url` argument or `LOGFIRE_BASE_URL`)
+- A Logfire base URL only for self-hosted deployments (`base_url` argument or `LOGFIRE_BASE_URL`)
 
 ## Quick Start
 ```hcl
@@ -19,8 +19,8 @@ terraform {
 }
 
 provider "logfire" {
-  # Or set LOGFIRE_BASE_URL / LOGFIRE_API_KEY env vars.
-  base_url = "https://logfire-us.pydantic.dev"
+  # Or set LOGFIRE_API_KEY in the environment.
+  # base_url is inferred automatically for Logfire SaaS tokens.
   api_key  = "pylf_v1_..."
 }
 
@@ -95,6 +95,8 @@ output "prod_read_token" {
 ```
 
 Run `terraform init && terraform apply` to provision Logfire resources.
+
+For Logfire SaaS, the provider infers the API endpoint from the region embedded in the API key and uses `https://logfire-us.pydantic.dev` or `https://logfire-eu.pydantic.dev` automatically. If you set `base_url` or `LOGFIRE_BASE_URL`, that value is used instead. Self-hosted customers should always set `base_url` explicitly.
 
 ## Examples
 - `examples/main.tf` contains a SaaS-compatible end-to-end setup (project, channel, alert, dashboard, and read/write tokens).

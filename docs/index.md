@@ -17,4 +17,4 @@ Configure the Logfire API endpoint and credentials used by all resources.
 ### Optional
 
 - `api_key` (String, Sensitive) Bearer token. If omitted, the LOGFIRE_API_KEY environment variable is used.
-- `base_url` (String) Base URL for Logfire API. If omitted, the LOGFIRE_BASE_URL environment variable is used.
+- `base_url` (String) Base URL for the Logfire API. If omitted, the provider uses LOGFIRE_BASE_URL or infers the SaaS endpoint from the api_key region. Self-hosted customers should set this explicitly.

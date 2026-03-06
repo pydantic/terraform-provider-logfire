@@ -23,11 +23,12 @@ func testAccPreCheck(t *testing.T) {
 		t.Fatalf("acceptance tests must be run with TF_ACC=1")
 	}
 
-	if v := os.Getenv("LOGFIRE_BASE_URL"); v == "" {
-		t.Fatalf("LOGFIRE_BASE_URL must be set for acceptance tests")
-	}
 	if v := os.Getenv("LOGFIRE_API_KEY"); v == "" {
 		t.Fatalf("LOGFIRE_API_KEY must be set for acceptance tests")
+	} else if os.Getenv("LOGFIRE_BASE_URL") == "" {
+		if _, err := inferBaseURLFromAPIKey(v); err != nil {
+			t.Fatalf("LOGFIRE_BASE_URL must be set for acceptance tests when the api key region is not inferable: %v", err)
+		}
 	}
 }
 
@@ -35,6 +36,13 @@ func testAccPreCheck(t *testing.T) {
 func testAccProviderConfig() string {
 	base := os.Getenv("LOGFIRE_BASE_URL")
 	key := os.Getenv("LOGFIRE_API_KEY")
+	if base == "" {
+		return fmt.Sprintf(`
+provider "logfire" {
+  api_key  = %q
+}
+`, key)
+	}
 	return fmt.Sprintf(`
 provider "logfire" {
   base_url = %q

@@ -13,6 +13,7 @@ terraform {
 #   export LOGFIRE_BASE_URL="https://<self-hosted-logfire>"
 #   export LOGFIRE_API_KEY="pylf_v1_..."
 provider "logfire" {
+  # Self-hosted deployments must set base_url explicitly.
   base_url = "https://<self-hosted-logfire>"
 }
 

@@ -18,9 +18,6 @@ on:
 permissions:
   contents: read
 
-env:
-  LOGFIRE_SECRETS_AVAILABLE: ${{ secrets.LOGFIRE_BASE_URL != '' && secrets.LOGFIRE_API_KEY != '' }}
-
 jobs:
   # Ensure project builds before running testing matrix
   build:
@@ -87,22 +84,21 @@ jobs:
       - name: Check if secrets are available
         id: check-secrets
         run: |
-          if [[ -z "${{ secrets.LOGFIRE_BASE_URL }}" || -z "${{ secrets.LOGFIRE_API_KEY }}" ]]; then
+          if [[ -z "${{ secrets.LOGFIRE_API_KEY }}" ]]; then
             echo "skip_tests=true" >> $GITHUB_OUTPUT
-            echo "LOGFIRE secrets not available, skipping acceptance tests"
+            echo "LOGFIRE_API_KEY secret not available, skipping acceptance tests"
           else
             echo "skip_tests=false" >> $GITHUB_OUTPUT
-            echo "LOGFIRE secrets available, running acceptance tests"
+            echo "LOGFIRE_API_KEY secret available, running acceptance tests"
           fi
       - name: Run acceptance tests
         if: steps.check-secrets.outputs.skip_tests == 'false'
         env:
           TF_ACC: "1"
-          LOGFIRE_BASE_URL: ${{ secrets.LOGFIRE_BASE_URL }}
           LOGFIRE_API_KEY: ${{ secrets.LOGFIRE_API_KEY }}
           LOGFIRE_EXPECTED_ORG: "terraform-provider-logfire"
         run: go test -v -cover ./internal/provider/
         timeout-minutes: 10
       - name: Skip acceptance tests
         if: steps.check-secrets.outputs.skip_tests == 'true'
-        run: echo "Skipping acceptance tests - LOGFIRE secrets not available"
+        run: echo "Skipping acceptance tests - LOGFIRE_API_KEY secret not available"

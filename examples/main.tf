@@ -10,10 +10,10 @@ terraform {
 }
 
 # Configure via env vars:
-#   export LOGFIRE_BASE_URL="https://logfire-us.pydantic.dev"
 #   export LOGFIRE_API_KEY="pylf_v1_..."
 provider "logfire" {
-  base_url = "https://logfire-us.pydantic.dev"
+  # Optional override, mainly for self-hosted deployments:
+  # base_url = "https://logfire-us.pydantic.dev"
   # api_key  = "pylf_v1_..."
 }
 
