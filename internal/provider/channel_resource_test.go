@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-testing/helper/acctest"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
@@ -46,6 +47,9 @@ func TestAccChannelResource(t *testing.T) {
 				ResourceName:      "logfire_channel.test",
 				ImportState:       true,
 				ImportStateVerify: true,
+				ImportStateVerifyIgnore: []string{
+					"config.url",
+				},
 				ImportStateIdFunc: func(s *terraform.State) (string, error) {
 					resourceState, ok := s.RootModule().Resources["logfire_channel.test"]
 					if !ok || resourceState.Primary == nil {
@@ -118,4 +122,116 @@ resource "logfire_channel" "test" {
   }
 }
 `, testAccProviderConfig(), channelName, authKey)
+}
+
+func TestIsMaskedWebhookURL(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{name: "masked host", value: "https://example.com/**********", want: true},
+		{name: "masked host with port", value: "https://example.com:8443/**********", want: true},
+		{name: "regular webhook url", value: "https://example.com/webhook/updated", want: false},
+		{name: "query string is not a backend mask", value: "https://example.com/**********?q=1", want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := isMaskedWebhookURL(tc.value); got != tc.want {
+				t.Fatalf("isMaskedWebhookURL(%q) = %v, want %v", tc.value, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestIsMaskedOpsgenieAuthKey(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{name: "masked with suffix", value: "**********1234", want: true},
+		{name: "fully masked short key", value: "**********", want: true},
+		{name: "plain key", value: "GenieKey secret-key-12345", want: false},
+		{name: "wrong masked length", value: "**********12345", want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := isMaskedOpsgenieAuthKey(tc.value); got != tc.want {
+				t.Fatalf("isMaskedOpsgenieAuthKey(%q) = %v, want %v", tc.value, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestReconcileChannelConfigMaskedSecrets(t *testing.T) {
+	t.Parallel()
+
+	t.Run("preserves planned webhook url when backend returns masked value", func(t *testing.T) {
+		t.Parallel()
+
+		remote := &ChannelConfigModel{
+			Type:   types.StringValue("webhook"),
+			Format: types.StringValue("auto"),
+			URL:    types.StringValue("https://example.com/**********"),
+		}
+		fallback := &ChannelConfigModel{
+			Type:   types.StringValue("webhook"),
+			Format: types.StringValue("auto"),
+			URL:    types.StringValue("https://example.com/webhook/updated"),
+		}
+
+		got := reconcileChannelConfigMaskedSecrets(remote, fallback)
+		if got.URL.ValueString() != fallback.URL.ValueString() {
+			t.Fatalf("webhook url = %q, want %q", got.URL.ValueString(), fallback.URL.ValueString())
+		}
+	})
+
+	t.Run("keeps unmasked webhook url from backend", func(t *testing.T) {
+		t.Parallel()
+
+		remote := &ChannelConfigModel{
+			Type:   types.StringValue("webhook"),
+			Format: types.StringValue("auto"),
+			URL:    types.StringValue("https://example.com/webhook/new"),
+		}
+		fallback := &ChannelConfigModel{
+			Type:   types.StringValue("webhook"),
+			Format: types.StringValue("auto"),
+			URL:    types.StringValue("https://example.com/webhook/old"),
+		}
+
+		got := reconcileChannelConfigMaskedSecrets(remote, fallback)
+		if got.URL.ValueString() != remote.URL.ValueString() {
+			t.Fatalf("webhook url = %q, want %q", got.URL.ValueString(), remote.URL.ValueString())
+		}
+	})
+
+	t.Run("preserves planned opsgenie key when backend returns masked value", func(t *testing.T) {
+		t.Parallel()
+
+		remote := &ChannelConfigModel{
+			Type:    types.StringValue("opsgenie"),
+			AuthKey: types.StringValue("**********2345"),
+		}
+		fallback := &ChannelConfigModel{
+			Type:    types.StringValue("opsgenie"),
+			AuthKey: types.StringValue("GenieKey secret-key-12345"),
+		}
+
+		got := reconcileChannelConfigMaskedSecrets(remote, fallback)
+		if got.AuthKey.ValueString() != fallback.AuthKey.ValueString() {
+			t.Fatalf("opsgenie key = %q, want %q", got.AuthKey.ValueString(), fallback.AuthKey.ValueString())
+		}
+	})
 }

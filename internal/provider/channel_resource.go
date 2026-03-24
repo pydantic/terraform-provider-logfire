@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -34,6 +35,8 @@ func NewChannelResource() resource.Resource { return &ChannelResource{} }
 type ChannelResource struct {
 	client *logclient.APIClient
 }
+
+const maskedChannelSecretPlaceholder = "**********"
 
 type ChannelConfigModel struct {
 	// Email config exists in the API but is not exposed via Terraform yet.
@@ -306,6 +309,62 @@ func channelReadToModel(c *logclient.ChannelRead, m *ChannelModel) diag.Diagnost
 	return nil
 }
 
+func reconcileChannelConfigMaskedSecrets(remote, fallback *ChannelConfigModel) *ChannelConfigModel {
+	if remote == nil || fallback == nil {
+		return remote
+	}
+	if remote.Type.IsNull() || remote.Type.IsUnknown() || fallback.Type.IsNull() || fallback.Type.IsUnknown() {
+		return remote
+	}
+	if remote.Type.ValueString() != fallback.Type.ValueString() {
+		return remote
+	}
+
+	switch remote.Type.ValueString() {
+	case "webhook":
+		remote.URL = preserveMaskedConfigValue(remote.URL, fallback.URL, isMaskedWebhookURL)
+	case "opsgenie":
+		remote.AuthKey = preserveMaskedConfigValue(remote.AuthKey, fallback.AuthKey, isMaskedOpsgenieAuthKey)
+	}
+
+	return remote
+}
+
+func preserveMaskedConfigValue(remote, fallback types.String, isMasked func(string) bool) types.String {
+	if fallback.IsNull() || fallback.IsUnknown() {
+		return remote
+	}
+	if remote.IsNull() || remote.IsUnknown() {
+		return fallback
+	}
+
+	v := strings.TrimSpace(remote.ValueString())
+	if v == "" || isMasked(v) {
+		return fallback
+	}
+
+	return remote
+}
+
+func isMaskedWebhookURL(v string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(v))
+	if err != nil {
+		return false
+	}
+
+	return parsed.Scheme != "" &&
+		parsed.Host != "" &&
+		parsed.Path == "/"+maskedChannelSecretPlaceholder &&
+		parsed.RawQuery == "" &&
+		parsed.Fragment == ""
+}
+
+func isMaskedOpsgenieAuthKey(v string) bool {
+	v = strings.TrimSpace(v)
+	return v == maskedChannelSecretPlaceholder ||
+		(strings.HasPrefix(v, maskedChannelSecretPlaceholder) && len(v) == len(maskedChannelSecretPlaceholder)+4)
+}
+
 // --- CRUD ---
 
 func (r *ChannelResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -350,6 +409,7 @@ func (r *ChannelResource) Create(ctx context.Context, req resource.CreateRequest
 		resp.Diagnostics.Append(diags...)
 		return
 	}
+	state.Config = reconcileChannelConfigMaskedSecrets(state.Config, plan.Config)
 
 	tflog.Trace(ctx, "created channel", map[string]any{"id": state.ID.ValueString()})
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -366,6 +426,7 @@ func (r *ChannelResource) Read(ctx context.Context, req resource.ReadRequest, re
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	priorConfig := state.Config
 
 	id := state.ID.ValueString()
 
@@ -383,6 +444,7 @@ func (r *ChannelResource) Read(ctx context.Context, req resource.ReadRequest, re
 		resp.Diagnostics.Append(diags...)
 		return
 	}
+	state.Config = reconcileChannelConfigMaskedSecrets(state.Config, priorConfig)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -442,6 +504,7 @@ func (r *ChannelResource) Update(ctx context.Context, req resource.UpdateRequest
 		resp.Diagnostics.Append(diags...)
 		return
 	}
+	newState.Config = reconcileChannelConfigMaskedSecrets(newState.Config, plan.Config)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &newState)...)
 }
 
