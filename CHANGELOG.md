@@ -1,3 +1,9 @@
+## 0.1.3
+
+BUG FIXES:
+- Preserve configured webhook URLs and Opsgenie auth keys in Terraform state when the Logfire API returns masked channel credentials on create, read, and update.
+- Ignore `config.url` during channel import verification because the Logfire API redacts webhook URLs on read.
+
 ## 0.1.0
 
 FEATURES:
