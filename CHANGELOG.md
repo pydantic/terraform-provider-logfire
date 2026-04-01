@@ -1,3 +1,9 @@
+## 0.1.4
+
+BUG FIXES:
+- Treat empty resource IDs as absent during `Read`, which fixes Upjet/Crossplane observe-create flows.
+- Tolerate parent-project deletion when reading or deleting project-scoped child resources like tokens, alerts, and dashboards.
+
 ## 0.1.3
 
 BUG FIXES:
