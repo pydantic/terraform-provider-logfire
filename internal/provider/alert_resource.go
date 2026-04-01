@@ -378,7 +378,7 @@ func (r *AlertResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	}
 
 	if state.ID.IsNull() || state.ID.IsUnknown() || state.ID.ValueString() == "" {
-		resp.Diagnostics.AddError("Missing ID", "Cannot read alert because the state is missing an ID.")
+		resp.State.RemoveResource(ctx)
 		return
 	}
 
@@ -388,6 +388,10 @@ func (r *AlertResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	out, status, err := r.client.GetAlert(ctx, projectID, id)
 	if err != nil {
 		if status == 404 {
+			resp.State.RemoveResource(ctx)
+			return
+		}
+		if projectMissing(ctx, r.client, projectID) {
 			resp.State.RemoveResource(ctx)
 			return
 		}
@@ -542,6 +546,9 @@ func (r *AlertResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 	if err := r.client.DeleteAlert(ctx, projectID, id); err != nil {
 		if logclient.IsNotFoundError(err) {
 			// Already gone, treat as successful delete
+			return
+		}
+		if projectMissing(ctx, r.client, projectID) {
 			return
 		}
 		resp.Diagnostics.AddError("Delete alert failed", err.Error())

@@ -253,7 +253,7 @@ func (r *ReadTokenResource) Read(ctx context.Context, req resource.ReadRequest, 
 		return
 	}
 	if state.ID.IsNull() || state.ID.IsUnknown() || state.ID.ValueString() == "" {
-		resp.Diagnostics.AddError("Missing ID", "Cannot read read token because the state is missing an ID.")
+		resp.State.RemoveResource(ctx)
 		return
 	}
 
@@ -262,6 +262,10 @@ func (r *ReadTokenResource) Read(ctx context.Context, req resource.ReadRequest, 
 
 	items, err := r.client.ListReadTokens(ctx, projectID)
 	if err != nil {
+		if projectMissing(ctx, r.client, projectID) {
+			resp.State.RemoveResource(ctx)
+			return
+		}
 		resp.Diagnostics.AddError("List read tokens failed", err.Error())
 		return
 	}
@@ -367,6 +371,9 @@ func (r *ReadTokenResource) Delete(ctx context.Context, req resource.DeleteReque
 	if err := r.client.DeleteReadToken(ctx, projectID, tokenID); err != nil {
 		if logclient.IsNotFoundError(err) {
 			// Already gone, treat as successful delete
+			return
+		}
+		if projectMissing(ctx, r.client, projectID) {
 			return
 		}
 		resp.Diagnostics.AddError("Delete read token failed", err.Error())

@@ -194,8 +194,8 @@ func (r *ProjectResource) Read(ctx context.Context, req resource.ReadRequest, re
 		return
 	}
 
-	if state.ID.IsUnknown() || state.ID.IsNull() {
-		resp.Diagnostics.AddError("Missing ID", "Cannot read project because the state is missing an ID.")
+	if state.ID.IsUnknown() || state.ID.IsNull() || state.ID.ValueString() == "" {
+		resp.State.RemoveResource(ctx)
 		return
 	}
 

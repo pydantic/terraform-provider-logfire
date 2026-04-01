@@ -192,8 +192,8 @@ func (r *DashboardResource) Read(ctx context.Context, req resource.ReadRequest, 
 		return
 	}
 
-	if state.ID.IsNull() || state.ID.IsUnknown() {
-		resp.Diagnostics.AddError("Missing ID", "Cannot read dashboard because the state is missing an ID.")
+	if state.ID.IsNull() || state.ID.IsUnknown() || state.ID.ValueString() == "" {
+		resp.State.RemoveResource(ctx)
 		return
 	}
 
@@ -207,6 +207,10 @@ func (r *DashboardResource) Read(ctx context.Context, req resource.ReadRequest, 
 	detail, status, err := r.client.GetDashboard(ctx, projectID, state.ID.ValueString())
 	if err != nil {
 		if status == 404 {
+			resp.State.RemoveResource(ctx)
+			return
+		}
+		if projectMissing(ctx, r.client, projectID) {
 			resp.State.RemoveResource(ctx)
 			return
 		}
@@ -376,6 +380,9 @@ func (r *DashboardResource) Delete(ctx context.Context, req resource.DeleteReque
 	if err := r.client.DeleteDashboard(ctx, projectID, dashboardID); err != nil {
 		if logclient.IsNotFoundError(err) {
 			// Already gone, treat as successful delete
+			return
+		}
+		if projectMissing(ctx, r.client, projectID) {
 			return
 		}
 		resp.Diagnostics.AddError("Delete dashboard failed", err.Error())
