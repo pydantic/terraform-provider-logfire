@@ -238,7 +238,7 @@ func (r *WriteTokenResource) Read(ctx context.Context, req resource.ReadRequest,
 		return
 	}
 	if state.ID.IsNull() || state.ID.IsUnknown() || state.ID.ValueString() == "" {
-		resp.Diagnostics.AddError("Missing ID", "Cannot read write token because the state is missing an ID.")
+		resp.State.RemoveResource(ctx)
 		return
 	}
 
@@ -247,6 +247,10 @@ func (r *WriteTokenResource) Read(ctx context.Context, req resource.ReadRequest,
 
 	items, err := r.client.ListWriteTokens(ctx, projectID)
 	if err != nil {
+		if projectMissing(ctx, r.client, projectID) {
+			resp.State.RemoveResource(ctx)
+			return
+		}
 		resp.Diagnostics.AddError("List write tokens failed", err.Error())
 		return
 	}
@@ -346,6 +350,9 @@ func (r *WriteTokenResource) Delete(ctx context.Context, req resource.DeleteRequ
 	if err := r.client.DeleteWriteToken(ctx, projectID, tokenID); err != nil {
 		if logclient.IsNotFoundError(err) {
 			// Already gone, treat as successful delete
+			return
+		}
+		if projectMissing(ctx, r.client, projectID) {
 			return
 		}
 		resp.Diagnostics.AddError("Delete write token failed", err.Error())
