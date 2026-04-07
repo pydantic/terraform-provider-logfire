@@ -1,4 +1,4 @@
-// Copyright Pydantic, Inc. 2025
+// Copyright Pydantic, Inc. 2025, 2026
 // SPDX-License-Identifier: MPL-2.0
 
 // Package client provides the HTTP client and Logfire domain types.
