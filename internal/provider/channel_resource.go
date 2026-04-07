@@ -428,6 +428,11 @@ func (r *ChannelResource) Read(ctx context.Context, req resource.ReadRequest, re
 	}
 	priorConfig := state.Config
 
+	if state.ID.IsUnknown() || state.ID.IsNull() || state.ID.ValueString() == "" {
+		resp.State.RemoveResource(ctx)
+		return
+	}
+
 	id := state.ID.ValueString()
 
 	out, status, err := r.client.GetChannel(ctx, id)
