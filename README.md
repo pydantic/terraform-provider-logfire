@@ -122,5 +122,21 @@ make testacc  # acceptance tests (requires real credentials)
 ```
 `make build` compiles the provider, while `make install` installs it into your local Go bin for use by Terraform.
 
+For local Terraform CLI testing against an unpublished build, use Terraform's
+official `dev_overrides` workflow in a temporary CLI config file:
+
+```hcl
+provider_installation {
+  dev_overrides {
+    "pydantic/logfire" = "/path/to/local/provider-dir"
+  }
+  direct {}
+}
+```
+
+Then point Terraform at that file for the shell session, for example
+`TF_CLI_CONFIG_FILE=/tmp/logfire-dev.tfrc terraform apply`. See the HashiCorp
+docs for `dev_overrides` in the CLI configuration file for details.
+
 ## License
 MPL-2.0 © Pydantic, Inc.
