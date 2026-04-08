@@ -7,6 +7,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 )
 
@@ -57,5 +58,24 @@ func TestDefinitionStringSemanticEqualsDetectsMeaningfulChanges(t *testing.T) {
 	}
 	if equal {
 		t.Fatalf("expected values to be different when spec changes")
+	}
+}
+
+func TestDefinitionStringValueEqualUsesUnderlyingStringValue(t *testing.T) {
+	t.Parallel()
+
+	first := newDefinitionStringValue(`{"kind":"Dashboard","metadata":{"name":"dash-a"},"spec":{"display":{"name":"dash-a"}}}`)
+	second := newDefinitionStringValue(`{"kind":"Dashboard","metadata":{"name":"dash-b"},"spec":{"display":{"name":"dash-b"}}}`)
+
+	if first.Equal(second) {
+		t.Fatalf("expected Equal to compare the underlying string value, not semantic equality")
+	}
+
+	if !first.Equal(newDefinitionStringValue(first.ValueString())) {
+		t.Fatalf("expected Equal to match identical underlying string values")
+	}
+
+	if !(definitionStringValue{StringValue: basetypes.NewStringNull()}).Equal(definitionStringValue{StringValue: basetypes.NewStringNull()}) {
+		t.Fatalf("expected null values to compare equal")
 	}
 }

@@ -85,6 +85,14 @@ type definitionStringValue struct {
 	normalized string
 }
 
+func (v definitionStringValue) Equal(o attr.Value) bool {
+	other, ok := o.(definitionStringValue)
+	if !ok {
+		return false
+	}
+	return v.StringValue.Equal(other.StringValue)
+}
+
 func (definitionStringValue) Type(context.Context) attr.Type {
 	return definitionStringType{}
 }
