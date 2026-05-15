@@ -55,7 +55,7 @@ func (r *AlertResource) Metadata(ctx context.Context, req resource.MetadataReque
 }
 
 func (r *AlertResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
-	notification_constraint := []string{"has_matches", "has_matches_changed", "matches_changed"}
+	notification_constraint := []string{"has_matches", "has_matches_changed", "matches_changed", "starts_having_matches"}
 
 	resp.Schema = rschema.Schema{
 		MarkdownDescription: "Manages a Logfire alert.",
