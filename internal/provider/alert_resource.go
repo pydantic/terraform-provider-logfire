@@ -33,7 +33,8 @@ type AlertResource struct {
 	client *logclient.APIClient
 }
 
-var alertTimeConstraint = []string{"1m", "2m", "5m", "10m", "15m", "30m", "1h", "6h", "12h", "24h", "7d", "30d"}
+var alertTimeWindowConstraint = []string{"1m", "2m", "5m", "10m", "15m", "30m", "1h", "6h", "12h", "24h", "7d", "30d"}
+var alertFrequencyConstraint = []string{"1m", "2m", "5m", "10m", "15m", "30m", "1h", "6h", "12h", "24h"}
 
 type AlertModel struct {
 	ID          types.String `tfsdk:"id"`
@@ -95,14 +96,14 @@ func (r *AlertResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 				Required:            true,
 				MarkdownDescription: "Lookback window. Allowed values: 1m, 2m, 5m, 10m, 15m, 30m, 1h, 6h, 12h, 24h, 7d, 30d.",
 				Validators: []validator.String{
-					stringvalidator.OneOf(alertTimeConstraint...),
+					stringvalidator.OneOf(alertTimeWindowConstraint...),
 				},
 			},
 			"frequency": rschema.StringAttribute{
 				Required:            true,
-				MarkdownDescription: "Evaluation frequency. Allowed values: 1m, 2m, 5m, 10m, 15m, 30m, 1h, 6h, 12h, 24h, 7d, 30d.",
+				MarkdownDescription: "Evaluation frequency. Allowed values: 1m, 2m, 5m, 10m, 15m, 30m, 1h, 6h, 12h, 24h.",
 				Validators: []validator.String{
-					stringvalidator.OneOf(alertTimeConstraint...),
+					stringvalidator.OneOf(alertFrequencyConstraint...),
 				},
 			},
 			"watermark": rschema.StringAttribute{
