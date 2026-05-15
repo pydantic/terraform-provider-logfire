@@ -718,6 +718,7 @@ type AlertRead struct {
 type AlertCreate struct {
 	Name        string   `json:"name"`
 	Description *string  `json:"description"`
+	Active      *bool    `json:"active,omitempty"`
 	Query       string   `json:"query"`
 	TimeWindow  string   `json:"time_window"`
 	Frequency   string   `json:"frequency"`
