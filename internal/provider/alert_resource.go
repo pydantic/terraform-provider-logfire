@@ -33,6 +33,9 @@ type AlertResource struct {
 	client *logclient.APIClient
 }
 
+var alertTimeWindowConstraint = []string{"1m", "2m", "5m", "10m", "15m", "30m", "1h", "6h", "12h", "24h", "7d", "30d"}
+var alertFrequencyConstraint = []string{"1m", "2m", "5m", "10m", "15m", "30m", "1h", "6h", "12h", "24h"}
+
 type AlertModel struct {
 	ID          types.String `tfsdk:"id"`
 	ProjectID   types.String `tfsdk:"project_id"`
@@ -52,7 +55,6 @@ func (r *AlertResource) Metadata(ctx context.Context, req resource.MetadataReque
 }
 
 func (r *AlertResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
-	time_constraint := []string{"1m", "2m", "5m", "10m", "15m", "30m", "1h", "6h", "12h", "24h"}
 	notification_constraint := []string{"has_matches", "has_matches_changed", "matches_changed"}
 
 	resp.Schema = rschema.Schema{
@@ -92,16 +94,16 @@ func (r *AlertResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 			},
 			"time_window": rschema.StringAttribute{
 				Required:            true,
-				MarkdownDescription: "Lookback window as Go duration.",
+				MarkdownDescription: "Lookback window. Allowed values: 1m, 2m, 5m, 10m, 15m, 30m, 1h, 6h, 12h, 24h, 7d, 30d.",
 				Validators: []validator.String{
-					stringvalidator.OneOf(time_constraint...),
+					stringvalidator.OneOf(alertTimeWindowConstraint...),
 				},
 			},
 			"frequency": rschema.StringAttribute{
 				Required:            true,
-				MarkdownDescription: "Evaluation frequency as Go duration.",
+				MarkdownDescription: "Evaluation frequency. Allowed values: 1m, 2m, 5m, 10m, 15m, 30m, 1h, 6h, 12h, 24h.",
 				Validators: []validator.String{
-					stringvalidator.OneOf(time_constraint...),
+					stringvalidator.OneOf(alertFrequencyConstraint...),
 				},
 			},
 			"watermark": rschema.StringAttribute{
@@ -209,6 +211,12 @@ func durationCompact(d time.Duration) string {
 	if d < 0 {
 		d = -d
 	}
+	if d%(24*time.Hour) == 0 {
+		days := int64(d / (24 * time.Hour))
+		if days == 7 || days == 30 {
+			return fmt.Sprintf("%dd", days)
+		}
+	}
 	total := int64(d / time.Second)
 	h := total / 3600
 	m := (total % 3600) / 60
@@ -230,8 +238,19 @@ func durationCompact(d time.Duration) string {
 const defaultAlertWatermark = 10 * time.Second
 
 func parseDurationStr(s types.String) (time.Duration, error) {
-	// Interpret as Go duration string (e.g. "5m30s")
-	return time.ParseDuration(s.ValueString())
+	raw := strings.TrimSpace(s.ValueString())
+	// Interpret as Go duration string (e.g. "5m30s", "24h").
+	if d, err := time.ParseDuration(raw); err == nil {
+		return d, nil
+	}
+	// Also accept day shorthand used by the provider schema (e.g. "7d", "30d").
+	if strings.HasSuffix(raw, "d") {
+		days, err := strconv.Atoi(strings.TrimSuffix(raw, "d"))
+		if err == nil {
+			return time.Duration(days) * 24 * time.Hour, nil
+		}
+	}
+	return 0, fmt.Errorf("invalid duration: %q", raw)
 }
 
 func alertModelToCreate(ctx context.Context, m *AlertModel) (logclient.AlertCreate, diag.Diagnostics) {
