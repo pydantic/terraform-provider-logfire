@@ -249,8 +249,7 @@ func parseDurationStr(s types.String) (time.Duration, error) {
 			return time.Duration(days) * 24 * time.Hour, nil
 		}
 	}
-	// Keep ISO-8601 parsing for defensive compatibility with API-shaped values.
-	return iso8601ToDuration(raw)
+	return 0, fmt.Errorf("invalid duration: %q", raw)
 }
 
 func alertModelToCreate(ctx context.Context, m *AlertModel) (logclient.AlertCreate, diag.Diagnostics) {

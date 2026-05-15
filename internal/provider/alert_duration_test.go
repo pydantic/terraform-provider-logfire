@@ -22,7 +22,6 @@ func TestParseDurationStr(t *testing.T) {
 		{name: "minutes", input: "5m", want: 5 * time.Minute},
 		{name: "hours", input: "12h", want: 12 * time.Hour},
 		{name: "day shorthand", input: "30d", want: 30 * 24 * time.Hour},
-		{name: "iso day", input: "P30D", want: 30 * 24 * time.Hour},
 		{name: "invalid", input: "not-a-duration", hasErr: true},
 	}
 
