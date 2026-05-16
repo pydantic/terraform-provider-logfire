@@ -249,10 +249,9 @@ func alertModelToCreate(ctx context.Context, m *AlertModel) (logclient.AlertCrea
 			return logclient.AlertCreate{}, diags
 		}
 	}
-	var desc *string
+	desc := ""
 	if !m.Description.IsNull() && !m.Description.IsUnknown() {
-		v := m.Description.ValueString()
-		desc = &v
+		desc = m.Description.ValueString()
 	}
 	var active *bool
 	if !m.Active.IsNull() && !m.Active.IsUnknown() {
@@ -261,7 +260,7 @@ func alertModelToCreate(ctx context.Context, m *AlertModel) (logclient.AlertCrea
 	}
 	return logclient.AlertCreate{
 		Name:        m.Name.ValueString(),
-		Description: desc,
+		Description: &desc,
 		Active:      active,
 		Query:       m.Query.ValueString(),
 		TimeWindow:  durToISO8601(tw),
