@@ -296,7 +296,7 @@ func alertReadToModel(ctx context.Context, a *logclient.AlertRead, m *AlertModel
 		m.ProjectID = types.StringValue(a.ProjectID)
 	}
 	m.Name = types.StringValue(a.Name)
-	if a.Description == nil {
+	if a.Description == nil || (*a.Description == "" && (m.Description.IsNull() || m.Description.IsUnknown())) {
 		m.Description = types.StringNull()
 	} else {
 		m.Description = types.StringValue(*a.Description)
@@ -371,7 +371,7 @@ func (r *AlertResource) Create(ctx context.Context, req resource.CreateRequest, 
 		fresh = out
 	}
 
-	var state AlertModel
+	state := plan
 	state.ProjectID = plan.ProjectID
 	if diags := alertReadToModel(ctx, fresh, &state); diags.HasError() {
 		resp.Diagnostics.Append(diags...)
@@ -536,7 +536,7 @@ func (r *AlertResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		return
 	}
 
-	var newState AlertModel
+	newState := plan
 	newState.ProjectID = state.ProjectID
 	if diags := alertReadToModel(ctx, out, &newState); diags.HasError() {
 		resp.Diagnostics.Append(diags...)

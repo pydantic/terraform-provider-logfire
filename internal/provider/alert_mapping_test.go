@@ -89,6 +89,7 @@ func TestAlertReadToModel_DescriptionAndActive(t *testing.T) {
 		}
 
 		var got AlertModel
+		got.Description = types.StringValue("")
 		diags := alertReadToModel(context.Background(), read, &got)
 		if diags.HasError() {
 			t.Fatalf("unexpected diagnostics: %v", diags)
@@ -98,6 +99,35 @@ func TestAlertReadToModel_DescriptionAndActive(t *testing.T) {
 		}
 		if got.Active.IsNull() || got.Active.ValueBool() {
 			t.Fatalf("expected active=false, got %#v", got.Active)
+		}
+	})
+
+	t.Run("keeps omitted empty description null", func(t *testing.T) {
+		t.Parallel()
+
+		empty := ""
+		read := &logclient.AlertRead{
+			ID:          "id-1",
+			ProjectID:   "proj-1",
+			Name:        "name",
+			Description: &empty,
+			Query:       "select 1",
+			TimeWindow:  "PT5M",
+			Frequency:   "PT5M",
+			Watermark:   "PT10S",
+			Channels:    []logclient.ChannelRead{},
+			NotifyWhen:  "has_matches",
+			Active:      false,
+		}
+
+		var got AlertModel
+		got.Description = types.StringNull()
+		diags := alertReadToModel(context.Background(), read, &got)
+		if diags.HasError() {
+			t.Fatalf("unexpected diagnostics: %v", diags)
+		}
+		if !got.Description.IsNull() {
+			t.Fatalf("expected null description, got %#v", got.Description)
 		}
 	})
 }
