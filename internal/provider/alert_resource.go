@@ -272,9 +272,15 @@ func alertModelToCreate(ctx context.Context, m *AlertModel) (logclient.AlertCrea
 	if !m.Description.IsNull() && !m.Description.IsUnknown() {
 		desc = m.Description.ValueString()
 	}
+	var active *bool
+	if !m.Active.IsNull() && !m.Active.IsUnknown() {
+		v := m.Active.ValueBool()
+		active = &v
+	}
 	return logclient.AlertCreate{
 		Name:        m.Name.ValueString(),
 		Description: &desc,
+		Active:      active,
 		Query:       m.Query.ValueString(),
 		TimeWindow:  durToISO8601(tw),
 		Frequency:   durToISO8601(fr),
@@ -290,7 +296,7 @@ func alertReadToModel(ctx context.Context, a *logclient.AlertRead, m *AlertModel
 		m.ProjectID = types.StringValue(a.ProjectID)
 	}
 	m.Name = types.StringValue(a.Name)
-	if a.Description == nil || *a.Description == "" {
+	if a.Description == nil {
 		m.Description = types.StringNull()
 	} else {
 		m.Description = types.StringValue(*a.Description)
