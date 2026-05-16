@@ -28,7 +28,7 @@ func TestAlertModelToCreate_DescriptionAndActive(t *testing.T) {
 		NotifyWhen: types.StringValue("has_matches"),
 	}
 
-	t.Run("omits optional fields when null", func(t *testing.T) {
+	t.Run("uses empty description string when null", func(t *testing.T) {
 		t.Parallel()
 
 		m := base
@@ -39,8 +39,8 @@ func TestAlertModelToCreate_DescriptionAndActive(t *testing.T) {
 		if gotDiags.HasError() {
 			t.Fatalf("unexpected diagnostics: %v", gotDiags)
 		}
-		if create.Description != nil {
-			t.Fatalf("expected nil description, got %q", *create.Description)
+		if create.Description == nil || *create.Description != "" {
+			t.Fatalf("expected empty description pointer, got %#v", create.Description)
 		}
 		if create.Active != nil {
 			t.Fatalf("expected nil active, got %v", *create.Active)
