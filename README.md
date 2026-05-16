@@ -114,6 +114,9 @@ For Logfire SaaS, the provider infers the API endpoint from the region embedded 
 Generated documentation for each resource lives in `docs/` and publishes to the Terraform Registry.
 
 ## Developing
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full local workflow, generated
+documentation rules, acceptance test setup, and release checklist.
+
 ```bash
 make fmt      # format code
 make lint     # static checks (requires golangci-lint)
