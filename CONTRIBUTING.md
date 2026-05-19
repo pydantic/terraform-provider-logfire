@@ -17,8 +17,8 @@ docs whenever schema, examples, descriptions, or validators change.
 
 ## API Changes
 
-For API-backed changes, check `~/Pydantic/platform/api.json` first. Keep the API
-models, Terraform schema, docs, validators, and tests in sync.
+For API-backed changes, keep the API models, Terraform schema, docs, validators,
+and tests in sync.
 
 Acceptance tests use real Logfire resources:
 
