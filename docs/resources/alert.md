@@ -70,3 +70,23 @@ resource "logfire_alert" "example" {
 
 - `id` (String) Alert ID.
 - `watermark` (String) Provider-managed watermark (lateness tolerance) sent to the API.
+
+## Import
+
+Import is supported using the following syntax:
+
+In Terraform v1.5.0 and later, the [`import` block](https://developer.hashicorp.com/terraform/language/import) can be used with the `id` attribute, for example:
+
+```terraform
+import {
+  to = logfire_alert.example
+  id = "example-project/error-alert"
+}
+```
+
+The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
+
+```shell
+# Import by project name and alert name.
+terraform import logfire_alert.example "example-project/error-alert"
+```

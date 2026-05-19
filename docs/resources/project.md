@@ -35,3 +35,23 @@ resource "logfire_project" "example" {
 
 - `id` (String) Opaque backend project ID (not the slug).
 - `organization` (String) Organization name. Computed from the API and cannot be set.
+
+## Import
+
+Import is supported using the following syntax:
+
+In Terraform v1.5.0 and later, the [`import` block](https://developer.hashicorp.com/terraform/language/import) can be used with the `id` attribute, for example:
+
+```terraform
+import {
+  to = logfire_project.example
+  id = "acme/example-project"
+}
+```
+
+The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
+
+```shell
+# Import by organization name and project name.
+terraform import logfire_project.example "acme/example-project"
+```

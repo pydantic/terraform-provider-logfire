@@ -102,6 +102,21 @@ For Logfire SaaS, the provider infers the API endpoint from the region embedded 
 - `examples/main.tf` contains a SaaS-compatible end-to-end setup (project, channel, alert, dashboard, and read/write tokens).
 - `examples/self-hosted-organization/main.tf` contains the self-hosted-only `logfire_organization` example.
 
+## Importing existing resources
+Existing Logfire resources can be imported into Terraform state with
+`terraform import` or Terraform `import` blocks. For resources that are easy to
+look up by name or slug, prefer the name-based import IDs:
+
+| Resource | Recommended import ID | Example |
+| --- | --- | --- |
+| `logfire_project` | `organization/project-name` | `terraform import logfire_project.prod "acme/prod-logs"` |
+| `logfire_alert` | `project-name/alert-name` | `terraform import logfire_alert.errors "prod-logs/error-alert"` |
+| `logfire_dashboard` | `project-name/dashboard-slug` | `terraform import logfire_dashboard.overview "prod-logs/prod-overview"` |
+
+UUID-based import IDs are also supported if you already have the backend IDs,
+but most users should not need them. The separators `/`, `,`, and `|` are
+accepted for multi-part import IDs.
+
 ## Resources
 - `logfire_organization` — manage organizations (self-hosted only; requires a special organization scope) with default-on deletion protection.
 - `logfire_project` — manage Logfire projects.
