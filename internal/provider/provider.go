@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
@@ -18,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/pydantic/terraform-provider-logfire/internal/client"
+	"golang.org/x/net/http/httpguts"
 )
 
 // Interface assertions.
@@ -28,6 +30,16 @@ const (
 	defaultEUBaseURL = "https://logfire-eu.pydantic.dev"
 )
 
+const customHeadersDescription = "Additional HTTP headers to include on every Logfire API request. Intended for proxy, gateway, or edge authentication. Provider-managed headers cannot be overridden."
+
+var reservedCustomHeaders = map[string]struct{}{
+	"accept":                       {},
+	"authorization":                {},
+	"content-type":                 {},
+	"user-agent":                   {},
+	"x-terraform-provider-version": {},
+}
+
 func New(version string) func() provider.Provider {
 	return func() provider.Provider { return &LogfireProvider{version: version} }
 }
@@ -35,8 +47,9 @@ func New(version string) func() provider.Provider {
 type LogfireProvider struct{ version string }
 
 type LogfireProviderModel struct {
-	BaseUrl types.String `tfsdk:"base_url"`
-	ApiKey  types.String `tfsdk:"api_key"`
+	BaseUrl       types.String `tfsdk:"base_url"`
+	ApiKey        types.String `tfsdk:"api_key"`
+	CustomHeaders types.Map    `tfsdk:"custom_headers"`
 }
 
 func (p *LogfireProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -56,6 +69,12 @@ func (p *LogfireProvider) Schema(ctx context.Context, req provider.SchemaRequest
 				Optional:            true,
 				Sensitive:           true,
 				MarkdownDescription: "Bearer token. If omitted, the LOGFIRE_API_KEY environment variable is used.",
+			},
+			"custom_headers": schema.MapAttribute{
+				ElementType:         types.StringType,
+				Optional:            true,
+				Sensitive:           true,
+				MarkdownDescription: customHeadersDescription,
 			},
 		},
 	}
@@ -85,6 +104,15 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 			"Unknown Logfire API token",
 			"The provider cannot create the Logfire API client as there is an unknown configuration value for the Logfire API token. "+
 				"Either target apply the source of the value first, set the value statically in the configuration, or use the LOGFIRE_API_KEY environment variable.",
+		)
+	}
+
+	if config.CustomHeaders.IsUnknown() {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("custom_headers"),
+			"Unknown custom headers",
+			"The provider cannot create the Logfire API client as there is an unknown configuration value for custom_headers. "+
+				"Either target apply the source of the value first or set the value statically in the configuration.",
 		)
 	}
 
@@ -139,7 +167,11 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 		ua = fmt.Sprintf("%s/%s", ua, p.version)
 	}
 
-	headers := http.Header{}
+	headers, headerDiags := customHeadersFromConfig(ctx, config.CustomHeaders)
+	resp.Diagnostics.Append(headerDiags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	if p.version != "" {
 		headers.Set("X-Terraform-Provider-Version", p.version)
 	}
@@ -159,6 +191,65 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 	resp.DataSourceData = apiClient
 	resp.ResourceData = apiClient
 	tflog.Info(ctx, "Logfire client configured successfully")
+}
+
+func customHeadersFromConfig(ctx context.Context, config types.Map) (http.Header, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	headers := http.Header{}
+	if config.IsNull() {
+		return headers, diags
+	}
+
+	var values map[string]string
+	diags.Append(config.ElementsAs(ctx, &values, false)...)
+	if diags.HasError() {
+		return headers, diags
+	}
+
+	for name, value := range values {
+		headerPath := path.Root("custom_headers").AtMapKey(name)
+		switch {
+		case name == "":
+			diags.AddAttributeError(
+				headerPath,
+				"Invalid custom header name",
+				"Custom header names must not be empty.",
+			)
+		case !httpguts.ValidHeaderFieldName(name):
+			diags.AddAttributeError(
+				headerPath,
+				"Invalid custom header name",
+				fmt.Sprintf("%q is not a valid HTTP header name.", name),
+			)
+		case isReservedCustomHeader(name):
+			diags.AddAttributeError(
+				headerPath,
+				"Reserved custom header",
+				fmt.Sprintf("%q is managed by the provider and cannot be configured in custom_headers.", name),
+			)
+		case value == "":
+			diags.AddAttributeError(
+				headerPath,
+				"Invalid custom header value",
+				fmt.Sprintf("Custom header %q must not have an empty value.", name),
+			)
+		case !httpguts.ValidHeaderFieldValue(value):
+			diags.AddAttributeError(
+				headerPath,
+				"Invalid custom header value",
+				fmt.Sprintf("Custom header %q has a value that is not a valid HTTP header value.", name),
+			)
+		default:
+			headers.Set(name, value)
+		}
+	}
+
+	return headers, diags
+}
+
+func isReservedCustomHeader(name string) bool {
+	_, ok := reservedCustomHeaders[strings.ToLower(name)]
+	return ok
 }
 
 // Cloud API keys encode the target region as pylf_v{1,2}_{region}_...

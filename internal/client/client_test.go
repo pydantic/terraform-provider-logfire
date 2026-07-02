@@ -35,6 +35,12 @@ func TestRetryingTransport_ReplaysBodyAndSetsHeaders(t *testing.T) {
 		WithAdditionalHeaders(http.Header{
 			"X-Terraform-Provider-Version": []string{"test-version"},
 		}),
+		WithAdditionalHeaders(http.Header{
+			"Example-Header": []string{"first-value"},
+		}),
+		WithAdditionalHeaders(http.Header{
+			"Example-Header": []string{"second-value"},
+		}),
 	)
 	if err != nil {
 		t.Fatalf("NewAPIClient: %v", err)
@@ -59,6 +65,12 @@ func TestRetryingTransport_ReplaysBodyAndSetsHeaders(t *testing.T) {
 		if rt.versionHeaders[i] != "test-version" {
 			t.Fatalf("attempt %d version header = %q; want test-version", i+1, rt.versionHeaders[i])
 		}
+		if rt.customHeaders[i] != "second-value" {
+			t.Fatalf("attempt %d custom header = %q; want second-value", i+1, rt.customHeaders[i])
+		}
+		if len(rt.customHeaderValues[i]) != 1 {
+			t.Fatalf("attempt %d custom header values = %q; want exactly one value", i+1, rt.customHeaderValues[i])
+		}
 	}
 	if okVal, ok := out["ok"]; !ok || !okVal {
 		t.Fatalf("expected decoded ok response, got %+v", out)
@@ -66,10 +78,12 @@ func TestRetryingTransport_ReplaysBodyAndSetsHeaders(t *testing.T) {
 }
 
 type recordingTransport struct {
-	attempts       int
-	bodies         []string
-	userAgents     []string
-	versionHeaders []string
+	attempts           int
+	bodies             []string
+	userAgents         []string
+	versionHeaders     []string
+	customHeaders      []string
+	customHeaderValues [][]string
 }
 
 func (rt *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -80,6 +94,8 @@ func (rt *recordingTransport) RoundTrip(req *http.Request) (*http.Response, erro
 	rt.bodies = append(rt.bodies, string(data))
 	rt.userAgents = append(rt.userAgents, req.Header.Get("User-Agent"))
 	rt.versionHeaders = append(rt.versionHeaders, req.Header.Get("X-Terraform-Provider-Version"))
+	rt.customHeaders = append(rt.customHeaders, req.Header.Get("Example-Header"))
+	rt.customHeaderValues = append(rt.customHeaderValues, req.Header.Values("Example-Header"))
 
 	rt.attempts++
 	if rt.attempts == 1 {

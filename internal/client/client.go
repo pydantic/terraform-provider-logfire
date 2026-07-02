@@ -385,7 +385,7 @@ func WithAdditionalHeaders(headers http.Header) Option {
 		}
 		for k, vals := range headers {
 			for _, v := range vals {
-				c.headers.Add(k, v)
+				c.headers.Set(k, v)
 			}
 		}
 	}
@@ -451,7 +451,7 @@ func (c *APIClient) doJSON(ctx context.Context, method, path string, in any, out
 	}
 	for k, vals := range c.headers {
 		for _, v := range vals {
-			req.Header.Add(k, v)
+			req.Header.Set(k, v)
 		}
 	}
 
