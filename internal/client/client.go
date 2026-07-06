@@ -1073,3 +1073,104 @@ func (c *APIClient) ListDashboards(ctx context.Context, projectID string) ([]Das
 	}
 	return out, nil
 }
+
+// ---- SLOs ----
+
+// The SLO endpoints are experimental and not yet part of the published Logfire
+// OpenAPI schema; their shape may change.
+
+type SloRead struct {
+	ID                     string   `json:"id"`
+	ProjectID              string   `json:"project_id"`
+	ServiceName            string   `json:"service_name"`
+	Name                   string   `json:"name"`
+	Description            *string  `json:"description"`
+	Source                 string   `json:"source"`
+	TotalQuery             string   `json:"total_query"`
+	BadQuery               string   `json:"bad_query"`
+	TargetPercent          string   `json:"target_percent"`
+	RollingWindow          string   `json:"rolling_window"`
+	Environments           []string `json:"environments"`
+	CreatedAt              string   `json:"created_at"`
+	UpdatedAt              *string  `json:"updated_at"`
+	CreatedByName          *string  `json:"created_by_name"`
+	UpdatedByName          *string  `json:"updated_by_name"`
+	CurrentSliPercent      *string  `json:"current_sli_percent"`
+	BudgetRemainingPercent *string  `json:"budget_remaining_percent"`
+	LastCheckedAt          *string  `json:"last_checked_at"`
+	PredicateVersion       int      `json:"predicate_version"`
+}
+
+type SloCreate struct {
+	ServiceName          string   `json:"service_name"`
+	Name                 string   `json:"name"`
+	Description          *string  `json:"description,omitempty"`
+	Source               *string  `json:"source,omitempty"`
+	TotalQuery           string   `json:"total_query"`
+	BadQuery             string   `json:"bad_query"`
+	TargetPercent        string   `json:"target_percent"`
+	RollingWindowSeconds int64    `json:"rolling_window_seconds"`
+	Environments         []string `json:"environments,omitempty"`
+}
+
+type SloUpdate struct {
+	Name                 *string   `json:"name,omitempty"`
+	Description          *string   `json:"description,omitempty"`
+	Source               *string   `json:"source,omitempty"`
+	TotalQuery           *string   `json:"total_query,omitempty"`
+	BadQuery             *string   `json:"bad_query,omitempty"`
+	TargetPercent        *string   `json:"target_percent,omitempty"`
+	RollingWindowSeconds *int64    `json:"rolling_window_seconds,omitempty"`
+	Environments         *[]string `json:"environments,omitempty"`
+}
+
+func (c *APIClient) slosBase(projectID string) string {
+	return fmt.Sprintf("/api/v1/projects/%s/slos/", url.PathEscape(projectID))
+}
+func (c *APIClient) sloPath(projectID, id string) string {
+	return fmt.Sprintf("%s%s/", c.slosBase(projectID), url.PathEscape(id))
+}
+
+func (c *APIClient) CreateSlo(ctx context.Context, projectID string, in SloCreate) (*SloRead, error) {
+	var out SloRead
+	_, err := c.doJSON(ctx, http.MethodPost, c.slosBase(projectID), in, &out, http.StatusCreated)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *APIClient) GetSlo(ctx context.Context, projectID, id string) (*SloRead, int, error) {
+	var out SloRead
+	resp, err := c.doJSON(ctx, http.MethodGet, c.sloPath(projectID, id), nil, &out, http.StatusOK)
+	if err != nil {
+		if resp != nil {
+			return nil, resp.StatusCode, err
+		}
+		return nil, 0, err
+	}
+	return &out, http.StatusOK, nil
+}
+
+func (c *APIClient) UpdateSlo(ctx context.Context, projectID, id string, in SloUpdate) (*SloRead, error) {
+	var out SloRead
+	_, err := c.doJSON(ctx, http.MethodPatch, c.sloPath(projectID, id), in, &out, http.StatusOK)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *APIClient) DeleteSlo(ctx context.Context, projectID, id string) error {
+	_, err := c.doJSON(ctx, http.MethodDelete, c.sloPath(projectID, id), nil, nil, http.StatusNoContent)
+	return err
+}
+
+func (c *APIClient) ListSlos(ctx context.Context, projectID string) ([]SloRead, error) {
+	var out []SloRead
+	_, err := c.doJSON(ctx, http.MethodGet, c.slosBase(projectID), nil, &out, http.StatusOK)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
