@@ -300,6 +300,7 @@ func (p *LogfireProvider) Resources(ctx context.Context) []func() resource.Resou
 		NewOrganizationResource,
 		NewProjectResource,
 		NewReadTokenResource,
+		NewSloResource,
 		NewWriteTokenResource,
 	}
 }

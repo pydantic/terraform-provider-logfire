@@ -1,3 +1,8 @@
+## Unreleased
+
+FEATURES:
+- Add an experimental `logfire_slo` resource for managing Service Level Objectives. The backing Logfire API is not yet stable, so the resource schema and behavior may change in backwards-incompatible ways.
+
 ## 0.1.4
 
 BUG FIXES:
