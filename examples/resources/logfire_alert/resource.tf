@@ -27,7 +27,6 @@ resource "logfire_alert" "example" {
   SQL
   time_window = "1h"
   frequency   = "15m"
-  # Optional: only evaluate the query against these deployment environments.
   environments = ["production"]
   channel_ids  = [logfire_channel.example.id]
   notify_when  = "has_matches"

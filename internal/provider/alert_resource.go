@@ -117,7 +117,7 @@ func (r *AlertResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 			"environments": rschema.SetAttribute{
 				ElementType:         types.StringType,
 				Optional:            true,
-				MarkdownDescription: "Set of deployment environments the alert query is scoped to. Omit (or leave empty) to run against all environments.",
+				MarkdownDescription: "Deployment environments to scope the query to. Empty = all environments (no filter).",
 			},
 			"channel_ids": rschema.SetAttribute{
 				ElementType:         types.StringType,
