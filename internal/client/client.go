@@ -1085,10 +1085,12 @@ func (c *APIClient) ListDashboards(ctx context.Context, projectID string) ([]Das
 type SloRead struct {
 	ID                     string   `json:"id"`
 	ProjectID              string   `json:"project_id"`
-	ServiceName            string   `json:"service_name"`
+	ScopeKind              string   `json:"scope_kind"`
+	ScopeValue             string   `json:"scope_value"`
 	Name                   string   `json:"name"`
 	Description            *string  `json:"description"`
 	Source                 string   `json:"source"`
+	MetricAggregation      string   `json:"metric_aggregation"`
 	TotalQuery             string   `json:"total_query"`
 	BadQuery               string   `json:"bad_query"`
 	TargetPercent          string   `json:"target_percent"`
@@ -1105,10 +1107,12 @@ type SloRead struct {
 }
 
 type SloCreate struct {
-	ServiceName          string   `json:"service_name"`
+	ScopeKind            string   `json:"scope_kind"`
+	ScopeValue           string   `json:"scope_value"`
 	Name                 string   `json:"name"`
 	Description          *string  `json:"description,omitempty"`
 	Source               *string  `json:"source,omitempty"`
+	MetricAggregation    *string  `json:"metric_aggregation,omitempty"`
 	TotalQuery           string   `json:"total_query"`
 	BadQuery             string   `json:"bad_query"`
 	TargetPercent        string   `json:"target_percent"`
@@ -1120,6 +1124,7 @@ type SloUpdate struct {
 	Name                 *string   `json:"name,omitempty"`
 	Description          *string   `json:"description,omitempty"`
 	Source               *string   `json:"source,omitempty"`
+	MetricAggregation    *string   `json:"metric_aggregation,omitempty"`
 	TotalQuery           *string   `json:"total_query,omitempty"`
 	BadQuery             *string   `json:"bad_query,omitempty"`
 	TargetPercent        *string   `json:"target_percent,omitempty"`

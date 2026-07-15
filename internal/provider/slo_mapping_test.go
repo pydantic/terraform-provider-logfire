@@ -15,7 +15,8 @@ import (
 func baseSloModel() SloModel {
 	return SloModel{
 		ProjectID:     types.StringValue("proj-1"),
-		ServiceName:   types.StringValue("payments-api"),
+		ScopeKind:     types.StringValue("service"),
+		ScopeValue:    types.StringValue("payments-api"),
 		Name:          types.StringValue("payments 99.9% / 30d"),
 		TotalQuery:    types.StringValue("parent_span_id IS NULL"),
 		BadQuery:      types.StringValue("otel_status_code = 'ERROR'"),
@@ -35,7 +36,7 @@ func TestSloModelToCreate(t *testing.T) {
 		if diags.HasError() {
 			t.Fatalf("unexpected diagnostics: %v", diags)
 		}
-		if create.ServiceName != "payments-api" || create.Name != "payments 99.9% / 30d" {
+		if create.ScopeKind != "service" || create.ScopeValue != "payments-api" || create.Name != "payments 99.9% / 30d" {
 			t.Fatalf("unexpected identity fields: %#v", create)
 		}
 		if create.TargetPercent != "99.9" {
@@ -44,12 +45,12 @@ func TestSloModelToCreate(t *testing.T) {
 		if create.RollingWindowSeconds != 30*86400 {
 			t.Fatalf("expected 30d in seconds, got %d", create.RollingWindowSeconds)
 		}
-		if create.Description != nil || create.Source != nil || create.Environments != nil {
+		if create.Description != nil || create.Source != nil || create.MetricAggregation != nil || create.Environments != nil {
 			t.Fatalf("expected omitted optionals, got %#v", create)
 		}
 	})
 
-	t.Run("includes optional description, source, and environments", func(t *testing.T) {
+	t.Run("includes optional description, source, metric_aggregation, and environments", func(t *testing.T) {
 		t.Parallel()
 
 		envs, diags := types.SetValueFrom(context.Background(), types.StringType, []string{"prod"})
@@ -59,6 +60,7 @@ func TestSloModelToCreate(t *testing.T) {
 		m := baseSloModel()
 		m.Description = types.StringValue("desc")
 		m.Source = types.StringValue("metrics")
+		m.MetricAggregation = types.StringValue("counter_rate")
 		m.Environments = envs
 
 		create, gotDiags := sloModelToCreate(context.Background(), &m)
@@ -70,6 +72,9 @@ func TestSloModelToCreate(t *testing.T) {
 		}
 		if create.Source == nil || *create.Source != "metrics" {
 			t.Fatalf("unexpected source: %#v", create.Source)
+		}
+		if create.MetricAggregation == nil || *create.MetricAggregation != "counter_rate" {
+			t.Fatalf("unexpected metric_aggregation: %#v", create.MetricAggregation)
 		}
 		if len(create.Environments) != 1 || create.Environments[0] != "prod" {
 			t.Fatalf("unexpected environments: %#v", create.Environments)
@@ -91,16 +96,18 @@ func TestSloModelToCreate(t *testing.T) {
 
 func sloRead() *logclient.SloRead {
 	return &logclient.SloRead{
-		ID:            "slo-1",
-		ProjectID:     "proj-1",
-		ServiceName:   "payments-api",
-		Name:          "payments 99.9% / 30d",
-		Source:        "records",
-		TotalQuery:    "parent_span_id IS NULL",
-		BadQuery:      "otel_status_code = 'ERROR'",
-		TargetPercent: "99.9000",
-		RollingWindow: "P30D",
-		Environments:  []string{},
+		ID:                "slo-1",
+		ProjectID:         "proj-1",
+		ScopeKind:         "service",
+		ScopeValue:        "payments-api",
+		Name:              "payments 99.9% / 30d",
+		Source:            "records",
+		MetricAggregation: "additive",
+		TotalQuery:        "parent_span_id IS NULL",
+		BadQuery:          "otel_status_code = 'ERROR'",
+		TargetPercent:     "99.9000",
+		RollingWindow:     "P30D",
+		Environments:      []string{},
 	}
 }
 
@@ -204,8 +211,8 @@ func TestSloModelToUpdate(t *testing.T) {
 		if payload.Name == nil || *payload.Name != "renamed" {
 			t.Fatalf("expected name in payload, got %#v", payload.Name)
 		}
-		if payload.Description != nil || payload.Source != nil || payload.TotalQuery != nil ||
-			payload.BadQuery != nil || payload.TargetPercent != nil ||
+		if payload.Description != nil || payload.Source != nil || payload.MetricAggregation != nil ||
+			payload.TotalQuery != nil || payload.BadQuery != nil || payload.TargetPercent != nil ||
 			payload.RollingWindowSeconds != nil || payload.Environments != nil {
 			t.Fatalf("expected only name in payload, got %#v", payload)
 		}
@@ -236,6 +243,8 @@ func TestSloModelToUpdate(t *testing.T) {
 		plan.TargetPercent = types.StringValue("99.95")
 		plan.RollingWindow = types.StringValue("14d")
 		plan.BadQuery = types.StringValue("level = 'error'")
+		plan.MetricAggregation = types.StringValue("gauge_fraction")
+		state.MetricAggregation = types.StringValue("additive")
 
 		payload, diags := sloModelToUpdate(context.Background(), &plan, &state)
 		if diags != nil && diags.HasError() {
@@ -249,6 +258,9 @@ func TestSloModelToUpdate(t *testing.T) {
 		}
 		if payload.BadQuery == nil || *payload.BadQuery != "level = 'error'" {
 			t.Fatalf("expected bad_query in payload, got %#v", payload.BadQuery)
+		}
+		if payload.MetricAggregation == nil || *payload.MetricAggregation != "gauge_fraction" {
+			t.Fatalf("expected metric_aggregation in payload, got %#v", payload.MetricAggregation)
 		}
 		if payload.TotalQuery != nil || payload.Name != nil {
 			t.Fatalf("expected unchanged fields omitted, got %#v", payload)

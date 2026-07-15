@@ -4,7 +4,7 @@ resource "logfire_project" "example" {
 
 resource "logfire_slo" "example" {
   project_id     = logfire_project.example.id
-  service_name   = "payments-api"
+  scope_value    = "payments-api"
   name           = "payments-availability"
   description    = "Successful request ratio for the payments API"
   total_query    = "parent_span_id IS NULL"
