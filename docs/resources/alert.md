@@ -42,9 +42,11 @@ resource "logfire_alert" "example" {
   SQL
   time_window = "1h"
   frequency   = "15m"
-  channel_ids = [logfire_channel.example.id]
-  notify_when = "has_matches"
-  active      = true
+  # Optional: only evaluate the query against these deployment environments.
+  environments = ["production"]
+  channel_ids  = [logfire_channel.example.id]
+  notify_when  = "has_matches"
+  active       = true
 }
 ```
 
@@ -65,6 +67,7 @@ resource "logfire_alert" "example" {
 
 - `active` (Boolean) Whether the alert is active (defaults to true on creation).
 - `description` (String) Alert description.
+- `environments` (Set of String) Set of deployment environments the alert query is scoped to. Omit (or leave empty) to run against all environments.
 
 ### Read-Only
 

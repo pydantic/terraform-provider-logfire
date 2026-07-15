@@ -37,17 +37,18 @@ var alertTimeWindowConstraint = []string{"1m", "2m", "5m", "10m", "15m", "30m", 
 var alertFrequencyConstraint = []string{"1m", "2m", "5m", "10m", "15m", "30m", "1h", "6h", "12h", "24h"}
 
 type AlertModel struct {
-	ID          types.String `tfsdk:"id"`
-	ProjectID   types.String `tfsdk:"project_id"`
-	Name        types.String `tfsdk:"name"`
-	Description types.String `tfsdk:"description"`
-	Query       types.String `tfsdk:"query"`
-	TimeWindow  types.String `tfsdk:"time_window"`
-	Frequency   types.String `tfsdk:"frequency"`
-	Watermark   types.String `tfsdk:"watermark"`
-	ChannelIDs  types.Set    `tfsdk:"channel_ids"`
-	NotifyWhen  types.String `tfsdk:"notify_when"`
-	Active      types.Bool   `tfsdk:"active"`
+	ID           types.String `tfsdk:"id"`
+	ProjectID    types.String `tfsdk:"project_id"`
+	Name         types.String `tfsdk:"name"`
+	Description  types.String `tfsdk:"description"`
+	Query        types.String `tfsdk:"query"`
+	TimeWindow   types.String `tfsdk:"time_window"`
+	Frequency    types.String `tfsdk:"frequency"`
+	Watermark    types.String `tfsdk:"watermark"`
+	Environments types.Set    `tfsdk:"environments"`
+	ChannelIDs   types.Set    `tfsdk:"channel_ids"`
+	NotifyWhen   types.String `tfsdk:"notify_when"`
+	Active       types.Bool   `tfsdk:"active"`
 }
 
 func (r *AlertResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -112,6 +113,11 @@ func (r *AlertResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
+			},
+			"environments": rschema.SetAttribute{
+				ElementType:         types.StringType,
+				Optional:            true,
+				MarkdownDescription: "Set of deployment environments the alert query is scoped to. Omit (or leave empty) to run against all environments.",
 			},
 			"channel_ids": rschema.SetAttribute{
 				ElementType:         types.StringType,
@@ -268,6 +274,12 @@ func alertModelToCreate(ctx context.Context, m *AlertModel) (logclient.AlertCrea
 			return logclient.AlertCreate{}, diags
 		}
 	}
+	var envs []string
+	if !m.Environments.IsNull() && !m.Environments.IsUnknown() {
+		if diags := m.Environments.ElementsAs(ctx, &envs, false); diags.HasError() {
+			return logclient.AlertCreate{}, diags
+		}
+	}
 	desc := ""
 	if !m.Description.IsNull() && !m.Description.IsUnknown() {
 		desc = m.Description.ValueString()
@@ -278,15 +290,16 @@ func alertModelToCreate(ctx context.Context, m *AlertModel) (logclient.AlertCrea
 		active = &v
 	}
 	return logclient.AlertCreate{
-		Name:        m.Name.ValueString(),
-		Description: &desc,
-		Active:      active,
-		Query:       m.Query.ValueString(),
-		TimeWindow:  durToISO8601(tw),
-		Frequency:   durToISO8601(fr),
-		Watermark:   durToISO8601(defaultAlertWatermark),
-		ChannelIDs:  ch,
-		NotifyWhen:  m.NotifyWhen.ValueString(),
+		Name:         m.Name.ValueString(),
+		Description:  &desc,
+		Active:       active,
+		Query:        m.Query.ValueString(),
+		TimeWindow:   durToISO8601(tw),
+		Frequency:    durToISO8601(fr),
+		Watermark:    durToISO8601(defaultAlertWatermark),
+		Environments: envs,
+		ChannelIDs:   ch,
+		NotifyWhen:   m.NotifyWhen.ValueString(),
 	}, nil
 }
 
@@ -317,6 +330,19 @@ func alertReadToModel(ctx context.Context, a *logclient.AlertRead, m *AlertModel
 		m.Watermark = types.StringValue(durationCompact(d))
 	} else {
 		m.Watermark = types.StringValue("")
+	}
+
+	// The API returns an empty list when the alert is not scoped to any
+	// environment; keep the attribute null when the config omitted it so an
+	// omitted attribute and an empty set round-trip without spurious diffs.
+	if len(a.Environments) == 0 && (m.Environments.IsNull() || m.Environments.IsUnknown()) {
+		m.Environments = types.SetNull(types.StringType)
+	} else {
+		envSet, diags := types.SetValueFrom(ctx, types.StringType, a.Environments)
+		if diags.HasError() {
+			return diags
+		}
+		m.Environments = envSet
 	}
 
 	ch := make([]string, 0, len(a.Channels))
@@ -513,6 +539,22 @@ func (r *AlertResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		}
 		v := durToISO8601(d)
 		payload.Frequency = &v
+	}
+
+	if !plan.Environments.IsNull() && !plan.Environments.IsUnknown() {
+		var envs []string
+		if diags := plan.Environments.ElementsAs(ctx, &envs, false); diags.HasError() {
+			resp.Diagnostics.Append(diags...)
+			return
+		}
+		if envs == nil {
+			envs = []string{}
+		}
+		payload.Environments = &envs
+	} else if !state.Environments.IsNull() && !state.Environments.IsUnknown() {
+		// Attribute removed from config: clear the environment filter.
+		empty := []string{}
+		payload.Environments = &empty
 	}
 
 	// For sets, send only when we actually have values in the plan.

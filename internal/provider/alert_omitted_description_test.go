@@ -35,6 +35,7 @@ func TestAccAlertResourceOmittedDescription(t *testing.T) {
 		"has_matches",
 		true,
 		false,
+		nil,
 	)
 
 	resource.Test(t, resource.TestCase{

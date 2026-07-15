@@ -5,6 +5,7 @@ package provider
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/acctest"
@@ -42,6 +43,7 @@ func TestAccAlertResource(t *testing.T) {
 					"has_matches",
 					true,
 					false,
+					nil,
 				),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("id"), knownvalue.NotNull()),
@@ -55,6 +57,7 @@ func TestAccAlertResource(t *testing.T) {
 					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("notify_when"), knownvalue.StringExact("has_matches")),
 					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("active"), knownvalue.Bool(true)),
 					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("channel_ids"), knownvalue.SetSizeExact(1)),
+					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("environments"), knownvalue.Null()),
 				},
 			},
 			{
@@ -93,6 +96,7 @@ func TestAccAlertResource(t *testing.T) {
 					"has_matches",
 					true,
 					false,
+					nil,
 				),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
@@ -113,6 +117,7 @@ func TestAccAlertResource(t *testing.T) {
 					"has_matches_changed",
 					false,
 					true,
+					[]string{"production", "staging"},
 				),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("name"), knownvalue.StringExact(alertUpdatedName)),
@@ -124,13 +129,36 @@ func TestAccAlertResource(t *testing.T) {
 					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("notify_when"), knownvalue.StringExact("has_matches_changed")),
 					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("active"), knownvalue.Bool(false)),
 					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("channel_ids"), knownvalue.SetSizeExact(2)),
+					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("environments"), knownvalue.SetExact([]knownvalue.Check{
+						knownvalue.StringExact("production"),
+						knownvalue.StringExact("staging"),
+					})),
+				},
+			},
+			{
+				Config: testAccAlertResourceConfig(
+					projectName,
+					channelPrimaryName,
+					channelSecondaryName,
+					alertUpdatedName,
+					stringPtr("Updated alert description"),
+					"select 2",
+					"1m",
+					"1m",
+					"has_matches_changed",
+					false,
+					true,
+					nil,
+				),
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("environments"), knownvalue.Null()),
 				},
 			},
 		},
 	})
 }
 
-func testAccAlertResourceConfig(projectName, channelPrimaryName, channelSecondaryName, alertName string, description *string, query, timeWindow, frequency, notifyWhen string, active bool, includeSecondary bool) string {
+func testAccAlertResourceConfig(projectName, channelPrimaryName, channelSecondaryName, alertName string, description *string, query, timeWindow, frequency, notifyWhen string, active bool, includeSecondary bool, environments []string) string {
 	channelIDs := "logfire_channel.primary.id"
 	if includeSecondary {
 		channelIDs = "logfire_channel.primary.id, logfire_channel.secondary.id"
@@ -139,6 +167,15 @@ func testAccAlertResourceConfig(projectName, channelPrimaryName, channelSecondar
 	descLine := ""
 	if description != nil {
 		descLine = fmt.Sprintf("  description = %q\n", *description)
+	}
+
+	envLine := ""
+	if environments != nil {
+		quoted := make([]string, 0, len(environments))
+		for _, env := range environments {
+			quoted = append(quoted, fmt.Sprintf("%q", env))
+		}
+		envLine = fmt.Sprintf("  environments = [%s]\n", strings.Join(quoted, ", "))
 	}
 
 	return fmt.Sprintf(`%s
@@ -174,9 +211,9 @@ resource "logfire_alert" "test" {
 %s  query       = %q
   time_window = %q
   frequency   = %q
-  channel_ids = [%s]
+%s  channel_ids = [%s]
   notify_when = %q
   active      = %t
 }
-`, testAccProviderConfig(), projectName, channelPrimaryName, channelSecondaryName, alertName, descLine, query, timeWindow, frequency, channelIDs, notifyWhen, active)
+`, testAccProviderConfig(), projectName, channelPrimaryName, channelSecondaryName, alertName, descLine, query, timeWindow, frequency, envLine, channelIDs, notifyWhen, active)
 }

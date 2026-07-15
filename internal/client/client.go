@@ -705,6 +705,7 @@ type AlertRead struct {
 	TimeWindow     string          `json:"time_window"`
 	Frequency      string          `json:"frequency"`
 	Watermark      string          `json:"watermark"`
+	Environments   []string        `json:"environments"`
 	Channels       []ChannelRead   `json:"channels"`
 	NotifyWhen     string          `json:"notify_when"`
 	Active         bool            `json:"active"`
@@ -716,27 +717,29 @@ type AlertRead struct {
 }
 
 type AlertCreate struct {
-	Name        string   `json:"name"`
-	Description *string  `json:"description"`
-	Active      *bool    `json:"active,omitempty"`
-	Query       string   `json:"query"`
-	TimeWindow  string   `json:"time_window"`
-	Frequency   string   `json:"frequency"`
-	Watermark   string   `json:"watermark"`
-	ChannelIDs  []string `json:"channel_ids"`
-	NotifyWhen  string   `json:"notify_when"`
+	Name         string   `json:"name"`
+	Description  *string  `json:"description"`
+	Active       *bool    `json:"active,omitempty"`
+	Query        string   `json:"query"`
+	TimeWindow   string   `json:"time_window"`
+	Frequency    string   `json:"frequency"`
+	Watermark    string   `json:"watermark"`
+	Environments []string `json:"environments,omitempty"`
+	ChannelIDs   []string `json:"channel_ids"`
+	NotifyWhen   string   `json:"notify_when"`
 }
 
 type AlertUpdate struct {
-	Name        *string   `json:"name,omitempty"`
-	Description *string   `json:"description,omitempty"`
-	TimeWindow  *string   `json:"time_window,omitempty"`
-	Frequency   *string   `json:"frequency,omitempty"`
-	Watermark   *string   `json:"watermark,omitempty"`
-	Active      *bool     `json:"active,omitempty"`
-	Query       *string   `json:"query,omitempty"`
-	ChannelIDs  *[]string `json:"channel_ids,omitempty"`
-	NotifyWhen  *string   `json:"notify_when,omitempty"`
+	Name         *string   `json:"name,omitempty"`
+	Description  *string   `json:"description,omitempty"`
+	TimeWindow   *string   `json:"time_window,omitempty"`
+	Frequency    *string   `json:"frequency,omitempty"`
+	Watermark    *string   `json:"watermark,omitempty"`
+	Active       *bool     `json:"active,omitempty"`
+	Query        *string   `json:"query,omitempty"`
+	Environments *[]string `json:"environments,omitempty"`
+	ChannelIDs   *[]string `json:"channel_ids,omitempty"`
+	NotifyWhen   *string   `json:"notify_when,omitempty"`
 }
 
 func (c *APIClient) alertsBase(projectID string) string {
