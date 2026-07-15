@@ -541,20 +541,25 @@ func (r *AlertResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		payload.Frequency = &v
 	}
 
-	if !plan.Environments.IsNull() && !plan.Environments.IsUnknown() {
-		var envs []string
-		if diags := plan.Environments.ElementsAs(ctx, &envs, false); diags.HasError() {
-			resp.Diagnostics.Append(diags...)
-			return
+	if !plan.Environments.IsUnknown() {
+		switch {
+		case plan.Environments.IsNull():
+			if !state.Environments.IsNull() && !state.Environments.IsUnknown() {
+				// Attribute removed from config: clear the environment filter.
+				empty := []string{}
+				payload.Environments = &empty
+			}
+		default:
+			var envs []string
+			if diags := plan.Environments.ElementsAs(ctx, &envs, false); diags.HasError() {
+				resp.Diagnostics.Append(diags...)
+				return
+			}
+			if envs == nil {
+				envs = []string{}
+			}
+			payload.Environments = &envs
 		}
-		if envs == nil {
-			envs = []string{}
-		}
-		payload.Environments = &envs
-	} else if !state.Environments.IsNull() && !state.Environments.IsUnknown() {
-		// Attribute removed from config: clear the environment filter.
-		empty := []string{}
-		payload.Environments = &empty
 	}
 
 	// For sets, send only when we actually have values in the plan.
