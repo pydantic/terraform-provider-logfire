@@ -2,6 +2,7 @@
 
 FEATURES:
 - Add an experimental `logfire_slo` resource for managing Service Level Objectives. The backing Logfire API is not yet stable, so the resource schema and behavior may change in backwards-incompatible ways.
+- Add an optional `environments` attribute (set of strings) to the `logfire_alert` resource to scope the alert query to specific deployment environments. Omitting it (or setting it empty) keeps the current behavior of evaluating against all environments.
 
 ## 0.1.4
 

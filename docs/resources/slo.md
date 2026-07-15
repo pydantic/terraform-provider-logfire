@@ -22,7 +22,7 @@ resource "logfire_project" "example" {
 
 resource "logfire_slo" "example" {
   project_id     = logfire_project.example.id
-  service_name   = "payments-api"
+  scope_value    = "payments-api"
   name           = "payments-availability"
   description    = "Successful request ratio for the payments API"
   total_query    = "parent_span_id IS NULL"
@@ -42,7 +42,7 @@ resource "logfire_slo" "example" {
 - `name` (String) SLO name (unique per project).
 - `project_id` (String) Project ID (UUID) used for SLO API paths.
 - `rolling_window` (String) Rolling evaluation window as a duration string (e.g. `"24h"`, `"30d"`). Must be between 1h and 90d. The API enforces a lower effective cap: the window cannot exceed your subscription plan's maximum SLO window, nor the project's data retention for the SLO source (`records` or `metrics`) — a longer window would compute against missing data. Requests over either cap are rejected with a validation error.
-- `service_name` (String) Service the SLO measures. Changing it forces a new SLO.
+- `scope_value` (String) The service name (`scope_kind = "service"`) or provider slug like `openai` (`scope_kind = "provider"`). Changing it forces a new SLO.
 - `target_percent` (String) Target percentage as a decimal string, exclusively between 0 and 100 (e.g. `"99.9"`).
 - `total_query` (String) SQL boolean expression selecting all events counted by the SLO.
 
@@ -50,6 +50,8 @@ resource "logfire_slo" "example" {
 
 - `description` (String) SLO description.
 - `environments` (Set of String) Deployment environments the SLO is scoped to. Omit to cover all environments.
+- `metric_aggregation` (String) How a `metrics` SLO aggregates its SLI: `additive` (sum of scalar values, for delta-count metrics), `gauge_fraction` (fraction of samples meeting the condition, for gauges), or `counter_rate` (sum of per-series increases, for cumulative counters). Ignored when `source = "records"`. Defaults to `additive`.
+- `scope_kind` (String) What the SLO is anchored to: a service (`service`) or an LLM provider (`provider`). Defaults to `service`. Changing it forces a new SLO.
 - `source` (String) Whether the SLO ratio is computed over span events (`records`) or metric values (`metrics`). Defaults to `records`.
 
 ### Read-Only

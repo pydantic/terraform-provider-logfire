@@ -28,10 +28,10 @@ resource "logfire_channel" "example" {
 }
 
 resource "logfire_alert" "example" {
-  project_id  = logfire_project.example.id
-  name        = "error-alert"
-  description = "Alert on exception spans"
-  query       = <<-SQL
+  project_id   = logfire_project.example.id
+  name         = "error-alert"
+  description  = "Alert on exception spans"
+  query        = <<-SQL
     select
       service_name,
       trace_id,
@@ -40,11 +40,12 @@ resource "logfire_alert" "example" {
     where level = 'error'
     order by start_timestamp desc
   SQL
-  time_window = "1h"
-  frequency   = "15m"
-  channel_ids = [logfire_channel.example.id]
-  notify_when = "has_matches"
-  active      = true
+  time_window  = "1h"
+  frequency    = "15m"
+  environments = ["production"]
+  channel_ids  = [logfire_channel.example.id]
+  notify_when  = "has_matches"
+  active       = true
 }
 ```
 
@@ -65,6 +66,7 @@ resource "logfire_alert" "example" {
 
 - `active` (Boolean) Whether the alert is active (defaults to true on creation).
 - `description` (String) Alert description.
+- `environments` (Set of String) Deployment environments to scope the query to. Empty = all environments (no filter).
 
 ### Read-Only
 

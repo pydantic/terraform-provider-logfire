@@ -37,17 +37,19 @@ type SloResource struct {
 var decimalRe = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?$`)
 
 type SloModel struct {
-	ID            types.String `tfsdk:"id"`
-	ProjectID     types.String `tfsdk:"project_id"`
-	ServiceName   types.String `tfsdk:"service_name"`
-	Name          types.String `tfsdk:"name"`
-	Description   types.String `tfsdk:"description"`
-	Source        types.String `tfsdk:"source"`
-	TotalQuery    types.String `tfsdk:"total_query"`
-	BadQuery      types.String `tfsdk:"bad_query"`
-	TargetPercent types.String `tfsdk:"target_percent"`
-	RollingWindow types.String `tfsdk:"rolling_window"`
-	Environments  types.Set    `tfsdk:"environments"`
+	ID                types.String `tfsdk:"id"`
+	ProjectID         types.String `tfsdk:"project_id"`
+	ScopeKind         types.String `tfsdk:"scope_kind"`
+	ScopeValue        types.String `tfsdk:"scope_value"`
+	Name              types.String `tfsdk:"name"`
+	Description       types.String `tfsdk:"description"`
+	Source            types.String `tfsdk:"source"`
+	MetricAggregation types.String `tfsdk:"metric_aggregation"`
+	TotalQuery        types.String `tfsdk:"total_query"`
+	BadQuery          types.String `tfsdk:"bad_query"`
+	TargetPercent     types.String `tfsdk:"target_percent"`
+	RollingWindow     types.String `tfsdk:"rolling_window"`
+	Environments      types.Set    `tfsdk:"environments"`
 }
 
 func (r *SloResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -78,9 +80,23 @@ func (r *SloResource) Schema(ctx context.Context, req resource.SchemaRequest, re
 					stringvalidator.LengthAtLeast(1),
 				},
 			},
-			"service_name": rschema.StringAttribute{
-				Required:            true,
-				MarkdownDescription: "Service the SLO measures. Changing it forces a new SLO.",
+			"scope_kind": rschema.StringAttribute{
+				Optional: true,
+				Computed: true,
+				Default:  stringdefault.StaticString("service"),
+				MarkdownDescription: "What the SLO is anchored to: a service (`service`) or an LLM provider (`provider`). " +
+					"Defaults to `service`. Changing it forces a new SLO.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+				Validators: []validator.String{
+					stringvalidator.OneOf("service", "provider"),
+				},
+			},
+			"scope_value": rschema.StringAttribute{
+				Required: true,
+				MarkdownDescription: "The service name (`scope_kind = \"service\"`) or provider slug like `openai` " +
+					"(`scope_kind = \"provider\"`). Changing it forces a new SLO.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
@@ -106,6 +122,17 @@ func (r *SloResource) Schema(ctx context.Context, req resource.SchemaRequest, re
 				MarkdownDescription: "Whether the SLO ratio is computed over span events (`records`) or metric values (`metrics`). Defaults to `records`.",
 				Validators: []validator.String{
 					stringvalidator.OneOf("records", "metrics"),
+				},
+			},
+			"metric_aggregation": rschema.StringAttribute{
+				Optional: true,
+				Computed: true,
+				Default:  stringdefault.StaticString("additive"),
+				MarkdownDescription: "How a `metrics` SLO aggregates its SLI: `additive` (sum of scalar values, for delta-count metrics), " +
+					"`gauge_fraction` (fraction of samples meeting the condition, for gauges), or `counter_rate` (sum of per-series increases, " +
+					"for cumulative counters). Ignored when `source = \"records\"`. Defaults to `additive`.",
+				Validators: []validator.String{
+					stringvalidator.OneOf("additive", "gauge_fraction", "counter_rate"),
 				},
 			},
 			"total_query": rschema.StringAttribute{
@@ -209,7 +236,8 @@ func sloModelToCreate(ctx context.Context, m *SloModel) (logclient.SloCreate, di
 		return logclient.SloCreate{}, diag.Diagnostics{diag.NewErrorDiagnostic("Invalid rolling_window", err.Error())}
 	}
 	in := logclient.SloCreate{
-		ServiceName:          m.ServiceName.ValueString(),
+		ScopeKind:            m.ScopeKind.ValueString(),
+		ScopeValue:           m.ScopeValue.ValueString(),
 		Name:                 m.Name.ValueString(),
 		TotalQuery:           m.TotalQuery.ValueString(),
 		BadQuery:             m.BadQuery.ValueString(),
@@ -223,6 +251,10 @@ func sloModelToCreate(ctx context.Context, m *SloModel) (logclient.SloCreate, di
 	if !m.Source.IsNull() && !m.Source.IsUnknown() {
 		v := m.Source.ValueString()
 		in.Source = &v
+	}
+	if !m.MetricAggregation.IsNull() && !m.MetricAggregation.IsUnknown() {
+		v := m.MetricAggregation.ValueString()
+		in.MetricAggregation = &v
 	}
 	if !m.Environments.IsNull() && !m.Environments.IsUnknown() {
 		var envs []string
@@ -250,10 +282,11 @@ func changedString(plan, state types.String) *string {
 
 func sloModelToUpdate(ctx context.Context, plan, state *SloModel) (logclient.SloUpdate, diag.Diagnostics) {
 	payload := logclient.SloUpdate{
-		Name:       changedString(plan.Name, state.Name),
-		Source:     changedString(plan.Source, state.Source),
-		TotalQuery: changedString(plan.TotalQuery, state.TotalQuery),
-		BadQuery:   changedString(plan.BadQuery, state.BadQuery),
+		Name:              changedString(plan.Name, state.Name),
+		Source:            changedString(plan.Source, state.Source),
+		MetricAggregation: changedString(plan.MetricAggregation, state.MetricAggregation),
+		TotalQuery:        changedString(plan.TotalQuery, state.TotalQuery),
+		BadQuery:          changedString(plan.BadQuery, state.BadQuery),
 	}
 
 	if !plan.Description.IsUnknown() {
@@ -310,7 +343,8 @@ func sloReadToModel(ctx context.Context, s *logclient.SloRead, m *SloModel) diag
 	if s.ProjectID != "" {
 		m.ProjectID = types.StringValue(s.ProjectID)
 	}
-	m.ServiceName = types.StringValue(s.ServiceName)
+	m.ScopeKind = types.StringValue(s.ScopeKind)
+	m.ScopeValue = types.StringValue(s.ScopeValue)
 	m.Name = types.StringValue(s.Name)
 	if s.Description == nil || (*s.Description == "" && (m.Description.IsNull() || m.Description.IsUnknown())) {
 		m.Description = types.StringNull()
@@ -318,6 +352,7 @@ func sloReadToModel(ctx context.Context, s *logclient.SloRead, m *SloModel) diag
 		m.Description = types.StringValue(*s.Description)
 	}
 	m.Source = types.StringValue(s.Source)
+	m.MetricAggregation = types.StringValue(s.MetricAggregation)
 	m.TotalQuery = types.StringValue(s.TotalQuery)
 	m.BadQuery = types.StringValue(s.BadQuery)
 

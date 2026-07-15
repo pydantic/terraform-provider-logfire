@@ -33,7 +33,9 @@ func TestAccSloResource(t *testing.T) {
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("id"), knownvalue.NotNull()),
 					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("project_id"), knownvalue.NotNull()),
-					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("service_name"), knownvalue.StringExact("payments-api")),
+					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("scope_kind"), knownvalue.StringExact("service")),
+					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("scope_value"), knownvalue.StringExact("payments-api")),
+					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("metric_aggregation"), knownvalue.StringExact("additive")),
 					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("name"), knownvalue.StringExact(sloName)),
 					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("description"), knownvalue.StringExact("Initial SLO description")),
 					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("source"), knownvalue.StringExact("records")),
@@ -117,7 +119,7 @@ resource "logfire_project" "test" {
 
 resource "logfire_slo" "test" {
   project_id     = logfire_project.test.id
-  service_name   = "payments-api"
+  scope_value    = "payments-api"
   name           = %[2]q
 %[3]s  total_query    = "parent_span_id IS NULL"
   bad_query      = "otel_status_code = 'ERROR'"
