@@ -20,6 +20,16 @@ resource "logfire_project" "example" {
   name = "example-project"
 }
 
+resource "logfire_channel" "oncall" {
+  name = "oncall-webhook"
+
+  config {
+    type   = "webhook"
+    format = "auto"
+    url    = "https://hooks.example.com/oncall"
+  }
+}
+
 resource "logfire_slo" "example" {
   project_id     = logfire_project.example.id
   scope_value    = "payments-api"
@@ -30,6 +40,11 @@ resource "logfire_slo" "example" {
   target_percent = "99.9"
   rolling_window = "30d"
   environments   = ["prod"]
+
+  # Seed the generated burn-rate alerts' delivery channels (create-time only;
+  # delivery is alert-owned afterwards).
+  page_channel_ids   = [logfire_channel.oncall.id]
+  ticket_channel_ids = [logfire_channel.oncall.id]
 }
 ```
 
@@ -51,8 +66,10 @@ resource "logfire_slo" "example" {
 - `description` (String) SLO description.
 - `environments` (Set of String) Deployment environments the SLO is scoped to. Omit to cover all environments.
 - `metric_aggregation` (String) How a `metrics` SLO aggregates its SLI: `additive` (sum of scalar values, for delta-count metrics), `gauge_fraction` (fraction of samples meeting the condition, for gauges), or `counter_rate` (sum of per-series increases, for cumulative counters). Ignored when `source = "records"`. Defaults to `additive`.
+- `page_channel_ids` (Set of String) Channel IDs seeded onto the SLO's page-severity burn-rate alerts when the SLO is created. Delivery is alert-owned after creation: changing this attribute later updates only the Terraform state, not the existing alerts (edit the alerts' channels instead).
 - `scope_kind` (String) What the SLO is anchored to: a service (`service`) or an LLM provider (`provider`). Defaults to `service`. Changing it forces a new SLO.
 - `source` (String) Whether the SLO ratio is computed over span events (`records`) or metric values (`metrics`). Defaults to `records`.
+- `ticket_channel_ids` (Set of String) Channel IDs seeded onto the SLO's ticket-severity burn-rate alert when the SLO is created. Delivery is alert-owned after creation: changing this attribute later updates only the Terraform state, not the existing alerts (edit the alerts' channels instead).
 
 ### Read-Only
 

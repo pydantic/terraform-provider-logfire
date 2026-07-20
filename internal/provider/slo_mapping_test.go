@@ -48,6 +48,9 @@ func TestSloModelToCreate(t *testing.T) {
 		if create.Description != nil || create.Source != nil || create.MetricAggregation != nil || create.Environments != nil {
 			t.Fatalf("expected omitted optionals, got %#v", create)
 		}
+		if create.PageChannelIDs != nil || create.TicketChannelIDs != nil {
+			t.Fatalf("expected omitted channel seeds, got %#v", create)
+		}
 	})
 
 	t.Run("includes optional description, source, metric_aggregation, and environments", func(t *testing.T) {
@@ -78,6 +81,33 @@ func TestSloModelToCreate(t *testing.T) {
 		}
 		if len(create.Environments) != 1 || create.Environments[0] != "prod" {
 			t.Fatalf("unexpected environments: %#v", create.Environments)
+		}
+	})
+
+	t.Run("includes the burn-rate alert channel seeds", func(t *testing.T) {
+		t.Parallel()
+
+		page, diags := types.SetValueFrom(context.Background(), types.StringType, []string{"chan-page"})
+		if diags.HasError() {
+			t.Fatalf("failed to build page channel set: %v", diags)
+		}
+		ticket, diags := types.SetValueFrom(context.Background(), types.StringType, []string{"chan-ticket"})
+		if diags.HasError() {
+			t.Fatalf("failed to build ticket channel set: %v", diags)
+		}
+		m := baseSloModel()
+		m.PageChannelIDs = page
+		m.TicketChannelIDs = ticket
+
+		create, gotDiags := sloModelToCreate(context.Background(), &m)
+		if gotDiags.HasError() {
+			t.Fatalf("unexpected diagnostics: %v", gotDiags)
+		}
+		if len(create.PageChannelIDs) != 1 || create.PageChannelIDs[0] != "chan-page" {
+			t.Fatalf("unexpected page channel seeds: %#v", create.PageChannelIDs)
+		}
+		if len(create.TicketChannelIDs) != 1 || create.TicketChannelIDs[0] != "chan-ticket" {
+			t.Fatalf("unexpected ticket channel seeds: %#v", create.TicketChannelIDs)
 		}
 	})
 
@@ -132,6 +162,34 @@ func TestSloReadToModel(t *testing.T) {
 		}
 		if !m.Description.IsNull() {
 			t.Fatalf("expected null description, got %v", m.Description)
+		}
+		// Fresh models (import) get a typed null; the API never returns the seeds.
+		if !m.PageChannelIDs.IsNull() || m.PageChannelIDs.ElementType(context.Background()) == nil {
+			t.Fatalf("expected typed-null page channel seeds, got %v", m.PageChannelIDs)
+		}
+		if !m.TicketChannelIDs.IsNull() || m.TicketChannelIDs.ElementType(context.Background()) == nil {
+			t.Fatalf("expected typed-null ticket channel seeds, got %v", m.TicketChannelIDs)
+		}
+	})
+
+	t.Run("preserves configured channel seeds the API does not return", func(t *testing.T) {
+		t.Parallel()
+
+		page, diags := types.SetValueFrom(context.Background(), types.StringType, []string{"chan-page"})
+		if diags.HasError() {
+			t.Fatalf("failed to build page channel set: %v", diags)
+		}
+		m := baseSloModel()
+		m.PageChannelIDs = page
+		if diags := sloReadToModel(context.Background(), sloRead(), &m); diags != nil && diags.HasError() {
+			t.Fatalf("unexpected diagnostics: %v", diags)
+		}
+		var ids []string
+		if diags := m.PageChannelIDs.ElementsAs(context.Background(), &ids, false); diags.HasError() {
+			t.Fatalf("unexpected diagnostics: %v", diags)
+		}
+		if len(ids) != 1 || ids[0] != "chan-page" {
+			t.Fatalf("unexpected page channel seeds: %#v", ids)
 		}
 	})
 

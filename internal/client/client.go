@@ -1118,6 +1118,10 @@ type SloCreate struct {
 	TargetPercent        string   `json:"target_percent"`
 	RollingWindowSeconds int64    `json:"rolling_window_seconds"`
 	Environments         []string `json:"environments,omitempty"`
+	// Create-time seeds for the generated burn-rate alerts' notification
+	// channels. Delivery is alert-owned after creation and never read back.
+	PageChannelIDs   []string `json:"page_channel_ids,omitempty"`
+	TicketChannelIDs []string `json:"ticket_channel_ids,omitempty"`
 }
 
 type SloUpdate struct {
