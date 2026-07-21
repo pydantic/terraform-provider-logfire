@@ -50,6 +50,8 @@ type SloModel struct {
 	TargetPercent     types.String `tfsdk:"target_percent"`
 	RollingWindow     types.String `tfsdk:"rolling_window"`
 	Environments      types.Set    `tfsdk:"environments"`
+	PageChannelIDs    types.Set    `tfsdk:"page_channel_ids"`
+	TicketChannelIDs  types.Set    `tfsdk:"ticket_channel_ids"`
 }
 
 func (r *SloResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -162,6 +164,20 @@ func (r *SloResource) Schema(ctx context.Context, req resource.SchemaRequest, re
 				Optional:            true,
 				MarkdownDescription: "Deployment environments the SLO is scoped to. Omit to cover all environments.",
 			},
+			"page_channel_ids": rschema.SetAttribute{
+				ElementType: types.StringType,
+				Optional:    true,
+				MarkdownDescription: "Channel IDs seeded onto the SLO's page-severity burn-rate alerts when the SLO is created. " +
+					"Delivery is alert-owned after creation: changing this attribute later updates only the Terraform state, " +
+					"not the existing alerts (edit the alerts' channels instead).",
+			},
+			"ticket_channel_ids": rschema.SetAttribute{
+				ElementType: types.StringType,
+				Optional:    true,
+				MarkdownDescription: "Channel IDs seeded onto the SLO's ticket-severity burn-rate alert when the SLO is created. " +
+					"Delivery is alert-owned after creation: changing this attribute later updates only the Terraform state, " +
+					"not the existing alerts (edit the alerts' channels instead).",
+			},
 		},
 	}
 }
@@ -262,6 +278,20 @@ func sloModelToCreate(ctx context.Context, m *SloModel) (logclient.SloCreate, di
 			return logclient.SloCreate{}, diags
 		}
 		in.Environments = envs
+	}
+	if !m.PageChannelIDs.IsNull() && !m.PageChannelIDs.IsUnknown() {
+		var ids []string
+		if diags := m.PageChannelIDs.ElementsAs(ctx, &ids, false); diags.HasError() {
+			return logclient.SloCreate{}, diags
+		}
+		in.PageChannelIDs = ids
+	}
+	if !m.TicketChannelIDs.IsNull() && !m.TicketChannelIDs.IsUnknown() {
+		var ids []string
+		if diags := m.TicketChannelIDs.ElementsAs(ctx, &ids, false); diags.HasError() {
+			return logclient.SloCreate{}, diags
+		}
+		in.TicketChannelIDs = ids
 	}
 	return in, nil
 }
@@ -379,6 +409,16 @@ func sloReadToModel(ctx context.Context, s *logclient.SloRead, m *SloModel) diag
 			return diags
 		}
 		m.Environments = set
+	}
+
+	// The API never returns the channel seeds (delivery is alert-owned after
+	// creation), so keep whatever the config/state carries. On fresh models
+	// (import) the zero value has no element type; pin it to a typed null.
+	if m.PageChannelIDs.ElementType(ctx) == nil {
+		m.PageChannelIDs = types.SetNull(types.StringType)
+	}
+	if m.TicketChannelIDs.ElementType(ctx) == nil {
+		m.TicketChannelIDs = types.SetNull(types.StringType)
 	}
 	return nil
 }
