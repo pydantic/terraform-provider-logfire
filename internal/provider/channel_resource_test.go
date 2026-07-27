@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/statecheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
+	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
 )
 
 func TestAccChannelResource(t *testing.T) {
@@ -174,6 +175,17 @@ func TestIsMaskedOpsgenieAuthKey(t *testing.T) {
 	}
 }
 
+func TestIsMaskedPagerdutyRoutingKey(t *testing.T) {
+	t.Parallel()
+
+	if !isMaskedPagerdutyRoutingKey("**********c2d3") {
+		t.Fatal("expected masked PagerDuty routing key to be detected")
+	}
+	if isMaskedPagerdutyRoutingKey("a0b1c2d3e4f5a0b1c2d3e4f5a0b1c2d3") {
+		t.Fatal("expected plain PagerDuty routing key not to be detected")
+	}
+}
+
 func TestReconcileChannelConfigMaskedSecrets(t *testing.T) {
 	t.Parallel()
 
@@ -234,4 +246,66 @@ func TestReconcileChannelConfigMaskedSecrets(t *testing.T) {
 			t.Fatalf("opsgenie key = %q, want %q", got.AuthKey.ValueString(), fallback.AuthKey.ValueString())
 		}
 	})
+
+	t.Run("preserves planned pagerduty routing key and remote region", func(t *testing.T) {
+		t.Parallel()
+
+		remote := &ChannelConfigModel{
+			Type:       types.StringValue("pagerduty"),
+			RoutingKey: types.StringValue("**********c2d3"),
+			Region:     types.StringValue("eu"),
+		}
+		fallback := &ChannelConfigModel{
+			Type:       types.StringValue("pagerduty"),
+			RoutingKey: types.StringValue("a0b1c2d3e4f5a0b1c2d3e4f5a0b1c2d3"),
+			Region:     types.StringValue("us"),
+		}
+
+		got := reconcileChannelConfigMaskedSecrets(remote, fallback)
+		if got.RoutingKey.ValueString() != fallback.RoutingKey.ValueString() {
+			t.Fatalf("pagerduty routing key = %q, want configured value", got.RoutingKey.ValueString())
+		}
+		if got.Region.ValueString() != remote.Region.ValueString() {
+			t.Fatalf("pagerduty region = %q, want %q", got.Region.ValueString(), remote.Region.ValueString())
+		}
+	})
+}
+
+func TestPagerdutyChannelConfigMapping(t *testing.T) {
+	t.Parallel()
+
+	model := &ChannelConfigModel{
+		Type:       types.StringValue("pagerduty"),
+		Format:     types.StringNull(),
+		URL:        types.StringNull(),
+		AuthKey:    types.StringNull(),
+		RoutingKey: types.StringValue("a0b1c2d3e4f5a0b1c2d3e4f5a0b1c2d3"),
+		Region:     types.StringValue("eu"),
+	}
+
+	apiConfig, diags := channelConfigModelToAPI(model)
+	if diags.HasError() {
+		t.Fatalf("mapping model to API returned diagnostics: %v", diags)
+	}
+	pagerduty, ok := apiConfig.(*logclient.PagerdutyConfig)
+	if !ok {
+		t.Fatalf("API config type = %T, want *client.PagerdutyConfig", apiConfig)
+	}
+	if pagerduty.RoutingKey == nil || *pagerduty.RoutingKey != model.RoutingKey.ValueString() {
+		t.Fatalf("routing key = %v, want configured value", pagerduty.RoutingKey)
+	}
+	if pagerduty.Region == nil || *pagerduty.Region != "eu" {
+		t.Fatalf("region = %v, want eu", pagerduty.Region)
+	}
+
+	roundTrip, roundTripDiags := channelConfigAPIToModel(pagerduty)
+	if roundTripDiags.HasError() {
+		t.Fatalf("mapping API to model returned diagnostics: %v", roundTripDiags)
+	}
+	if roundTrip.RoutingKey.ValueString() != model.RoutingKey.ValueString() {
+		t.Fatalf("round-trip routing key = %q, want configured value", roundTrip.RoutingKey.ValueString())
+	}
+	if roundTrip.Region.ValueString() != "eu" {
+		t.Fatalf("round-trip region = %q, want eu", roundTrip.Region.ValueString())
+	}
 }

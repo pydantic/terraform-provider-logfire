@@ -40,10 +40,12 @@ const maskedChannelSecretPlaceholder = "**********"
 
 type ChannelConfigModel struct {
 	// Email config exists in the API but is not exposed via Terraform yet.
-	Type    types.String `tfsdk:"type"` // webhook | opsgenie
-	Format  types.String `tfsdk:"format"`
-	URL     types.String `tfsdk:"url"`
-	AuthKey types.String `tfsdk:"auth_key"`
+	Type       types.String `tfsdk:"type"` // webhook | opsgenie | pagerduty
+	Format     types.String `tfsdk:"format"`
+	URL        types.String `tfsdk:"url"`
+	AuthKey    types.String `tfsdk:"auth_key"`
+	RoutingKey types.String `tfsdk:"routing_key"`
+	Region     types.String `tfsdk:"region"`
 }
 
 type ChannelModel struct {
@@ -91,9 +93,9 @@ func (r *ChannelResource) Schema(ctx context.Context, req resource.SchemaRequest
 				Attributes: map[string]rschema.Attribute{
 					"type": rschema.StringAttribute{
 						Required:            true,
-						MarkdownDescription: "Channel type (`webhook` or `opsgenie`).",
+						MarkdownDescription: "Channel type (`webhook`, `opsgenie`, or `pagerduty`).",
 						Validators: []validator.String{
-							stringvalidator.OneOf("webhook", "opsgenie"),
+							stringvalidator.OneOf("webhook", "opsgenie", "pagerduty"),
 						},
 					},
 					"format": rschema.StringAttribute{
@@ -117,6 +119,18 @@ func (r *ChannelResource) Schema(ctx context.Context, req resource.SchemaRequest
 						Optional:            true,
 						Sensitive:           true,
 						MarkdownDescription: "Opsgenie API key.",
+					},
+					"routing_key": rschema.StringAttribute{
+						Optional:            true,
+						Sensitive:           true,
+						MarkdownDescription: "PagerDuty Events API v2 integration routing key.",
+					},
+					"region": rschema.StringAttribute{
+						Optional:            true,
+						MarkdownDescription: "PagerDuty account region (`us` or `eu`). When omitted, Logfire uses the US Events API endpoint.",
+						Validators: []validator.String{
+							stringvalidator.OneOf("us", "eu"),
+						},
 					},
 				},
 			},
@@ -169,6 +183,8 @@ func channelConfigModelToAPI(m *ChannelConfigModel) (interface{}, diag.Diagnosti
 		url, uDiags := requiredConfigString(m.URL, "config.url", "webhook")
 		diags.Append(uDiags...)
 		diags.Append(disallowConfigString(m.AuthKey, "config.auth_key", "webhook")...)
+		diags.Append(disallowConfigString(m.RoutingKey, "config.routing_key", "webhook")...)
+		diags.Append(disallowConfigString(m.Region, "config.region", "webhook")...)
 		if diags.HasError() {
 			return nil, diags
 		}
@@ -182,12 +198,28 @@ func channelConfigModelToAPI(m *ChannelConfigModel) (interface{}, diag.Diagnosti
 		diags.Append(kDiags...)
 		diags.Append(disallowConfigString(m.Format, "config.format", "opsgenie")...)
 		diags.Append(disallowConfigString(m.URL, "config.url", "opsgenie")...)
+		diags.Append(disallowConfigString(m.RoutingKey, "config.routing_key", "opsgenie")...)
+		diags.Append(disallowConfigString(m.Region, "config.region", "opsgenie")...)
 		if diags.HasError() {
 			return nil, diags
 		}
 		return &logclient.OpsgenieConfig{
 			ChannelConfigBase: logclient.ChannelConfigBase{Type: "opsgenie"},
 			AuthKey:           stringPointer(key),
+		}, diags
+	case "pagerduty":
+		routingKey, kDiags := requiredConfigString(m.RoutingKey, "config.routing_key", "pagerduty")
+		diags.Append(kDiags...)
+		diags.Append(disallowConfigString(m.Format, "config.format", "pagerduty")...)
+		diags.Append(disallowConfigString(m.URL, "config.url", "pagerduty")...)
+		diags.Append(disallowConfigString(m.AuthKey, "config.auth_key", "pagerduty")...)
+		if diags.HasError() {
+			return nil, diags
+		}
+		return &logclient.PagerdutyConfig{
+			ChannelConfigBase: logclient.ChannelConfigBase{Type: "pagerduty"},
+			RoutingKey:        stringPointer(routingKey),
+			Region:            optionalConfigStringPointer(m.Region),
 		}, diags
 	case "email":
 		// Email config exists in API but not exposed in Terraform yet
@@ -216,10 +248,12 @@ func channelConfigAPIToModel(cfg interface{}) (*ChannelConfigModel, diag.Diagnos
 	}
 
 	model := &ChannelConfigModel{
-		Type:    types.StringValue(genericCfg.Type),
-		Format:  types.StringNull(),
-		URL:     types.StringNull(),
-		AuthKey: types.StringNull(),
+		Type:       types.StringValue(genericCfg.Type),
+		Format:     types.StringNull(),
+		URL:        types.StringNull(),
+		AuthKey:    types.StringNull(),
+		RoutingKey: types.StringNull(),
+		Region:     types.StringNull(),
 	}
 
 	switch genericCfg.Type {
@@ -253,6 +287,22 @@ func channelConfigAPIToModel(cfg interface{}) (*ChannelConfigModel, diag.Diagnos
 				model.AuthKey = types.StringValue(*genericCfg.AuthKey)
 			}
 		}
+	case "pagerduty":
+		if pagerdutyCfg, ok := cfg.(*logclient.PagerdutyConfig); ok {
+			if pagerdutyCfg.RoutingKey != nil {
+				model.RoutingKey = types.StringValue(*pagerdutyCfg.RoutingKey)
+			}
+			if pagerdutyCfg.Region != nil {
+				model.Region = types.StringValue(*pagerdutyCfg.Region)
+			}
+		} else {
+			if genericCfg.RoutingKey != nil {
+				model.RoutingKey = types.StringValue(*genericCfg.RoutingKey)
+			}
+			if genericCfg.Region != nil {
+				model.Region = types.StringValue(*genericCfg.Region)
+			}
+		}
 	case "email":
 		// Email channels exist in API but not exposed in Terraform yet
 		return nil, diag.Diagnostics{
@@ -283,6 +333,17 @@ func requiredConfigString(val types.String, fieldName, channelType string) (stri
 
 func stringPointer(v string) *string {
 	return &v
+}
+
+func optionalConfigStringPointer(v types.String) *string {
+	if v.IsNull() || v.IsUnknown() {
+		return nil
+	}
+	trimmed := strings.TrimSpace(v.ValueString())
+	if trimmed == "" {
+		return nil
+	}
+	return stringPointer(trimmed)
 }
 
 func disallowConfigString(val types.String, fieldName, channelType string) diag.Diagnostics {
@@ -325,6 +386,12 @@ func reconcileChannelConfigMaskedSecrets(remote, fallback *ChannelConfigModel) *
 		remote.URL = preserveMaskedConfigValue(remote.URL, fallback.URL, isMaskedWebhookURL)
 	case "opsgenie":
 		remote.AuthKey = preserveMaskedConfigValue(remote.AuthKey, fallback.AuthKey, isMaskedOpsgenieAuthKey)
+	case "pagerduty":
+		remote.RoutingKey = preserveMaskedConfigValue(
+			remote.RoutingKey,
+			fallback.RoutingKey,
+			isMaskedPagerdutyRoutingKey,
+		)
 	}
 
 	return remote
@@ -363,6 +430,10 @@ func isMaskedOpsgenieAuthKey(v string) bool {
 	v = strings.TrimSpace(v)
 	return v == maskedChannelSecretPlaceholder ||
 		(strings.HasPrefix(v, maskedChannelSecretPlaceholder) && len(v) == len(maskedChannelSecretPlaceholder)+4)
+}
+
+func isMaskedPagerdutyRoutingKey(v string) bool {
+	return isMaskedOpsgenieAuthKey(v)
 }
 
 // --- CRUD ---
