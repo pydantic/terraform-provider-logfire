@@ -816,13 +816,21 @@ type OpsgenieConfig struct {
 	AuthKey *string `json:"auth_key,omitempty"`
 }
 
+type PagerdutyConfig struct {
+	ChannelConfigBase
+	RoutingKey *string `json:"routing_key,omitempty"`
+	Region     *string `json:"region,omitempty"`
+}
+
 // ChannelConfig represents any channel config (used for unmarshaling).
 type ChannelConfig struct {
-	Type    string  `json:"type"`
-	Format  *string `json:"format,omitempty"`
-	URL     *string `json:"url,omitempty"`
-	Email   *string `json:"email,omitempty"`
-	AuthKey *string `json:"auth_key,omitempty"`
+	Type       string  `json:"type"`
+	Format     *string `json:"format,omitempty"`
+	URL        *string `json:"url,omitempty"`
+	Email      *string `json:"email,omitempty"`
+	AuthKey    *string `json:"auth_key,omitempty"`
+	RoutingKey *string `json:"routing_key,omitempty"`
+	Region     *string `json:"region,omitempty"`
 }
 
 type ChannelRead struct {
@@ -839,12 +847,12 @@ type ChannelRead struct {
 
 type ChannelCreate struct {
 	Label  string      `json:"label"`
-	Config interface{} `json:"config"` // WebhookConfig, EmailConfig, or OpsgenieConfig
+	Config interface{} `json:"config"` // WebhookConfig, EmailConfig, OpsgenieConfig, or PagerdutyConfig
 }
 
 type ChannelUpdate struct {
 	Label  NullableField[string] `json:"label,omitempty"`
-	Config *interface{}          `json:"config,omitempty"` // WebhookConfig, EmailConfig, or OpsgenieConfig
+	Config *interface{}          `json:"config,omitempty"` // WebhookConfig, EmailConfig, OpsgenieConfig, or PagerdutyConfig
 	Active NullableField[bool]   `json:"active,omitempty"`
 }
 

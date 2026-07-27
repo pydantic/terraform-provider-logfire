@@ -13,6 +13,11 @@ Manages a Logfire alert channel.
 ## Example Usage
 
 ```terraform
+variable "pagerduty_routing_key" {
+  type      = string
+  sensitive = true
+}
+
 resource "logfire_channel" "example" {
   name   = "alerts-webhook"
   active = true
@@ -21,6 +26,17 @@ resource "logfire_channel" "example" {
     type   = "webhook"
     format = "auto"
     url    = "https://example.com/logfire-webhook"
+  }
+}
+
+resource "logfire_channel" "pagerduty" {
+  name   = "pagerduty-on-call"
+  active = true
+
+  config {
+    type        = "pagerduty"
+    routing_key = var.pagerduty_routing_key
+    region      = "us"
   }
 }
 ```
@@ -46,10 +62,12 @@ resource "logfire_channel" "example" {
 
 Required:
 
-- `type` (String) Channel type (`webhook` or `opsgenie`).
+- `type` (String) Channel type (`webhook`, `opsgenie`, or `pagerduty`).
 
 Optional:
 
 - `auth_key` (String, Sensitive) Opsgenie API key.
 - `format` (String) Webhook payload format.
+- `region` (String) PagerDuty account region (`us` or `eu`). When omitted, Logfire uses the US Events API endpoint.
+- `routing_key` (String, Sensitive) PagerDuty Events API v2 integration routing key.
 - `url` (String) Webhook URL endpoint.
