@@ -1,6 +1,7 @@
 ## Unreleased
 
 FEATURES:
+- Add `histogram_threshold` support to the `logfire_slo` resource: the `metric_aggregation` enum now accepts `histogram_threshold` (a metrics-only bucket-ratio SLI such as "95% of observations under 60s"), and two new optional attributes `threshold` and `comparison` carry the cutoff and its good side. `bad_query` is now optional and unused for that mode; every other mode still requires it. The pairing is validated at plan time, mirroring the API. Requires a Logfire backend that accepts histogram-threshold SLOs.
 - Add PagerDuty notification channels with a sensitive Events API v2 `routing_key` and optional `us` or `eu` `region`.
 - Add optional `page_channel_ids` / `ticket_channel_ids` attributes to `logfire_slo` to seed the generated burn-rate alerts' notification channels at creation. Delivery stays alert-owned afterwards; the attributes have no effect on an already-created SLO. Requires a Logfire backend that accepts channel seeding on the public SLO API.
 - Add an experimental `logfire_slo` resource for managing Service Level Objectives. The backing Logfire API is not yet stable, so the resource schema and behavior may change in backwards-incompatible ways.

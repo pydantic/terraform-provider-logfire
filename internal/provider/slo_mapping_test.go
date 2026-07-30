@@ -5,6 +5,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -108,6 +109,44 @@ func TestSloModelToCreate(t *testing.T) {
 		}
 		if len(create.TicketChannelIDs) != 1 || create.TicketChannelIDs[0] != "chan-ticket" {
 			t.Fatalf("unexpected ticket channel seeds: %#v", create.TicketChannelIDs)
+		}
+	})
+
+	t.Run("maps a histogram_threshold SLI and omits bad_query", func(t *testing.T) {
+		t.Parallel()
+
+		m := baseSloModel()
+		m.Source = types.StringValue("metrics")
+		m.MetricAggregation = types.StringValue("histogram_threshold")
+		m.BadQuery = types.StringNull()
+		m.Threshold = types.StringValue("60000")
+		m.Comparison = types.StringValue("less_than")
+
+		create, diags := sloModelToCreate(context.Background(), &m)
+		if diags.HasError() {
+			t.Fatalf("unexpected diagnostics: %v", diags)
+		}
+		if create.BadQuery != nil {
+			t.Fatalf("expected omitted bad_query, got %#v", create.BadQuery)
+		}
+		if create.Threshold == nil || *create.Threshold != "60000" {
+			t.Fatalf("unexpected threshold: %#v", create.Threshold)
+		}
+		if create.Comparison == nil || *create.Comparison != "less_than" {
+			t.Fatalf("unexpected comparison: %#v", create.Comparison)
+		}
+
+		// bad_query must be absent from the wire body, not sent as "".
+		raw, err := json.Marshal(create)
+		if err != nil {
+			t.Fatalf("marshal failed: %v", err)
+		}
+		var body map[string]any
+		if err := json.Unmarshal(raw, &body); err != nil {
+			t.Fatalf("unmarshal failed: %v", err)
+		}
+		if _, ok := body["bad_query"]; ok {
+			t.Fatalf("expected bad_query absent from body, got %s", raw)
 		}
 	})
 
@@ -222,6 +261,51 @@ func TestSloReadToModel(t *testing.T) {
 		}
 		if m.Description.ValueString() != "desc" {
 			t.Fatalf("unexpected description: %v", m.Description)
+		}
+	})
+
+	t.Run("maps histogram threshold/comparison and clears empty bad_query", func(t *testing.T) {
+		t.Parallel()
+
+		read := sloRead()
+		read.Source = "metrics"
+		read.MetricAggregation = "histogram_threshold"
+		// Even a stale non-empty bad_query is dropped for this mode.
+		read.BadQuery = "otel_status_code = 'ERROR'"
+		threshold := "60000.0000"
+		comparison := "less_than"
+		read.Threshold = &threshold
+		read.Comparison = &comparison
+
+		m := baseSloModel()
+		m.BadQuery = types.StringNull()
+		m.Threshold = types.StringValue("60000")
+		m.Comparison = types.StringValue("less_than")
+		if diags := sloReadToModel(context.Background(), read, &m); diags != nil && diags.HasError() {
+			t.Fatalf("unexpected diagnostics: %v", diags)
+		}
+		if !m.BadQuery.IsNull() {
+			t.Fatalf("expected null bad_query, got %v", m.BadQuery)
+		}
+		if got := m.Threshold.ValueString(); got != "60000" {
+			t.Fatalf("expected preserved threshold 60000, got %q", got)
+		}
+		if got := m.Comparison.ValueString(); got != "less_than" {
+			t.Fatalf("expected comparison less_than, got %q", got)
+		}
+	})
+
+	t.Run("nulls threshold/comparison the API omits", func(t *testing.T) {
+		t.Parallel()
+
+		m := baseSloModel()
+		m.Threshold = types.StringValue("60000")
+		m.Comparison = types.StringValue("less_than")
+		if diags := sloReadToModel(context.Background(), sloRead(), &m); diags != nil && diags.HasError() {
+			t.Fatalf("unexpected diagnostics: %v", diags)
+		}
+		if !m.Threshold.IsNull() || !m.Comparison.IsNull() {
+			t.Fatalf("expected null threshold/comparison, got %v / %v", m.Threshold, m.Comparison)
 		}
 	})
 
@@ -367,6 +451,68 @@ func TestSloModelToUpdate(t *testing.T) {
 		}
 	})
 
+	t.Run("threshold/comparison tri-state: set, unchanged, and cleared", func(t *testing.T) {
+		t.Parallel()
+
+		// null -> value sends the value.
+		plan := baseSloModel()
+		state := baseSloModel()
+		plan.Threshold = types.StringValue("60000")
+		plan.Comparison = types.StringValue("less_than")
+		payload, diags := sloModelToUpdate(context.Background(), &plan, &state)
+		if diags != nil && diags.HasError() {
+			t.Fatalf("unexpected diagnostics: %v", diags)
+		}
+		if payload.Threshold == nil || *payload.Threshold == nil || **payload.Threshold != "60000" {
+			t.Fatalf("expected threshold value in payload, got %#v", payload.Threshold)
+		}
+		if payload.Comparison == nil || *payload.Comparison == nil || **payload.Comparison != "less_than" {
+			t.Fatalf("expected comparison value in payload, got %#v", payload.Comparison)
+		}
+
+		// Equivalent decimal spelling is treated as unchanged (omitted).
+		plan.Threshold = types.StringValue("60000.00")
+		plan.Comparison = types.StringValue("less_than")
+		state.Threshold = types.StringValue("60000")
+		state.Comparison = types.StringValue("less_than")
+		payload, diags = sloModelToUpdate(context.Background(), &plan, &state)
+		if diags != nil && diags.HasError() {
+			t.Fatalf("unexpected diagnostics: %v", diags)
+		}
+		if payload.Threshold != nil || payload.Comparison != nil {
+			t.Fatalf("expected unchanged threshold/comparison omitted, got %#v / %#v", payload.Threshold, payload.Comparison)
+		}
+
+		// value -> null sends an explicit JSON null so the API clears them
+		// (e.g. switching a histogram SLO back to another mode).
+		plan.Threshold = types.StringNull()
+		plan.Comparison = types.StringNull()
+		payload, diags = sloModelToUpdate(context.Background(), &plan, &state)
+		if diags != nil && diags.HasError() {
+			t.Fatalf("unexpected diagnostics: %v", diags)
+		}
+		if payload.Threshold == nil || *payload.Threshold != nil {
+			t.Fatalf("expected explicit-null threshold, got %#v", payload.Threshold)
+		}
+		if payload.Comparison == nil || *payload.Comparison != nil {
+			t.Fatalf("expected explicit-null comparison, got %#v", payload.Comparison)
+		}
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("marshal failed: %v", err)
+		}
+		var body map[string]any
+		if err := json.Unmarshal(raw, &body); err != nil {
+			t.Fatalf("unmarshal failed: %v", err)
+		}
+		if v, ok := body["threshold"]; !ok || v != nil {
+			t.Fatalf("expected threshold:null in body, got %s", raw)
+		}
+		if v, ok := body["comparison"]; !ok || v != nil {
+			t.Fatalf("expected comparison:null in body, got %s", raw)
+		}
+	})
+
 	t.Run("clears a removed description", func(t *testing.T) {
 		t.Parallel()
 
@@ -382,6 +528,65 @@ func TestSloModelToUpdate(t *testing.T) {
 			t.Fatalf("expected empty description to clear, got %#v", payload.Description)
 		}
 	})
+}
+
+func TestValidateSloSliConfig(t *testing.T) {
+	t.Parallel()
+
+	histogram := func() SloModel {
+		m := baseSloModel()
+		m.Source = types.StringValue("metrics")
+		m.MetricAggregation = types.StringValue("histogram_threshold")
+		m.BadQuery = types.StringNull()
+		m.Threshold = types.StringValue("60000")
+		m.Comparison = types.StringValue("less_than")
+		return m
+	}
+
+	cases := []struct {
+		name    string
+		mutate  func(*SloModel)
+		wantErr bool
+	}{
+		{"records slo with bad_query is valid", func(m *SloModel) {}, false},
+		{"records slo missing bad_query is rejected", func(m *SloModel) { m.BadQuery = types.StringNull() }, true},
+		{"records slo with stray threshold is rejected", func(m *SloModel) { m.Threshold = types.StringValue("1") }, true},
+		{"records slo with stray comparison is rejected", func(m *SloModel) { m.Comparison = types.StringValue("less_than") }, true},
+		{"valid histogram slo", func(m *SloModel) { *m = histogram() }, false},
+		{"histogram without source=metrics is rejected", func(m *SloModel) {
+			*m = histogram()
+			m.Source = types.StringValue("records")
+		}, true},
+		{"histogram with default (records) source is rejected", func(m *SloModel) {
+			*m = histogram()
+			m.Source = types.StringNull()
+		}, true},
+		{"histogram missing threshold is rejected", func(m *SloModel) {
+			*m = histogram()
+			m.Threshold = types.StringNull()
+		}, true},
+		{"histogram missing comparison is rejected", func(m *SloModel) {
+			*m = histogram()
+			m.Comparison = types.StringNull()
+		}, true},
+		{"histogram without bad_query is fine", func(m *SloModel) { *m = histogram() }, false},
+		{"unknown metric_aggregation defers validation", func(m *SloModel) {
+			m.MetricAggregation = types.StringUnknown()
+			m.BadQuery = types.StringNull()
+		}, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			m := baseSloModel()
+			tc.mutate(&m)
+			diags := validateSloSliConfig(&m)
+			if diags.HasError() != tc.wantErr {
+				t.Fatalf("wantErr=%v, got diags=%v", tc.wantErr, diags)
+			}
+		})
+	}
 }
 
 func TestNormalizeDecimalString(t *testing.T) {

@@ -13,6 +13,7 @@ import (
 
 	stringvalidator "github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	rschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -27,6 +28,7 @@ import (
 var _ resource.Resource = &SloResource{}
 var _ resource.ResourceWithConfigure = &SloResource{}
 var _ resource.ResourceWithImportState = &SloResource{}
+var _ resource.ResourceWithValidateConfig = &SloResource{}
 
 func NewSloResource() resource.Resource { return &SloResource{} }
 
@@ -47,6 +49,8 @@ type SloModel struct {
 	MetricAggregation types.String `tfsdk:"metric_aggregation"`
 	TotalQuery        types.String `tfsdk:"total_query"`
 	BadQuery          types.String `tfsdk:"bad_query"`
+	Threshold         types.String `tfsdk:"threshold"`
+	Comparison        types.String `tfsdk:"comparison"`
 	TargetPercent     types.String `tfsdk:"target_percent"`
 	RollingWindow     types.String `tfsdk:"rolling_window"`
 	Environments      types.Set    `tfsdk:"environments"`
@@ -131,10 +135,11 @@ func (r *SloResource) Schema(ctx context.Context, req resource.SchemaRequest, re
 				Computed: true,
 				Default:  stringdefault.StaticString("additive"),
 				MarkdownDescription: "How a `metrics` SLO aggregates its SLI: `additive` (sum of scalar values, for delta-count metrics), " +
-					"`gauge_fraction` (fraction of samples meeting the condition, for gauges), or `counter_rate` (sum of per-series increases, " +
-					"for cumulative counters). Ignored when `source = \"records\"`. Defaults to `additive`.",
+					"`gauge_fraction` (fraction of samples meeting the condition, for gauges), `counter_rate` (sum of per-series increases, " +
+					"for cumulative counters), or `histogram_threshold` (fraction of histogram observations past a threshold; uses `threshold` " +
+					"and `comparison` instead of `bad_query`, and requires `source = \"metrics\"`). Ignored when `source = \"records\"`. Defaults to `additive`.",
 				Validators: []validator.String{
-					stringvalidator.OneOf("additive", "gauge_fraction", "counter_rate"),
+					stringvalidator.OneOf("additive", "gauge_fraction", "counter_rate", "histogram_threshold"),
 				},
 			},
 			"total_query": rschema.StringAttribute{
@@ -142,8 +147,25 @@ func (r *SloResource) Schema(ctx context.Context, req resource.SchemaRequest, re
 				MarkdownDescription: "SQL boolean expression selecting all events counted by the SLO.",
 			},
 			"bad_query": rschema.StringAttribute{
-				Required:            true,
-				MarkdownDescription: "SQL boolean expression selecting the bad events counted by the SLO.",
+				Optional: true,
+				MarkdownDescription: "SQL boolean expression selecting the bad events counted by the SLO. " +
+					"Required for every mode except `metric_aggregation = \"histogram_threshold\"`, which uses `threshold` and `comparison` instead.",
+			},
+			"threshold": rschema.StringAttribute{
+				Optional: true,
+				MarkdownDescription: "For `metric_aggregation = \"histogram_threshold\"`: the cutoff in the metric's native unit, as a decimal string " +
+					"(e.g. `\"60000\"` on a `_ms` latency metric). Required for that mode, and must be omitted otherwise.",
+				Validators: []validator.String{
+					newThresholdValidator(),
+				},
+			},
+			"comparison": rschema.StringAttribute{
+				Optional: true,
+				MarkdownDescription: "For `metric_aggregation = \"histogram_threshold\"`: the good side of the `threshold`. `less_than` " +
+					"(good is below the threshold, the latency case) or `greater_than`. Required for that mode, and must be omitted otherwise.",
+				Validators: []validator.String{
+					stringvalidator.OneOf("less_than", "greater_than"),
+				},
 			},
 			"target_percent": rschema.StringAttribute{
 				Required:            true,
@@ -192,6 +214,91 @@ func (r *SloResource) Configure(ctx context.Context, req resource.ConfigureReque
 		return
 	}
 	r.client = c
+}
+
+// ValidateConfig enforces the SLI-mode field pairing the API requires, so a
+// misconfiguration fails at plan time with a field-scoped error instead of a
+// 422 at apply. `histogram_threshold` is a metrics-only bucket-ratio mode that
+// swaps `bad_query` for `threshold` + `comparison`; every other mode is the
+// reverse. Defaults are not applied during config validation, so unset
+// `metric_aggregation`/`source` are read as their schema defaults.
+func (r *SloResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var m SloModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &m)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	resp.Diagnostics.Append(validateSloSliConfig(&m)...)
+}
+
+// validateSloSliConfig checks the SLI-mode field pairing on a config model.
+// Defaults are not applied during config validation, so unset
+// `metric_aggregation`/`source` are read as their schema defaults. Values that
+// reference other resources (unknown) are left for apply-time.
+func validateSloSliConfig(m *SloModel) diag.Diagnostics {
+	if m.MetricAggregation.IsUnknown() {
+		return nil
+	}
+	agg := "additive"
+	if !m.MetricAggregation.IsNull() {
+		agg = m.MetricAggregation.ValueString()
+	}
+
+	var diags diag.Diagnostics
+
+	if agg == "histogram_threshold" {
+		if !m.Source.IsUnknown() {
+			source := "records"
+			if !m.Source.IsNull() {
+				source = m.Source.ValueString()
+			}
+			if source != "metrics" {
+				diags.Append(diag.NewAttributeErrorDiagnostic(
+					path.Root("metric_aggregation"),
+					"histogram_threshold requires source = \"metrics\"",
+					"metric_aggregation = \"histogram_threshold\" is a metric SLI and requires source = \"metrics\".",
+				))
+			}
+		}
+		if m.Threshold.IsNull() && !m.Threshold.IsUnknown() {
+			diags.Append(diag.NewAttributeErrorDiagnostic(
+				path.Root("threshold"),
+				"threshold is required for histogram_threshold",
+				"metric_aggregation = \"histogram_threshold\" requires threshold.",
+			))
+		}
+		if m.Comparison.IsNull() && !m.Comparison.IsUnknown() {
+			diags.Append(diag.NewAttributeErrorDiagnostic(
+				path.Root("comparison"),
+				"comparison is required for histogram_threshold",
+				"metric_aggregation = \"histogram_threshold\" requires comparison.",
+			))
+		}
+		return diags
+	}
+
+	if m.BadQuery.IsNull() && !m.BadQuery.IsUnknown() {
+		diags.Append(diag.NewAttributeErrorDiagnostic(
+			path.Root("bad_query"),
+			"bad_query is required",
+			fmt.Sprintf("bad_query is required for metric_aggregation = %q.", agg),
+		))
+	}
+	if !m.Threshold.IsNull() && !m.Threshold.IsUnknown() {
+		diags.Append(diag.NewAttributeErrorDiagnostic(
+			path.Root("threshold"),
+			"threshold is only valid for histogram_threshold",
+			"threshold is only valid with metric_aggregation = \"histogram_threshold\".",
+		))
+	}
+	if !m.Comparison.IsNull() && !m.Comparison.IsUnknown() {
+		diags.Append(diag.NewAttributeErrorDiagnostic(
+			path.Root("comparison"),
+			"comparison is only valid for histogram_threshold",
+			"comparison is only valid with metric_aggregation = \"histogram_threshold\".",
+		))
+	}
+	return diags
 }
 
 // --- Helpers ---
@@ -256,9 +363,20 @@ func sloModelToCreate(ctx context.Context, m *SloModel) (logclient.SloCreate, di
 		ScopeValue:           m.ScopeValue.ValueString(),
 		Name:                 m.Name.ValueString(),
 		TotalQuery:           m.TotalQuery.ValueString(),
-		BadQuery:             m.BadQuery.ValueString(),
 		TargetPercent:        m.TargetPercent.ValueString(),
 		RollingWindowSeconds: int64(window / time.Second),
+	}
+	if !m.BadQuery.IsNull() && !m.BadQuery.IsUnknown() {
+		v := m.BadQuery.ValueString()
+		in.BadQuery = &v
+	}
+	if !m.Threshold.IsNull() && !m.Threshold.IsUnknown() {
+		v := m.Threshold.ValueString()
+		in.Threshold = &v
+	}
+	if !m.Comparison.IsNull() && !m.Comparison.IsUnknown() {
+		v := m.Comparison.ValueString()
+		in.Comparison = &v
 	}
 	if !m.Description.IsNull() && !m.Description.IsUnknown() {
 		v := m.Description.ValueString()
@@ -310,6 +428,38 @@ func changedString(plan, state types.String) *string {
 	return &v
 }
 
+// explicitNull returns a `**string` encoding an explicit JSON null (clears a
+// nullable field on PATCH). explicitStringValue encodes a string value.
+func explicitNull() **string {
+	var p *string
+	return &p
+}
+
+func explicitStringValue(s string) **string {
+	p := &s
+	return &p
+}
+
+// nullableStringUpdate builds the tri-state `**string` for a nullable field:
+// nil (omit) when the plan value is unchanged, an explicit null when it is
+// cleared, and the value when it changes. equal compares two set values.
+func nullableStringUpdate(plan, state types.String, equal func(a, b string) bool) **string {
+	if plan.IsUnknown() {
+		return nil
+	}
+	if plan.IsNull() {
+		if !state.IsNull() && !state.IsUnknown() {
+			return explicitNull()
+		}
+		return nil
+	}
+	v := plan.ValueString()
+	if !state.IsNull() && !state.IsUnknown() && equal(state.ValueString(), v) {
+		return nil
+	}
+	return explicitStringValue(v)
+}
+
 func sloModelToUpdate(ctx context.Context, plan, state *SloModel) (logclient.SloUpdate, diag.Diagnostics) {
 	payload := logclient.SloUpdate{
 		Name:              changedString(plan.Name, state.Name),
@@ -317,6 +467,8 @@ func sloModelToUpdate(ctx context.Context, plan, state *SloModel) (logclient.Slo
 		MetricAggregation: changedString(plan.MetricAggregation, state.MetricAggregation),
 		TotalQuery:        changedString(plan.TotalQuery, state.TotalQuery),
 		BadQuery:          changedString(plan.BadQuery, state.BadQuery),
+		Threshold:         nullableStringUpdate(plan.Threshold, state.Threshold, decimalStringsEqual),
+		Comparison:        nullableStringUpdate(plan.Comparison, state.Comparison, func(a, b string) bool { return a == b }),
 	}
 
 	if !plan.Description.IsUnknown() {
@@ -384,7 +536,33 @@ func sloReadToModel(ctx context.Context, s *logclient.SloRead, m *SloModel) diag
 	m.Source = types.StringValue(s.Source)
 	m.MetricAggregation = types.StringValue(s.MetricAggregation)
 	m.TotalQuery = types.StringValue(s.TotalQuery)
-	m.BadQuery = types.StringValue(s.BadQuery)
+
+	// `histogram_threshold` SLOs don't use bad_query (they use threshold/comparison),
+	// so keep it absent regardless of what the API echoes: a freshly created one
+	// returns "", but a row switched into the mode in place may retain its prior
+	// predicate. For every other mode an empty bad_query maps back to an absent
+	// attribute so config and state agree.
+	switch {
+	case s.MetricAggregation == "histogram_threshold":
+		m.BadQuery = types.StringNull()
+	case s.BadQuery == "" && (m.BadQuery.IsNull() || m.BadQuery.IsUnknown()):
+		m.BadQuery = types.StringNull()
+	default:
+		m.BadQuery = types.StringValue(s.BadQuery)
+	}
+
+	// threshold is a decimal; keep the configured spelling when it denotes the
+	// same number (mirrors target_percent). comparison is a plain enum string.
+	if s.Threshold == nil {
+		m.Threshold = types.StringNull()
+	} else if m.Threshold.IsNull() || m.Threshold.IsUnknown() || !decimalStringsEqual(m.Threshold.ValueString(), *s.Threshold) {
+		m.Threshold = types.StringValue(normalizeDecimalString(*s.Threshold))
+	}
+	if s.Comparison == nil {
+		m.Comparison = types.StringNull()
+	} else {
+		m.Comparison = types.StringValue(*s.Comparison)
+	}
 
 	// The API normalizes the target to a fixed number of decimal places; keep
 	// the configured spelling when it denotes the same number.
