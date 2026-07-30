@@ -1101,6 +1101,8 @@ type SloRead struct {
 	MetricAggregation      string   `json:"metric_aggregation"`
 	TotalQuery             string   `json:"total_query"`
 	BadQuery               string   `json:"bad_query"`
+	Threshold              *string  `json:"threshold"`
+	Comparison             *string  `json:"comparison"`
 	TargetPercent          string   `json:"target_percent"`
 	RollingWindow          string   `json:"rolling_window"`
 	Environments           []string `json:"environments"`
@@ -1115,14 +1117,19 @@ type SloRead struct {
 }
 
 type SloCreate struct {
-	ScopeKind            string   `json:"scope_kind"`
-	ScopeValue           string   `json:"scope_value"`
-	Name                 string   `json:"name"`
-	Description          *string  `json:"description,omitempty"`
-	Source               *string  `json:"source,omitempty"`
-	MetricAggregation    *string  `json:"metric_aggregation,omitempty"`
-	TotalQuery           string   `json:"total_query"`
-	BadQuery             string   `json:"bad_query"`
+	ScopeKind         string  `json:"scope_kind"`
+	ScopeValue        string  `json:"scope_value"`
+	Name              string  `json:"name"`
+	Description       *string `json:"description,omitempty"`
+	Source            *string `json:"source,omitempty"`
+	MetricAggregation *string `json:"metric_aggregation,omitempty"`
+	TotalQuery        string  `json:"total_query"`
+	// BadQuery is required for every mode except `histogram_threshold`, which
+	// uses Threshold/Comparison instead and omits it (the API rejects an empty
+	// string, so it must be absent, not "").
+	BadQuery             *string  `json:"bad_query,omitempty"`
+	Threshold            *string  `json:"threshold,omitempty"`
+	Comparison           *string  `json:"comparison,omitempty"`
 	TargetPercent        string   `json:"target_percent"`
 	RollingWindowSeconds int64    `json:"rolling_window_seconds"`
 	Environments         []string `json:"environments,omitempty"`
@@ -1133,12 +1140,19 @@ type SloCreate struct {
 }
 
 type SloUpdate struct {
-	Name                 *string   `json:"name,omitempty"`
-	Description          *string   `json:"description,omitempty"`
-	Source               *string   `json:"source,omitempty"`
-	MetricAggregation    *string   `json:"metric_aggregation,omitempty"`
-	TotalQuery           *string   `json:"total_query,omitempty"`
-	BadQuery             *string   `json:"bad_query,omitempty"`
+	Name              *string `json:"name,omitempty"`
+	Description       *string `json:"description,omitempty"`
+	Source            *string `json:"source,omitempty"`
+	MetricAggregation *string `json:"metric_aggregation,omitempty"`
+	TotalQuery        *string `json:"total_query,omitempty"`
+	BadQuery          *string `json:"bad_query,omitempty"`
+	// Threshold and Comparison are tri-state on update: absent (`**string` nil)
+	// omits the field, a `*string` nil sends explicit JSON null (to clear them
+	// when switching a histogram SLO to another mode), and a set value patches
+	// them. The API's merge keeps the existing value on omission, so clearing
+	// requires the explicit null.
+	Threshold            **string  `json:"threshold,omitempty"`
+	Comparison           **string  `json:"comparison,omitempty"`
 	TargetPercent        *string   `json:"target_percent,omitempty"`
 	RollingWindowSeconds *int64    `json:"rolling_window_seconds,omitempty"`
 	Environments         *[]string `json:"environments,omitempty"`
