@@ -309,3 +309,139 @@ func TestPagerdutyChannelConfigMapping(t *testing.T) {
 		t.Fatalf("round-trip region = %q, want eu", roundTrip.Region.ValueString())
 	}
 }
+
+func TestSlackIntegrationChannelConfigMapping(t *testing.T) {
+	t.Parallel()
+
+	model := &ChannelConfigModel{
+		Type:               types.StringValue("slack-integration"),
+		Format:             types.StringNull(),
+		URL:                types.StringNull(),
+		AuthKey:            types.StringNull(),
+		RoutingKey:         types.StringNull(),
+		Region:             types.StringNull(),
+		InstallID:          types.StringValue("018f9a6a-1234-7890-abcd-ef0123456789"),
+		ChannelID:          types.StringValue("C0123456789"),
+		IncludeAgentPrompt: types.BoolValue(false),
+	}
+
+	apiConfig, diags := channelConfigModelToAPI(model)
+	if diags.HasError() {
+		t.Fatalf("mapping model to API returned diagnostics: %v", diags)
+	}
+	slack, ok := apiConfig.(*logclient.SlackIntegrationConfig)
+	if !ok {
+		t.Fatalf("API config type = %T, want *client.SlackIntegrationConfig", apiConfig)
+	}
+	if slack.InstallID == nil || *slack.InstallID != model.InstallID.ValueString() {
+		t.Fatalf("install id = %v, want configured value", slack.InstallID)
+	}
+	if slack.ChannelID == nil || *slack.ChannelID != model.ChannelID.ValueString() {
+		t.Fatalf("channel id = %v, want configured value", slack.ChannelID)
+	}
+	if slack.IncludeAgentPrompt == nil || *slack.IncludeAgentPrompt != false {
+		t.Fatalf("include agent prompt = %v, want false", slack.IncludeAgentPrompt)
+	}
+
+	roundTrip, roundTripDiags := channelConfigAPIToModel(slack)
+	if roundTripDiags.HasError() {
+		t.Fatalf("mapping API to model returned diagnostics: %v", roundTripDiags)
+	}
+	if roundTrip.InstallID.ValueString() != model.InstallID.ValueString() {
+		t.Fatalf("round-trip install id = %q, want configured value", roundTrip.InstallID.ValueString())
+	}
+	if roundTrip.ChannelID.ValueString() != model.ChannelID.ValueString() {
+		t.Fatalf("round-trip channel id = %q, want configured value", roundTrip.ChannelID.ValueString())
+	}
+	if roundTrip.IncludeAgentPrompt.ValueBool() != false {
+		t.Fatalf("round-trip include agent prompt = %v, want false", roundTrip.IncludeAgentPrompt.ValueBool())
+	}
+}
+
+func TestSlackIntegrationChannelConfigOmittedAgentPrompt(t *testing.T) {
+	t.Parallel()
+
+	model := &ChannelConfigModel{
+		Type:               types.StringValue("slack-integration"),
+		Format:             types.StringNull(),
+		URL:                types.StringNull(),
+		AuthKey:            types.StringNull(),
+		RoutingKey:         types.StringNull(),
+		Region:             types.StringNull(),
+		InstallID:          types.StringValue("018f9a6a-1234-7890-abcd-ef0123456789"),
+		ChannelID:          types.StringValue("C0123456789"),
+		IncludeAgentPrompt: types.BoolNull(),
+	}
+
+	apiConfig, diags := channelConfigModelToAPI(model)
+	if diags.HasError() {
+		t.Fatalf("mapping model to API returned diagnostics: %v", diags)
+	}
+	slack, ok := apiConfig.(*logclient.SlackIntegrationConfig)
+	if !ok {
+		t.Fatalf("API config type = %T, want *client.SlackIntegrationConfig", apiConfig)
+	}
+	if slack.IncludeAgentPrompt != nil {
+		t.Fatalf("include agent prompt = %v, want omitted (nil)", slack.IncludeAgentPrompt)
+	}
+
+	roundTrip, roundTripDiags := channelConfigAPIToModel(slack)
+	if roundTripDiags.HasError() {
+		t.Fatalf("mapping API to model returned diagnostics: %v", roundTripDiags)
+	}
+	if !roundTrip.IncludeAgentPrompt.IsNull() {
+		t.Fatalf("round-trip include agent prompt = %v, want null", roundTrip.IncludeAgentPrompt)
+	}
+}
+
+func TestSlackIntegrationChannelConfigValidation(t *testing.T) {
+	t.Parallel()
+
+	t.Run("missing install_id and channel_id", func(t *testing.T) {
+		model := &ChannelConfigModel{
+			Type: types.StringValue("slack-integration"),
+		}
+		_, diags := channelConfigModelToAPI(model)
+		if !diags.HasError() {
+			t.Fatal("expected diagnostics for missing install_id and channel_id")
+		}
+	})
+
+	t.Run("webhook fields rejected", func(t *testing.T) {
+		model := &ChannelConfigModel{
+			Type:      types.StringValue("slack-integration"),
+			InstallID: types.StringValue("018f9a6a-1234-7890-abcd-ef0123456789"),
+			ChannelID: types.StringValue("C0123456789"),
+			URL:       types.StringValue("https://example.com"),
+		}
+		_, diags := channelConfigModelToAPI(model)
+		if !diags.HasError() {
+			t.Fatal("expected diagnostics for url on slack-integration channel")
+		}
+	})
+
+	t.Run("slack fields rejected on webhook", func(t *testing.T) {
+		model := &ChannelConfigModel{
+			Type:      types.StringValue("webhook"),
+			Format:    types.StringValue("auto"),
+			URL:       types.StringValue("https://example.com"),
+			InstallID: types.StringValue("018f9a6a-1234-7890-abcd-ef0123456789"),
+		}
+		_, diags := channelConfigModelToAPI(model)
+		if !diags.HasError() {
+			t.Fatal("expected diagnostics for install_id on webhook channel")
+		}
+	})
+
+	t.Run("include_agent_prompt rejected on pagerduty", func(t *testing.T) {
+		model := &ChannelConfigModel{
+			Type:               types.StringValue("pagerduty"),
+			RoutingKey:         types.StringValue("a0b1c2d3e4f5a0b1c2d3e4f5a0b1c2d3"),
+			IncludeAgentPrompt: types.BoolValue(true),
+		}
+		_, diags := channelConfigModelToAPI(model)
+		if !diags.HasError() {
+			t.Fatal("expected diagnostics for include_agent_prompt on pagerduty channel")
+		}
+	})
+}
