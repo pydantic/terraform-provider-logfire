@@ -40,12 +40,15 @@ const maskedChannelSecretPlaceholder = "**********"
 
 type ChannelConfigModel struct {
 	// Email config exists in the API but is not exposed via Terraform yet.
-	Type       types.String `tfsdk:"type"` // webhook | opsgenie | pagerduty
-	Format     types.String `tfsdk:"format"`
-	URL        types.String `tfsdk:"url"`
-	AuthKey    types.String `tfsdk:"auth_key"`
-	RoutingKey types.String `tfsdk:"routing_key"`
-	Region     types.String `tfsdk:"region"`
+	Type               types.String `tfsdk:"type"` // webhook | opsgenie | pagerduty | slack-integration
+	Format             types.String `tfsdk:"format"`
+	URL                types.String `tfsdk:"url"`
+	AuthKey            types.String `tfsdk:"auth_key"`
+	RoutingKey         types.String `tfsdk:"routing_key"`
+	Region             types.String `tfsdk:"region"`
+	InstallID          types.String `tfsdk:"install_id"`
+	ChannelID          types.String `tfsdk:"channel_id"`
+	IncludeAgentPrompt types.Bool   `tfsdk:"include_agent_prompt"`
 }
 
 type ChannelModel struct {
@@ -93,9 +96,9 @@ func (r *ChannelResource) Schema(ctx context.Context, req resource.SchemaRequest
 				Attributes: map[string]rschema.Attribute{
 					"type": rschema.StringAttribute{
 						Required:            true,
-						MarkdownDescription: "Channel type (`webhook`, `opsgenie`, or `pagerduty`).",
+						MarkdownDescription: "Channel type (`webhook`, `opsgenie`, `pagerduty`, or `slack-integration`).",
 						Validators: []validator.String{
-							stringvalidator.OneOf("webhook", "opsgenie", "pagerduty"),
+							stringvalidator.OneOf("webhook", "opsgenie", "pagerduty", "slack-integration"),
 						},
 					},
 					"format": rschema.StringAttribute{
@@ -131,6 +134,18 @@ func (r *ChannelResource) Schema(ctx context.Context, req resource.SchemaRequest
 						Validators: []validator.String{
 							stringvalidator.OneOf("us", "eu"),
 						},
+					},
+					"install_id": rschema.StringAttribute{
+						Optional:            true,
+						MarkdownDescription: "ID of the organization's Slack App installation, created by connecting Slack in the Logfire UI (Organization Settings -> Integrations). The installation must belong to the same organization and be active.",
+					},
+					"channel_id": rschema.StringAttribute{
+						Optional:            true,
+						MarkdownDescription: "Slack channel ID (for example `C0123456789`) the notifications are posted to. The Logfire Slack bot must already be a member of the channel.",
+					},
+					"include_agent_prompt": rschema.BoolAttribute{
+						Optional:            true,
+						MarkdownDescription: "Whether Slack issue notifications include the \"Ask your agent\" MCP prompt line. Defaults to `true` when omitted.",
 					},
 				},
 			},
@@ -185,6 +200,7 @@ func channelConfigModelToAPI(m *ChannelConfigModel) (interface{}, diag.Diagnosti
 		diags.Append(disallowConfigString(m.AuthKey, "config.auth_key", "webhook")...)
 		diags.Append(disallowConfigString(m.RoutingKey, "config.routing_key", "webhook")...)
 		diags.Append(disallowConfigString(m.Region, "config.region", "webhook")...)
+		diags.Append(disallowSlackIntegrationFields(m, "webhook")...)
 		if diags.HasError() {
 			return nil, diags
 		}
@@ -200,6 +216,7 @@ func channelConfigModelToAPI(m *ChannelConfigModel) (interface{}, diag.Diagnosti
 		diags.Append(disallowConfigString(m.URL, "config.url", "opsgenie")...)
 		diags.Append(disallowConfigString(m.RoutingKey, "config.routing_key", "opsgenie")...)
 		diags.Append(disallowConfigString(m.Region, "config.region", "opsgenie")...)
+		diags.Append(disallowSlackIntegrationFields(m, "opsgenie")...)
 		if diags.HasError() {
 			return nil, diags
 		}
@@ -213,6 +230,7 @@ func channelConfigModelToAPI(m *ChannelConfigModel) (interface{}, diag.Diagnosti
 		diags.Append(disallowConfigString(m.Format, "config.format", "pagerduty")...)
 		diags.Append(disallowConfigString(m.URL, "config.url", "pagerduty")...)
 		diags.Append(disallowConfigString(m.AuthKey, "config.auth_key", "pagerduty")...)
+		diags.Append(disallowSlackIntegrationFields(m, "pagerduty")...)
 		if diags.HasError() {
 			return nil, diags
 		}
@@ -221,6 +239,29 @@ func channelConfigModelToAPI(m *ChannelConfigModel) (interface{}, diag.Diagnosti
 			RoutingKey:        stringPointer(routingKey),
 			Region:            optionalConfigStringPointer(m.Region),
 		}, diags
+	case "slack-integration":
+		installID, iDiags := requiredConfigString(m.InstallID, "config.install_id", "slack-integration")
+		diags.Append(iDiags...)
+		channelID, cDiags := requiredConfigString(m.ChannelID, "config.channel_id", "slack-integration")
+		diags.Append(cDiags...)
+		diags.Append(disallowConfigString(m.Format, "config.format", "slack-integration")...)
+		diags.Append(disallowConfigString(m.URL, "config.url", "slack-integration")...)
+		diags.Append(disallowConfigString(m.AuthKey, "config.auth_key", "slack-integration")...)
+		diags.Append(disallowConfigString(m.RoutingKey, "config.routing_key", "slack-integration")...)
+		diags.Append(disallowConfigString(m.Region, "config.region", "slack-integration")...)
+		if diags.HasError() {
+			return nil, diags
+		}
+		cfg := &logclient.SlackIntegrationConfig{
+			ChannelConfigBase: logclient.ChannelConfigBase{Type: "slack-integration"},
+			InstallID:         stringPointer(installID),
+			ChannelID:         stringPointer(channelID),
+		}
+		if !m.IncludeAgentPrompt.IsNull() && !m.IncludeAgentPrompt.IsUnknown() {
+			v := m.IncludeAgentPrompt.ValueBool()
+			cfg.IncludeAgentPrompt = &v
+		}
+		return cfg, diags
 	case "email":
 		// Email config exists in API but not exposed in Terraform yet
 		diags.Append(diag.NewErrorDiagnostic("Invalid channel config", "email channels are not yet supported via Terraform."))
@@ -248,12 +289,15 @@ func channelConfigAPIToModel(cfg interface{}) (*ChannelConfigModel, diag.Diagnos
 	}
 
 	model := &ChannelConfigModel{
-		Type:       types.StringValue(genericCfg.Type),
-		Format:     types.StringNull(),
-		URL:        types.StringNull(),
-		AuthKey:    types.StringNull(),
-		RoutingKey: types.StringNull(),
-		Region:     types.StringNull(),
+		Type:               types.StringValue(genericCfg.Type),
+		Format:             types.StringNull(),
+		URL:                types.StringNull(),
+		AuthKey:            types.StringNull(),
+		RoutingKey:         types.StringNull(),
+		Region:             types.StringNull(),
+		InstallID:          types.StringNull(),
+		ChannelID:          types.StringNull(),
+		IncludeAgentPrompt: types.BoolNull(),
 	}
 
 	switch genericCfg.Type {
@@ -301,6 +345,28 @@ func channelConfigAPIToModel(cfg interface{}) (*ChannelConfigModel, diag.Diagnos
 			}
 			if genericCfg.Region != nil {
 				model.Region = types.StringValue(*genericCfg.Region)
+			}
+		}
+	case "slack-integration":
+		if slackCfg, ok := cfg.(*logclient.SlackIntegrationConfig); ok {
+			if slackCfg.InstallID != nil {
+				model.InstallID = types.StringValue(*slackCfg.InstallID)
+			}
+			if slackCfg.ChannelID != nil {
+				model.ChannelID = types.StringValue(*slackCfg.ChannelID)
+			}
+			if slackCfg.IncludeAgentPrompt != nil {
+				model.IncludeAgentPrompt = types.BoolValue(*slackCfg.IncludeAgentPrompt)
+			}
+		} else {
+			if genericCfg.InstallID != nil {
+				model.InstallID = types.StringValue(*genericCfg.InstallID)
+			}
+			if genericCfg.ChannelID != nil {
+				model.ChannelID = types.StringValue(*genericCfg.ChannelID)
+			}
+			if genericCfg.IncludeAgentPrompt != nil {
+				model.IncludeAgentPrompt = types.BoolValue(*genericCfg.IncludeAgentPrompt)
 			}
 		}
 	case "email":
@@ -356,6 +422,19 @@ func disallowConfigString(val types.String, fieldName, channelType string) diag.
 	return diag.Diagnostics{
 		diag.NewErrorDiagnostic("Invalid channel config", fmt.Sprintf("%s cannot be set for %s channels.", fieldName, channelType)),
 	}
+}
+
+func disallowSlackIntegrationFields(m *ChannelConfigModel, channelType string) diag.Diagnostics {
+	var diags diag.Diagnostics
+	diags.Append(disallowConfigString(m.InstallID, "config.install_id", channelType)...)
+	diags.Append(disallowConfigString(m.ChannelID, "config.channel_id", channelType)...)
+	if !m.IncludeAgentPrompt.IsNull() && !m.IncludeAgentPrompt.IsUnknown() {
+		diags.Append(diag.NewErrorDiagnostic(
+			"Invalid channel config",
+			fmt.Sprintf("config.include_agent_prompt cannot be set for %s channels.", channelType),
+		))
+	}
+	return diags
 }
 
 func channelReadToModel(c *logclient.ChannelRead, m *ChannelModel) diag.Diagnostics {

@@ -822,15 +822,25 @@ type PagerdutyConfig struct {
 	Region     *string `json:"region,omitempty"`
 }
 
+type SlackIntegrationConfig struct {
+	ChannelConfigBase
+	InstallID          *string `json:"install_id,omitempty"`
+	ChannelID          *string `json:"channel_id,omitempty"`
+	IncludeAgentPrompt *bool   `json:"include_agent_prompt,omitempty"`
+}
+
 // ChannelConfig represents any channel config (used for unmarshaling).
 type ChannelConfig struct {
-	Type       string  `json:"type"`
-	Format     *string `json:"format,omitempty"`
-	URL        *string `json:"url,omitempty"`
-	Email      *string `json:"email,omitempty"`
-	AuthKey    *string `json:"auth_key,omitempty"`
-	RoutingKey *string `json:"routing_key,omitempty"`
-	Region     *string `json:"region,omitempty"`
+	Type               string  `json:"type"`
+	Format             *string `json:"format,omitempty"`
+	URL                *string `json:"url,omitempty"`
+	Email              *string `json:"email,omitempty"`
+	AuthKey            *string `json:"auth_key,omitempty"`
+	RoutingKey         *string `json:"routing_key,omitempty"`
+	Region             *string `json:"region,omitempty"`
+	InstallID          *string `json:"install_id,omitempty"`
+	ChannelID          *string `json:"channel_id,omitempty"`
+	IncludeAgentPrompt *bool   `json:"include_agent_prompt,omitempty"`
 }
 
 type ChannelRead struct {
@@ -847,12 +857,12 @@ type ChannelRead struct {
 
 type ChannelCreate struct {
 	Label  string      `json:"label"`
-	Config interface{} `json:"config"` // WebhookConfig, EmailConfig, OpsgenieConfig, or PagerdutyConfig
+	Config interface{} `json:"config"` // WebhookConfig, EmailConfig, OpsgenieConfig, PagerdutyConfig, or SlackIntegrationConfig
 }
 
 type ChannelUpdate struct {
 	Label  NullableField[string] `json:"label,omitempty"`
-	Config *interface{}          `json:"config,omitempty"` // WebhookConfig, EmailConfig, OpsgenieConfig, or PagerdutyConfig
+	Config *interface{}          `json:"config,omitempty"` // WebhookConfig, EmailConfig, OpsgenieConfig, PagerdutyConfig, or SlackIntegrationConfig
 	Active NullableField[bool]   `json:"active,omitempty"`
 }
 

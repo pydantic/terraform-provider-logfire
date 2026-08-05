@@ -24,3 +24,14 @@ resource "logfire_channel" "pagerduty" {
     region      = "us"
   }
 }
+
+resource "logfire_channel" "slack_app" {
+  name   = "slack-app-alerts"
+  active = true
+
+  config {
+    type       = "slack-integration"
+    install_id = "018f9a6a-1234-7890-abcd-ef0123456789"
+    channel_id = "C0123456789"
+  }
+}
