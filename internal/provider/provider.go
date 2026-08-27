@@ -297,6 +297,8 @@ func (p *LogfireProvider) Resources(ctx context.Context) []func() resource.Resou
 		NewAlertResource,
 		NewChannelResource,
 		NewDashboardResource,
+		NewFrontendApplicationResource,
+		NewFrontendApplicationTokenResource,
 		NewOrganizationResource,
 		NewProjectResource,
 		NewReadTokenResource,

@@ -429,7 +429,11 @@ func (c *APIClient) doJSON(ctx context.Context, method, path string, in any, out
 		body = io.NopCloser(bytes.NewReader(bodyBytes))
 	}
 
-	u := c.BaseURL.ResolveReference(&url.URL{Path: path})
+	reference, err := url.Parse(path)
+	if err != nil {
+		return nil, fmt.Errorf("parse request path: %w", err)
+	}
+	u := c.BaseURL.ResolveReference(reference)
 	req, err := http.NewRequestWithContext(ctx, method, u.String(), body)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
@@ -1001,6 +1005,155 @@ func (c *APIClient) ListWriteTokens(ctx context.Context, projectID string) ([]Wr
 
 func (c *APIClient) DeleteWriteToken(ctx context.Context, projectID, tokenID string) error {
 	_, err := c.doJSON(ctx, http.MethodDelete, c.writeTokenPath(projectID, tokenID), nil, nil, http.StatusNoContent)
+	return err
+}
+
+// ---- Frontend Applications ----
+
+type FrontendApplication struct {
+	ID               string  `json:"id"`
+	ProjectID        string  `json:"project_id"`
+	Name             string  `json:"name"`
+	ServiceNamespace *string `json:"service_namespace"`
+	Environment      *string `json:"environment"`
+	CreatedAt        string  `json:"created_at"`
+}
+
+type FrontendApplicationCreate struct {
+	Name                     string  `json:"name"`
+	ServiceNamespace         *string `json:"service_namespace,omitempty"`
+	Environment              *string `json:"environment,omitempty"`
+	AdoptExistingServiceName bool    `json:"adopt_existing_service_name,omitempty"`
+}
+
+type FrontendApplicationCreated struct {
+	FrontendApplication
+	TokenID string `json:"token_id"`
+	Token   string `json:"token"`
+}
+
+type FrontendApplicationToken struct {
+	ID          string  `json:"id"`
+	Description *string `json:"description"`
+	Status      string  `json:"status"`
+	Token       *string `json:"token"`
+	CreatedAt   string  `json:"created_at"`
+	ExpiresAt   *string `json:"expires_at"`
+	LastUsedAt  *string `json:"last_used_at"`
+}
+
+type FrontendApplicationTokenCreated struct {
+	TokenID     string  `json:"token_id"`
+	Description *string `json:"description"`
+	Status      string  `json:"status"`
+	Token       string  `json:"token"`
+	CreatedAt   string  `json:"created_at"`
+	ExpiresAt   *string `json:"expires_at"`
+	LastUsedAt  *string `json:"last_used_at"`
+}
+
+type frontendApplicationsPage struct {
+	Data       []FrontendApplication `json:"data"`
+	NextCursor *string               `json:"next_cursor"`
+}
+
+type frontendApplicationTokensPage struct {
+	Data       []FrontendApplicationToken `json:"data"`
+	NextCursor *string                    `json:"next_cursor"`
+}
+
+func (c *APIClient) frontendApplicationsBase(projectID string) string {
+	return fmt.Sprintf("/api/v1/projects/%s/frontend-applications/", url.PathEscape(projectID))
+}
+
+func (c *APIClient) frontendApplicationPath(projectID, applicationID string) string {
+	return fmt.Sprintf("%s%s/", c.frontendApplicationsBase(projectID), url.PathEscape(applicationID))
+}
+
+func (c *APIClient) frontendApplicationTokensBase(projectID, applicationID string) string {
+	return c.frontendApplicationPath(projectID, applicationID) + "tokens/"
+}
+
+func (c *APIClient) CreateFrontendApplication(ctx context.Context, projectID string, in FrontendApplicationCreate) (*FrontendApplicationCreated, error) {
+	var out FrontendApplicationCreated
+	_, err := c.doJSON(ctx, http.MethodPost, c.frontendApplicationsBase(projectID), in, &out, http.StatusCreated)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *APIClient) GetFrontendApplication(ctx context.Context, projectID, applicationID string) (*FrontendApplication, int, error) {
+	var out FrontendApplication
+	resp, err := c.doJSON(ctx, http.MethodGet, c.frontendApplicationPath(projectID, applicationID), nil, &out, http.StatusOK, http.StatusNotFound)
+	if err != nil {
+		return nil, 0, err
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, resp.StatusCode, nil
+	}
+	return &out, resp.StatusCode, nil
+}
+
+func (c *APIClient) ListFrontendApplications(ctx context.Context, projectID string) ([]FrontendApplication, error) {
+	var applications []FrontendApplication
+	cursor := ""
+	for {
+		var page frontendApplicationsPage
+		_, err := c.doJSON(ctx, http.MethodGet, frontendApplicationsPagePath(c.frontendApplicationsBase(projectID), cursor), nil, &page, http.StatusOK)
+		if err != nil {
+			return nil, err
+		}
+		applications = append(applications, page.Data...)
+		if page.NextCursor == nil {
+			return applications, nil
+		}
+		cursor = *page.NextCursor
+	}
+}
+
+func (c *APIClient) DeleteFrontendApplication(ctx context.Context, projectID, applicationID string) error {
+	_, err := c.doJSON(ctx, http.MethodDelete, c.frontendApplicationPath(projectID, applicationID), nil, nil, http.StatusNoContent)
+	return err
+}
+
+func (c *APIClient) ListFrontendApplicationTokens(ctx context.Context, projectID, applicationID string) ([]FrontendApplicationToken, error) {
+	var tokens []FrontendApplicationToken
+	cursor := ""
+	for {
+		var page frontendApplicationTokensPage
+		_, err := c.doJSON(ctx, http.MethodGet, frontendApplicationsPagePath(c.frontendApplicationTokensBase(projectID, applicationID), cursor), nil, &page, http.StatusOK)
+		if err != nil {
+			return nil, err
+		}
+		tokens = append(tokens, page.Data...)
+		if page.NextCursor == nil {
+			return tokens, nil
+		}
+		cursor = *page.NextCursor
+	}
+}
+
+func frontendApplicationsPagePath(base, cursor string) string {
+	query := url.Values{"limit": []string{"100"}}
+	if cursor != "" {
+		query.Set("cursor", cursor)
+	}
+	return base + "?" + query.Encode()
+}
+
+func (c *APIClient) CreateFrontendApplicationToken(ctx context.Context, projectID, applicationID string) (*FrontendApplicationTokenCreated, error) {
+	var out FrontendApplicationTokenCreated
+	_, err := c.doJSON(ctx, http.MethodPost, c.frontendApplicationTokensBase(projectID, applicationID), nil, &out, http.StatusCreated)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *APIClient) RevokeFrontendApplicationToken(ctx context.Context, projectID, applicationID, tokenID string) error {
+	path := fmt.Sprintf("%s%s/revoke/", c.frontendApplicationTokensBase(projectID, applicationID), url.PathEscape(tokenID))
+	_, err := c.doJSON(ctx, http.MethodPost, path, nil, nil, http.StatusNoContent)
 	return err
 }
 
