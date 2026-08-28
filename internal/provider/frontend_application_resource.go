@@ -229,7 +229,13 @@ func (r *FrontendApplicationResource) Read(ctx context.Context, req resource.Rea
 	}
 	active := selectActiveFrontendToken(tokens, preferredID)
 	if active == nil {
-		resp.Diagnostics.AddError("Frontend application has no active token", "Create a replacement token before refreshing this resource.")
+		refreshed.TokenID = types.StringNull()
+		refreshed.Token = types.StringNull()
+		resp.Diagnostics.AddWarning(
+			"Frontend application has no active token",
+			"The application remains managed, but its token outputs are null. Add a logfire_frontend_application_token resource to issue a replacement.",
+		)
+		resp.Diagnostics.Append(resp.State.Set(ctx, &refreshed)...)
 		return
 	}
 	refreshed.TokenID = types.StringValue(active.ID)

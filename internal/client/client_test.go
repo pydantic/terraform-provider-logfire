@@ -5,12 +5,23 @@ package client
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestConflictErrorClassification(t *testing.T) {
+	t.Parallel()
+	if !IsConflictError(&APIError{StatusCode: http.StatusConflict}) {
+		t.Fatal("409 must be classified as a conflict")
+	}
+	if IsConflictError(errors.New("other")) {
+		t.Fatal("non-API error must not be classified as a conflict")
+	}
+}
 
 func TestRetryingTransport_ReplaysBodyAndSetsHeaders(t *testing.T) {
 	rt := &recordingTransport{}

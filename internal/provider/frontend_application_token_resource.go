@@ -205,7 +205,12 @@ func (r *FrontendApplicationTokenResource) Delete(ctx context.Context, req resou
 		return
 	}
 	err := r.client.RevokeFrontendApplicationToken(ctx, state.ProjectID.ValueString(), state.ApplicationID.ValueString(), state.ID.ValueString())
-	if err != nil && !logclient.IsNotFoundError(err) {
+	if logclient.IsConflictError(err) {
+		resp.Diagnostics.AddError(
+			"Cannot revoke the last frontend application token",
+			"Set revoke_on_destroy to false and apply that change before destroying the token resource with its application. Application deletion revokes all attached tokens. API response: "+err.Error(),
+		)
+	} else if err != nil && !logclient.IsNotFoundError(err) {
 		resp.Diagnostics.AddError("Revoke frontend application token failed", err.Error())
 	}
 }
