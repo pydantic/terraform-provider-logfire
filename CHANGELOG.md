@@ -1,6 +1,7 @@
 ## Unreleased
 
 FEATURES:
+- Add experimental `logfire_frontend_application` and `logfire_frontend_application_token` resources for immutable browser telemetry identities, recoverable restricted tokens, import, and explicit two-phase token rotation. The backing management API is currently enabled only in Logfire staging environments.
 - Add `slack-integration` notification channels, posting via the organization's installed Logfire Slack App instead of an incoming-webhook URL. The config takes an `install_id` (the Slack App installation created by connecting Slack in the Logfire UI) and a Slack `channel_id` the bot is a member of, plus an optional `include_agent_prompt` flag for issue notifications. No secret is stored in Terraform state; the backend resolves the installation's bot token at send time.
 - Add `histogram_threshold` support to the `logfire_slo` resource: the `metric_aggregation` enum now accepts `histogram_threshold` (a metrics-only bucket-ratio SLI such as "95% of observations under 60s"), and two new optional attributes `threshold` and `comparison` carry the cutoff and its good side. `bad_query` is now optional and unused for that mode; every other mode still requires it. The pairing is validated at plan time, mirroring the API. Requires a Logfire backend that accepts histogram-threshold SLOs.
 - Add PagerDuty notification channels with a sensitive Events API v2 `routing_key` and optional `us` or `eu` `region`.

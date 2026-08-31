@@ -25,3 +25,12 @@ func IsNotFoundError(err error) bool {
 	}
 	return false
 }
+
+// IsConflictError reports whether the error represents an HTTP 409.
+func IsConflictError(err error) bool {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode == http.StatusConflict
+	}
+	return false
+}
