@@ -95,6 +95,57 @@ func TestFrontendApplicationLifecycleRequests(t *testing.T) {
 	}
 }
 
+func TestFrontendApplicationCreatesAreNotAutomaticallyRetried(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]func(*APIClient) error{
+		"application": func(client *APIClient) error {
+			_, err := client.CreateFrontendApplication(context.Background(), "project-id", FrontendApplicationCreate{Name: "browser"})
+			return err
+		},
+		"token": func(client *APIClient) error {
+			_, err := client.CreateFrontendApplicationToken(context.Background(), "project-id", "app-id")
+			return err
+		},
+	}
+
+	for name, call := range tests {
+		t.Run(name, func(t *testing.T) {
+			probe := &frontendApplicationCreateRetryProbe{}
+			client, err := NewAPIClient("https://example.com", "test", &http.Client{Transport: &retryingTransport{next: probe, maxAttempts: 3}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := call(client); err == nil {
+				t.Fatal("expected the first 503 response to be returned")
+			}
+			if probe.attempts != 1 {
+				t.Fatalf("create request attempts = %d; want 1", probe.attempts)
+			}
+		})
+	}
+}
+
+type frontendApplicationCreateRetryProbe struct{ attempts int }
+
+func (p *frontendApplicationCreateRetryProbe) RoundTrip(req *http.Request) (*http.Response, error) {
+	p.attempts++
+	if p.attempts == 1 {
+		return &http.Response{
+			StatusCode: http.StatusServiceUnavailable,
+			Header:     http.Header{"Retry-After": []string{"0"}},
+			Body:       http.NoBody,
+			Request:    req,
+		}, nil
+	}
+	return &http.Response{
+		StatusCode: http.StatusCreated,
+		Header:     make(http.Header),
+		Body:       http.NoBody,
+		Request:    req,
+	}, nil
+}
+
 func TestGetFrontendApplicationNotFound(t *testing.T) {
 	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) }))

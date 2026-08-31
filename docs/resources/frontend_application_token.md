@@ -3,12 +3,12 @@
 page_title: "logfire_frontend_application_token Resource - logfire"
 subcategory: ""
 description: |-
-  Manages one active token for a Logfire frontend application. Rotate in two applies with two resource blocks: add the replacement and deploy its token, then remove the old resource to revoke it. The provider never revokes an old token while creating a new one. Before destroying the whole application tree, set the last token's revoke_on_destroy to false in a separate apply; application deletion then revokes every attached token.
+  Experimental: the backing management API is currently enabled only in Logfire staging environments. Manages one active token for a Logfire frontend application. Rotate in two applies with two resource blocks: add the replacement and deploy its token, then remove the old resource to revoke it. The provider never revokes an old token while creating a new one. Token issuance is not retried automatically because the operation is not idempotent; after an uncertain failure, list the application's tokens and adopt the one unambiguous new active token. Before destroying the whole application tree, set the last token's revoke_on_destroy to false in a separate apply; application deletion then revokes every attached token.
 ---
 
 # logfire_frontend_application_token (Resource)
 
-Manages one active token for a Logfire frontend application. Rotate in two applies with two resource blocks: add the replacement and deploy its `token`, then remove the old resource to revoke it. The provider never revokes an old token while creating a new one. Before destroying the whole application tree, set the last token's `revoke_on_destroy` to `false` in a separate apply; application deletion then revokes every attached token.
+Experimental: the backing management API is currently enabled only in Logfire staging environments. Manages one active token for a Logfire frontend application. Rotate in two applies with two resource blocks: add the replacement and deploy its `token`, then remove the old resource to revoke it. The provider never revokes an old token while creating a new one. Token issuance is not retried automatically because the operation is not idempotent; after an uncertain failure, list the application's tokens and adopt the one unambiguous new active token. Before destroying the whole application tree, set the last token's `revoke_on_destroy` to `false` in a separate apply; application deletion then revokes every attached token.
 
 ## Example Usage
 

@@ -64,9 +64,15 @@ type retryingTransport struct {
 	maxDelay    time.Duration
 }
 
+type disableAutomaticRetriesContextKey struct{}
+
+func disableAutomaticRetries(ctx context.Context) context.Context {
+	return context.WithValue(ctx, disableAutomaticRetriesContextKey{}, true)
+}
+
 func (t *retryingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	attempts := t.maxAttempts
-	if attempts <= 0 {
+	if attempts <= 0 || req.Context().Value(disableAutomaticRetriesContextKey{}) == true {
 		attempts = 1
 	}
 
@@ -1076,7 +1082,7 @@ func (c *APIClient) frontendApplicationTokensBase(projectID, applicationID strin
 
 func (c *APIClient) CreateFrontendApplication(ctx context.Context, projectID string, in FrontendApplicationCreate) (*FrontendApplicationCreated, error) {
 	var out FrontendApplicationCreated
-	_, err := c.doJSON(ctx, http.MethodPost, c.frontendApplicationsBase(projectID), in, &out, http.StatusCreated)
+	_, err := c.doJSON(disableAutomaticRetries(ctx), http.MethodPost, c.frontendApplicationsBase(projectID), in, &out, http.StatusCreated)
 	if err != nil {
 		return nil, err
 	}
@@ -1144,7 +1150,7 @@ func frontendApplicationsPagePath(base, cursor string) string {
 
 func (c *APIClient) CreateFrontendApplicationToken(ctx context.Context, projectID, applicationID string) (*FrontendApplicationTokenCreated, error) {
 	var out FrontendApplicationTokenCreated
-	_, err := c.doJSON(ctx, http.MethodPost, c.frontendApplicationTokensBase(projectID, applicationID), nil, &out, http.StatusCreated)
+	_, err := c.doJSON(disableAutomaticRetries(ctx), http.MethodPost, c.frontendApplicationTokensBase(projectID, applicationID), nil, &out, http.StatusCreated)
 	if err != nil {
 		return nil, err
 	}

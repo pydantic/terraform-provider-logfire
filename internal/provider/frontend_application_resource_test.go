@@ -5,6 +5,7 @@ package provider
 
 import (
 	"fmt"
+	"os"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -72,6 +73,7 @@ func TestSameNameIdentityReplacementNeedsAdoption(t *testing.T) {
 }
 
 func TestAccFrontendApplicationResource(t *testing.T) {
+	requireExperimentalFrontendApplicationAcceptance(t)
 	t.Parallel()
 	projectName := fmt.Sprintf("acc-frontend-app-%s", acctest.RandStringFromCharSet(6, acctest.CharSetAlphaNum))
 
@@ -131,6 +133,7 @@ func TestAccFrontendApplicationResource(t *testing.T) {
 }
 
 func TestAccFrontendApplicationNamespaceReplacement(t *testing.T) {
+	requireExperimentalFrontendApplicationAcceptance(t)
 	t.Parallel()
 	projectName := fmt.Sprintf("acc-frontend-app-ns-%s", acctest.RandStringFromCharSet(6, acctest.CharSetAlphaNum))
 
@@ -147,6 +150,13 @@ func TestAccFrontendApplicationNamespaceReplacement(t *testing.T) {
 			},
 		},
 	})
+}
+
+func requireExperimentalFrontendApplicationAcceptance(t *testing.T) {
+	t.Helper()
+	if os.Getenv("LOGFIRE_EXPERIMENTAL_FRONTEND_APPLICATIONS_ACC") == "" {
+		t.Skip("set LOGFIRE_EXPERIMENTAL_FRONTEND_APPLICATIONS_ACC=1 to test the staging-only frontend application API")
+	}
 }
 
 func testAccFrontendApplicationNamespaceReplacementConfig(projectName, namespace string, adopt bool) string {

@@ -3,12 +3,12 @@
 page_title: "logfire_frontend_application Resource - logfire"
 subcategory: ""
 description: |-
-  Manages an immutable Logfire frontend application identity and exposes one active restricted browser token. Use logfire_frontend_application_token for two-phase rotation.
+  Experimental: the backing management API is currently enabled only in Logfire staging environments. Manages an immutable Logfire frontend application identity and exposes one active restricted browser token. Use logfire_frontend_application_token for two-phase rotation. Creation is not retried automatically because the operation is not idempotent; after an uncertain failure, list the applications and import the matching identity instead of applying again.
 ---
 
 # logfire_frontend_application (Resource)
 
-Manages an immutable Logfire frontend application identity and exposes one active restricted browser token. Use `logfire_frontend_application_token` for two-phase rotation.
+Experimental: the backing management API is currently enabled only in Logfire staging environments. Manages an immutable Logfire frontend application identity and exposes one active restricted browser token. Use `logfire_frontend_application_token` for two-phase rotation. Creation is not retried automatically because the operation is not idempotent; after an uncertain failure, list the applications and import the matching identity instead of applying again.
 
 ## Example Usage
 
