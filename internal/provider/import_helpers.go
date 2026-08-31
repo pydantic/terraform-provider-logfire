@@ -11,27 +11,31 @@ import (
 	client "github.com/pydantic/terraform-provider-logfire/internal/client"
 )
 
-var importSeps = []rune{'/', ',', '|'}
+const importSeparators = "/,|"
 
 func splitImportParts(raw string, allowedCounts ...int) ([]string, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
 		return nil, fmt.Errorf("expected a non-empty import ID")
 	}
-	parts := strings.FieldsFunc(trimmed, func(r rune) bool {
-		for _, sep := range importSeps {
-			if r == sep {
-				return true
-			}
+	var parts []string
+	segmentStart := 0
+	for i, r := range trimmed {
+		if !strings.ContainsRune(importSeparators, r) {
+			continue
 		}
-		return false
-	})
-	for i := range parts {
-		parts[i] = strings.TrimSpace(parts[i])
-		if parts[i] == "" {
+		segment := strings.TrimSpace(trimmed[segmentStart:i])
+		if segment == "" {
 			return nil, fmt.Errorf("import ID contains empty segment")
 		}
+		parts = append(parts, segment)
+		segmentStart = i + 1
 	}
+	segment := strings.TrimSpace(trimmed[segmentStart:])
+	if segment == "" {
+		return nil, fmt.Errorf("import ID contains empty segment")
+	}
+	parts = append(parts, segment)
 	if len(allowedCounts) > 0 {
 		for _, n := range allowedCounts {
 			if len(parts) == n {
