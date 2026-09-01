@@ -310,6 +310,115 @@ func TestPagerdutyChannelConfigMapping(t *testing.T) {
 	}
 }
 
+func TestPagerdutyIntegrationChannelConfigMapping(t *testing.T) {
+	t.Parallel()
+
+	model := &ChannelConfigModel{
+		Type:      types.StringValue("pagerduty-integration"),
+		InstallID: types.StringValue("018f9a6a-1234-7890-abcd-ef0123456789"),
+		ServiceID: types.StringValue("PGRDTY1"),
+	}
+
+	apiConfig, diags := channelConfigModelToAPI(model)
+	if diags.HasError() {
+		t.Fatalf("mapping model to API returned diagnostics: %v", diags)
+	}
+	pagerduty, ok := apiConfig.(*logclient.PagerdutyIntegrationConfig)
+	if !ok {
+		t.Fatalf("API config type = %T, want *client.PagerdutyIntegrationConfig", apiConfig)
+	}
+	if pagerduty.InstallID == nil || *pagerduty.InstallID != model.InstallID.ValueString() {
+		t.Fatalf("install id = %v, want configured value", pagerduty.InstallID)
+	}
+	if pagerduty.ServiceID == nil || *pagerduty.ServiceID != model.ServiceID.ValueString() {
+		t.Fatalf("service id = %v, want configured value", pagerduty.ServiceID)
+	}
+
+	roundTrip, roundTripDiags := channelConfigAPIToModel(pagerduty)
+	if roundTripDiags.HasError() {
+		t.Fatalf("mapping API to model returned diagnostics: %v", roundTripDiags)
+	}
+	if roundTrip.InstallID.ValueString() != model.InstallID.ValueString() {
+		t.Fatalf("round-trip install id = %q, want configured value", roundTrip.InstallID.ValueString())
+	}
+	if roundTrip.ServiceID.ValueString() != model.ServiceID.ValueString() {
+		t.Fatalf("round-trip service id = %q, want configured value", roundTrip.ServiceID.ValueString())
+	}
+	// The connected channel carries no credential, so nothing here should look like the legacy type.
+	if !roundTrip.RoutingKey.IsNull() {
+		t.Fatalf("round-trip routing key = %v, want null", roundTrip.RoutingKey)
+	}
+	if !roundTrip.Region.IsNull() {
+		t.Fatalf("round-trip region = %v, want null", roundTrip.Region)
+	}
+}
+
+func TestPagerdutyIntegrationChannelConfigValidation(t *testing.T) {
+	t.Parallel()
+
+	t.Run("missing install_id and service_id", func(t *testing.T) {
+		model := &ChannelConfigModel{
+			Type: types.StringValue("pagerduty-integration"),
+		}
+		_, diags := channelConfigModelToAPI(model)
+		if !diags.HasError() {
+			t.Fatal("expected diagnostics for missing install_id and service_id")
+		}
+	})
+
+	t.Run("routing key rejected", func(t *testing.T) {
+		model := &ChannelConfigModel{
+			Type:       types.StringValue("pagerduty-integration"),
+			InstallID:  types.StringValue("018f9a6a-1234-7890-abcd-ef0123456789"),
+			ServiceID:  types.StringValue("PGRDTY1"),
+			RoutingKey: types.StringValue("0123456789abcdef0123456789abcdef"),
+		}
+		_, diags := channelConfigModelToAPI(model)
+		if !diags.HasError() {
+			t.Fatal("expected diagnostics for routing_key on pagerduty-integration channel")
+		}
+	})
+
+	t.Run("slack fields rejected", func(t *testing.T) {
+		model := &ChannelConfigModel{
+			Type:      types.StringValue("pagerduty-integration"),
+			InstallID: types.StringValue("018f9a6a-1234-7890-abcd-ef0123456789"),
+			ServiceID: types.StringValue("PGRDTY1"),
+			ChannelID: types.StringValue("C0123456789"),
+		}
+		_, diags := channelConfigModelToAPI(model)
+		if !diags.HasError() {
+			t.Fatal("expected diagnostics for channel_id on pagerduty-integration channel")
+		}
+	})
+
+	t.Run("service_id rejected on other types", func(t *testing.T) {
+		for _, model := range []*ChannelConfigModel{
+			{
+				Type:      types.StringValue("webhook"),
+				Format:    types.StringValue("auto"),
+				URL:       types.StringValue("https://example.com/hook"),
+				ServiceID: types.StringValue("PGRDTY1"),
+			},
+			{
+				Type:       types.StringValue("pagerduty"),
+				RoutingKey: types.StringValue("0123456789abcdef0123456789abcdef"),
+				ServiceID:  types.StringValue("PGRDTY1"),
+			},
+			{
+				Type:      types.StringValue("slack-integration"),
+				InstallID: types.StringValue("018f9a6a-1234-7890-abcd-ef0123456789"),
+				ChannelID: types.StringValue("C0123456789"),
+				ServiceID: types.StringValue("PGRDTY1"),
+			},
+		} {
+			if _, diags := channelConfigModelToAPI(model); !diags.HasError() {
+				t.Fatalf("expected diagnostics for service_id on %s channel", model.Type.ValueString())
+			}
+		}
+	})
+}
+
 func TestSlackIntegrationChannelConfigMapping(t *testing.T) {
 	t.Parallel()
 

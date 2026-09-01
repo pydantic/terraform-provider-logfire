@@ -40,7 +40,7 @@ const maskedChannelSecretPlaceholder = "**********"
 
 type ChannelConfigModel struct {
 	// Email config exists in the API but is not exposed via Terraform yet.
-	Type               types.String `tfsdk:"type"` // webhook | opsgenie | pagerduty | slack-integration
+	Type               types.String `tfsdk:"type"` // webhook | opsgenie | pagerduty | pagerduty-integration | slack-integration
 	Format             types.String `tfsdk:"format"`
 	URL                types.String `tfsdk:"url"`
 	AuthKey            types.String `tfsdk:"auth_key"`
@@ -48,6 +48,7 @@ type ChannelConfigModel struct {
 	Region             types.String `tfsdk:"region"`
 	InstallID          types.String `tfsdk:"install_id"`
 	ChannelID          types.String `tfsdk:"channel_id"`
+	ServiceID          types.String `tfsdk:"service_id"`
 	IncludeAgentPrompt types.Bool   `tfsdk:"include_agent_prompt"`
 }
 
@@ -96,9 +97,9 @@ func (r *ChannelResource) Schema(ctx context.Context, req resource.SchemaRequest
 				Attributes: map[string]rschema.Attribute{
 					"type": rschema.StringAttribute{
 						Required:            true,
-						MarkdownDescription: "Channel type (`webhook`, `opsgenie`, `pagerduty`, or `slack-integration`).",
+						MarkdownDescription: "Channel type (`webhook`, `opsgenie`, `pagerduty`, `pagerduty-integration`, or `slack-integration`).",
 						Validators: []validator.String{
-							stringvalidator.OneOf("webhook", "opsgenie", "pagerduty", "slack-integration"),
+							stringvalidator.OneOf("webhook", "opsgenie", "pagerduty", "pagerduty-integration", "slack-integration"),
 						},
 					},
 					"format": rschema.StringAttribute{
@@ -126,22 +127,26 @@ func (r *ChannelResource) Schema(ctx context.Context, req resource.SchemaRequest
 					"routing_key": rschema.StringAttribute{
 						Optional:            true,
 						Sensitive:           true,
-						MarkdownDescription: "PagerDuty Events API v2 integration routing key.",
+						MarkdownDescription: "PagerDuty Events API v2 integration routing key. Only for `pagerduty` channels; `pagerduty-integration` channels resolve the key from the installation instead.",
 					},
 					"region": rschema.StringAttribute{
 						Optional:            true,
-						MarkdownDescription: "PagerDuty account region (`us` or `eu`). When omitted, Logfire uses the US Events API endpoint.",
+						MarkdownDescription: "PagerDuty account region (`us` or `eu`). When omitted, Logfire uses the US Events API endpoint. Only for `pagerduty` channels; a `pagerduty-integration` channel takes its region from the connected account.",
 						Validators: []validator.String{
 							stringvalidator.OneOf("us", "eu"),
 						},
 					},
 					"install_id": rschema.StringAttribute{
 						Optional:            true,
-						MarkdownDescription: "ID of the organization's Slack App installation, created by connecting Slack in the Logfire UI (Organization Settings -> Integrations). The installation must belong to the same organization and be active.",
+						MarkdownDescription: "ID of the organization's Slack App or PagerDuty App installation, created by connecting the platform in the Logfire UI (Organization Settings -> Connections). The installation must belong to the same organization, be active, and match the channel type.",
 					},
 					"channel_id": rschema.StringAttribute{
 						Optional:            true,
 						MarkdownDescription: "Slack channel ID (for example `C0123456789`) the notifications are posted to. The Logfire Slack bot must already be a member of the channel.",
+					},
+					"service_id": rschema.StringAttribute{
+						Optional:            true,
+						MarkdownDescription: "ID of the PagerDuty service incidents are opened on, as approved for the installation when connecting PagerDuty. Required for `pagerduty-integration` channels.",
 					},
 					"include_agent_prompt": rschema.BoolAttribute{
 						Optional:            true,
@@ -200,7 +205,7 @@ func channelConfigModelToAPI(m *ChannelConfigModel) (interface{}, diag.Diagnosti
 		diags.Append(disallowConfigString(m.AuthKey, "config.auth_key", "webhook")...)
 		diags.Append(disallowConfigString(m.RoutingKey, "config.routing_key", "webhook")...)
 		diags.Append(disallowConfigString(m.Region, "config.region", "webhook")...)
-		diags.Append(disallowSlackIntegrationFields(m, "webhook")...)
+		diags.Append(disallowConnectedChannelFields(m, "webhook")...)
 		if diags.HasError() {
 			return nil, diags
 		}
@@ -216,7 +221,7 @@ func channelConfigModelToAPI(m *ChannelConfigModel) (interface{}, diag.Diagnosti
 		diags.Append(disallowConfigString(m.URL, "config.url", "opsgenie")...)
 		diags.Append(disallowConfigString(m.RoutingKey, "config.routing_key", "opsgenie")...)
 		diags.Append(disallowConfigString(m.Region, "config.region", "opsgenie")...)
-		diags.Append(disallowSlackIntegrationFields(m, "opsgenie")...)
+		diags.Append(disallowConnectedChannelFields(m, "opsgenie")...)
 		if diags.HasError() {
 			return nil, diags
 		}
@@ -230,7 +235,7 @@ func channelConfigModelToAPI(m *ChannelConfigModel) (interface{}, diag.Diagnosti
 		diags.Append(disallowConfigString(m.Format, "config.format", "pagerduty")...)
 		diags.Append(disallowConfigString(m.URL, "config.url", "pagerduty")...)
 		diags.Append(disallowConfigString(m.AuthKey, "config.auth_key", "pagerduty")...)
-		diags.Append(disallowSlackIntegrationFields(m, "pagerduty")...)
+		diags.Append(disallowConnectedChannelFields(m, "pagerduty")...)
 		if diags.HasError() {
 			return nil, diags
 		}
@@ -238,6 +243,31 @@ func channelConfigModelToAPI(m *ChannelConfigModel) (interface{}, diag.Diagnosti
 			ChannelConfigBase: logclient.ChannelConfigBase{Type: "pagerduty"},
 			RoutingKey:        stringPointer(routingKey),
 			Region:            optionalConfigStringPointer(m.Region),
+		}, diags
+	case "pagerduty-integration":
+		installID, iDiags := requiredConfigString(m.InstallID, "config.install_id", "pagerduty-integration")
+		diags.Append(iDiags...)
+		serviceID, sDiags := requiredConfigString(m.ServiceID, "config.service_id", "pagerduty-integration")
+		diags.Append(sDiags...)
+		diags.Append(disallowConfigString(m.Format, "config.format", "pagerduty-integration")...)
+		diags.Append(disallowConfigString(m.URL, "config.url", "pagerduty-integration")...)
+		diags.Append(disallowConfigString(m.AuthKey, "config.auth_key", "pagerduty-integration")...)
+		diags.Append(disallowConfigString(m.RoutingKey, "config.routing_key", "pagerduty-integration")...)
+		diags.Append(disallowConfigString(m.Region, "config.region", "pagerduty-integration")...)
+		diags.Append(disallowConfigString(m.ChannelID, "config.channel_id", "pagerduty-integration")...)
+		if !m.IncludeAgentPrompt.IsNull() && !m.IncludeAgentPrompt.IsUnknown() {
+			diags.Append(diag.NewErrorDiagnostic(
+				"Invalid channel config",
+				"config.include_agent_prompt cannot be set for pagerduty-integration channels.",
+			))
+		}
+		if diags.HasError() {
+			return nil, diags
+		}
+		return &logclient.PagerdutyIntegrationConfig{
+			ChannelConfigBase: logclient.ChannelConfigBase{Type: "pagerduty-integration"},
+			InstallID:         stringPointer(installID),
+			ServiceID:         stringPointer(serviceID),
 		}, diags
 	case "slack-integration":
 		installID, iDiags := requiredConfigString(m.InstallID, "config.install_id", "slack-integration")
@@ -249,6 +279,7 @@ func channelConfigModelToAPI(m *ChannelConfigModel) (interface{}, diag.Diagnosti
 		diags.Append(disallowConfigString(m.AuthKey, "config.auth_key", "slack-integration")...)
 		diags.Append(disallowConfigString(m.RoutingKey, "config.routing_key", "slack-integration")...)
 		diags.Append(disallowConfigString(m.Region, "config.region", "slack-integration")...)
+		diags.Append(disallowConfigString(m.ServiceID, "config.service_id", "slack-integration")...)
 		if diags.HasError() {
 			return nil, diags
 		}
@@ -347,6 +378,22 @@ func channelConfigAPIToModel(cfg interface{}) (*ChannelConfigModel, diag.Diagnos
 				model.Region = types.StringValue(*genericCfg.Region)
 			}
 		}
+	case "pagerduty-integration":
+		if pagerdutyCfg, ok := cfg.(*logclient.PagerdutyIntegrationConfig); ok {
+			if pagerdutyCfg.InstallID != nil {
+				model.InstallID = types.StringValue(*pagerdutyCfg.InstallID)
+			}
+			if pagerdutyCfg.ServiceID != nil {
+				model.ServiceID = types.StringValue(*pagerdutyCfg.ServiceID)
+			}
+		} else {
+			if genericCfg.InstallID != nil {
+				model.InstallID = types.StringValue(*genericCfg.InstallID)
+			}
+			if genericCfg.ServiceID != nil {
+				model.ServiceID = types.StringValue(*genericCfg.ServiceID)
+			}
+		}
 	case "slack-integration":
 		if slackCfg, ok := cfg.(*logclient.SlackIntegrationConfig); ok {
 			if slackCfg.InstallID != nil {
@@ -424,10 +471,13 @@ func disallowConfigString(val types.String, fieldName, channelType string) diag.
 	}
 }
 
-func disallowSlackIntegrationFields(m *ChannelConfigModel, channelType string) diag.Diagnostics {
+// disallowConnectedChannelFields rejects the fields that only a channel delivering through an
+// installed app accepts, for the types that carry their own credential instead.
+func disallowConnectedChannelFields(m *ChannelConfigModel, channelType string) diag.Diagnostics {
 	var diags diag.Diagnostics
 	diags.Append(disallowConfigString(m.InstallID, "config.install_id", channelType)...)
 	diags.Append(disallowConfigString(m.ChannelID, "config.channel_id", channelType)...)
+	diags.Append(disallowConfigString(m.ServiceID, "config.service_id", channelType)...)
 	if !m.IncludeAgentPrompt.IsNull() && !m.IncludeAgentPrompt.IsUnknown() {
 		diags.Append(diag.NewErrorDiagnostic(
 			"Invalid channel config",

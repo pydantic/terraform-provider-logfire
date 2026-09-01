@@ -35,3 +35,14 @@ resource "logfire_channel" "slack_app" {
     channel_id = "C0123456789"
   }
 }
+
+resource "logfire_channel" "pagerduty_app" {
+  name   = "pagerduty-app-on-call"
+  active = true
+
+  config {
+    type       = "pagerduty-integration"
+    install_id = "018f9a6a-1234-7890-abcd-ef0123456789"
+    service_id = "PGRDTY1"
+  }
+}
