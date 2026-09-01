@@ -43,6 +43,6 @@ resource "logfire_channel" "pagerduty_app" {
   config {
     type       = "pagerduty-integration"
     install_id = "018f9a6a-1234-7890-abcd-ef0123456789"
-    service_id = "PGRDTY1"
+    service_id = "018f9a6a-4321-7890-abcd-ef0123456789"
   }
 }

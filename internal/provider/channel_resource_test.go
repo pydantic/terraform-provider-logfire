@@ -316,7 +316,7 @@ func TestPagerdutyIntegrationChannelConfigMapping(t *testing.T) {
 	model := &ChannelConfigModel{
 		Type:      types.StringValue("pagerduty-integration"),
 		InstallID: types.StringValue("018f9a6a-1234-7890-abcd-ef0123456789"),
-		ServiceID: types.StringValue("PGRDTY1"),
+		ServiceID: types.StringValue("018f9a6a-4321-7890-abcd-ef0123456789"),
 	}
 
 	apiConfig, diags := channelConfigModelToAPI(model)
@@ -370,7 +370,7 @@ func TestPagerdutyIntegrationChannelConfigValidation(t *testing.T) {
 		model := &ChannelConfigModel{
 			Type:       types.StringValue("pagerduty-integration"),
 			InstallID:  types.StringValue("018f9a6a-1234-7890-abcd-ef0123456789"),
-			ServiceID:  types.StringValue("PGRDTY1"),
+			ServiceID:  types.StringValue("018f9a6a-4321-7890-abcd-ef0123456789"),
 			RoutingKey: types.StringValue("0123456789abcdef0123456789abcdef"),
 		}
 		_, diags := channelConfigModelToAPI(model)
@@ -383,7 +383,7 @@ func TestPagerdutyIntegrationChannelConfigValidation(t *testing.T) {
 		model := &ChannelConfigModel{
 			Type:      types.StringValue("pagerduty-integration"),
 			InstallID: types.StringValue("018f9a6a-1234-7890-abcd-ef0123456789"),
-			ServiceID: types.StringValue("PGRDTY1"),
+			ServiceID: types.StringValue("018f9a6a-4321-7890-abcd-ef0123456789"),
 			ChannelID: types.StringValue("C0123456789"),
 		}
 		_, diags := channelConfigModelToAPI(model)
@@ -398,18 +398,18 @@ func TestPagerdutyIntegrationChannelConfigValidation(t *testing.T) {
 				Type:      types.StringValue("webhook"),
 				Format:    types.StringValue("auto"),
 				URL:       types.StringValue("https://example.com/hook"),
-				ServiceID: types.StringValue("PGRDTY1"),
+				ServiceID: types.StringValue("018f9a6a-4321-7890-abcd-ef0123456789"),
 			},
 			{
 				Type:       types.StringValue("pagerduty"),
 				RoutingKey: types.StringValue("0123456789abcdef0123456789abcdef"),
-				ServiceID:  types.StringValue("PGRDTY1"),
+				ServiceID:  types.StringValue("018f9a6a-4321-7890-abcd-ef0123456789"),
 			},
 			{
 				Type:      types.StringValue("slack-integration"),
 				InstallID: types.StringValue("018f9a6a-1234-7890-abcd-ef0123456789"),
 				ChannelID: types.StringValue("C0123456789"),
-				ServiceID: types.StringValue("PGRDTY1"),
+				ServiceID: types.StringValue("018f9a6a-4321-7890-abcd-ef0123456789"),
 			},
 		} {
 			if _, diags := channelConfigModelToAPI(model); !diags.HasError() {

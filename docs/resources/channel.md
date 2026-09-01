@@ -58,7 +58,7 @@ resource "logfire_channel" "pagerduty_app" {
   config {
     type       = "pagerduty-integration"
     install_id = "018f9a6a-1234-7890-abcd-ef0123456789"
-    service_id = "PGRDTY1"
+    service_id = "018f9a6a-4321-7890-abcd-ef0123456789"
   }
 }
 ```
@@ -95,5 +95,5 @@ Optional:
 - `install_id` (String) ID of the organization's Slack App or PagerDuty App installation, created by connecting the platform in the Logfire UI (Organization Settings -> Connections). The installation must belong to the same organization, be active, and match the channel type.
 - `region` (String) PagerDuty account region (`us` or `eu`). When omitted, Logfire uses the US Events API endpoint. Only for `pagerduty` channels; a `pagerduty-integration` channel takes its region from the connected account.
 - `routing_key` (String, Sensitive) PagerDuty Events API v2 integration routing key. Only for `pagerduty` channels; `pagerduty-integration` channels resolve the key from the installation instead.
-- `service_id` (String) ID of the PagerDuty service incidents are opened on, as approved for the installation when connecting PagerDuty. Required for `pagerduty-integration` channels.
+- `service_id` (String) Logfire's ID (a UUID) for the PagerDuty service incidents are opened on, as approved for the installation when connecting PagerDuty. This is not PagerDuty's own service ID. Required for `pagerduty-integration` channels.
 - `url` (String) Webhook URL endpoint.

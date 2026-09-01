@@ -146,7 +146,7 @@ func (r *ChannelResource) Schema(ctx context.Context, req resource.SchemaRequest
 					},
 					"service_id": rschema.StringAttribute{
 						Optional:            true,
-						MarkdownDescription: "ID of the PagerDuty service incidents are opened on, as approved for the installation when connecting PagerDuty. Required for `pagerduty-integration` channels.",
+						MarkdownDescription: "Logfire's ID (a UUID) for the PagerDuty service incidents are opened on, as approved for the installation when connecting PagerDuty. This is not PagerDuty's own service ID. Required for `pagerduty-integration` channels.",
 					},
 					"include_agent_prompt": rschema.BoolAttribute{
 						Optional:            true,
