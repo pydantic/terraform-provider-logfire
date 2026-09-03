@@ -839,6 +839,15 @@ type SlackIntegrationConfig struct {
 	IncludeAgentPrompt *bool   `json:"include_agent_prompt,omitempty"`
 }
 
+// PagerdutyIntegrationConfig pages through the organization's installed Logfire PagerDuty App.
+// Unlike PagerdutyConfig it holds no credential: the backend resolves the approved service's
+// integration key from the installation at send time.
+type PagerdutyIntegrationConfig struct {
+	ChannelConfigBase
+	InstallID *string `json:"install_id,omitempty"`
+	ServiceID *string `json:"service_id,omitempty"`
+}
+
 // ChannelConfig represents any channel config (used for unmarshaling).
 type ChannelConfig struct {
 	Type               string  `json:"type"`
@@ -850,6 +859,7 @@ type ChannelConfig struct {
 	Region             *string `json:"region,omitempty"`
 	InstallID          *string `json:"install_id,omitempty"`
 	ChannelID          *string `json:"channel_id,omitempty"`
+	ServiceID          *string `json:"service_id,omitempty"`
 	IncludeAgentPrompt *bool   `json:"include_agent_prompt,omitempty"`
 }
 
@@ -867,12 +877,12 @@ type ChannelRead struct {
 
 type ChannelCreate struct {
 	Label  string      `json:"label"`
-	Config interface{} `json:"config"` // WebhookConfig, EmailConfig, OpsgenieConfig, PagerdutyConfig, or SlackIntegrationConfig
+	Config interface{} `json:"config"` // WebhookConfig, EmailConfig, OpsgenieConfig, PagerdutyConfig, PagerdutyIntegrationConfig, or SlackIntegrationConfig
 }
 
 type ChannelUpdate struct {
 	Label  NullableField[string] `json:"label,omitempty"`
-	Config *interface{}          `json:"config,omitempty"` // WebhookConfig, EmailConfig, OpsgenieConfig, PagerdutyConfig, or SlackIntegrationConfig
+	Config *interface{}          `json:"config,omitempty"` // WebhookConfig, EmailConfig, OpsgenieConfig, PagerdutyConfig, PagerdutyIntegrationConfig, or SlackIntegrationConfig
 	Active NullableField[bool]   `json:"active,omitempty"`
 }
 
