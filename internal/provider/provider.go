@@ -289,7 +289,9 @@ func apiKeyRegion(apiKey string) (string, error) {
 }
 
 func (p *LogfireProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
-	return []func() datasource.DataSource{}
+	return []func() datasource.DataSource{
+		NewPagerDutyServiceDataSource,
+	}
 }
 
 func (p *LogfireProvider) Resources(ctx context.Context) []func() resource.Resource {
