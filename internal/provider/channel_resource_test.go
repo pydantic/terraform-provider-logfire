@@ -308,6 +308,9 @@ func TestPagerdutyChannelConfigMapping(t *testing.T) {
 	if roundTrip.Region.ValueString() != "eu" {
 		t.Fatalf("round-trip region = %q, want eu", roundTrip.Region.ValueString())
 	}
+	if !roundTrip.ServiceID.IsNull() {
+		t.Fatalf("round-trip service id = %v, want null", roundTrip.ServiceID)
+	}
 }
 
 func TestPagerdutyIntegrationChannelConfigMapping(t *testing.T) {

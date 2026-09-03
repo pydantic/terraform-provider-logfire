@@ -59,6 +59,14 @@ type ChannelModel struct {
 	Config *ChannelConfigModel `tfsdk:"config"`
 }
 
+var channelConfigModelToAPIMappers = map[string]func(*ChannelConfigModel) (interface{}, diag.Diagnostics){
+	"webhook":               webhookConfigModelToAPI,
+	"opsgenie":              opsgenieConfigModelToAPI,
+	"pagerduty":             pagerdutyConfigModelToAPI,
+	"pagerduty-integration": pagerdutyIntegrationConfigModelToAPI,
+	"slack-integration":     slackIntegrationConfigModelToAPI,
+}
+
 func (r *ChannelResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_channel"
 }
@@ -195,112 +203,147 @@ func channelConfigModelToAPI(m *ChannelConfigModel) (interface{}, diag.Diagnosti
 	}
 
 	cfgType := m.Type.ValueString()
-
-	switch cfgType {
-	case "webhook":
-		format, fDiags := requiredConfigString(m.Format, "config.format", "webhook")
-		diags.Append(fDiags...)
-		url, uDiags := requiredConfigString(m.URL, "config.url", "webhook")
-		diags.Append(uDiags...)
-		diags.Append(disallowConfigString(m.AuthKey, "config.auth_key", "webhook")...)
-		diags.Append(disallowConfigString(m.RoutingKey, "config.routing_key", "webhook")...)
-		diags.Append(disallowConfigString(m.Region, "config.region", "webhook")...)
-		diags.Append(disallowConnectedChannelFields(m, "webhook")...)
-		if diags.HasError() {
-			return nil, diags
-		}
-		return &logclient.WebhookConfig{
-			ChannelConfigBase: logclient.ChannelConfigBase{Type: "webhook"},
-			Format:            stringPointer(format),
-			URL:               stringPointer(url),
-		}, diags
-	case "opsgenie":
-		key, kDiags := requiredConfigString(m.AuthKey, "config.auth_key", "opsgenie")
-		diags.Append(kDiags...)
-		diags.Append(disallowConfigString(m.Format, "config.format", "opsgenie")...)
-		diags.Append(disallowConfigString(m.URL, "config.url", "opsgenie")...)
-		diags.Append(disallowConfigString(m.RoutingKey, "config.routing_key", "opsgenie")...)
-		diags.Append(disallowConfigString(m.Region, "config.region", "opsgenie")...)
-		diags.Append(disallowConnectedChannelFields(m, "opsgenie")...)
-		if diags.HasError() {
-			return nil, diags
-		}
-		return &logclient.OpsgenieConfig{
-			ChannelConfigBase: logclient.ChannelConfigBase{Type: "opsgenie"},
-			AuthKey:           stringPointer(key),
-		}, diags
-	case "pagerduty":
-		routingKey, kDiags := requiredConfigString(m.RoutingKey, "config.routing_key", "pagerduty")
-		diags.Append(kDiags...)
-		diags.Append(disallowConfigString(m.Format, "config.format", "pagerduty")...)
-		diags.Append(disallowConfigString(m.URL, "config.url", "pagerduty")...)
-		diags.Append(disallowConfigString(m.AuthKey, "config.auth_key", "pagerduty")...)
-		diags.Append(disallowConnectedChannelFields(m, "pagerduty")...)
-		if diags.HasError() {
-			return nil, diags
-		}
-		return &logclient.PagerdutyConfig{
-			ChannelConfigBase: logclient.ChannelConfigBase{Type: "pagerduty"},
-			RoutingKey:        stringPointer(routingKey),
-			Region:            optionalConfigStringPointer(m.Region),
-		}, diags
-	case "pagerduty-integration":
-		installID, iDiags := requiredConfigString(m.InstallID, "config.install_id", "pagerduty-integration")
-		diags.Append(iDiags...)
-		serviceID, sDiags := requiredConfigString(m.ServiceID, "config.service_id", "pagerduty-integration")
-		diags.Append(sDiags...)
-		diags.Append(disallowConfigString(m.Format, "config.format", "pagerduty-integration")...)
-		diags.Append(disallowConfigString(m.URL, "config.url", "pagerduty-integration")...)
-		diags.Append(disallowConfigString(m.AuthKey, "config.auth_key", "pagerduty-integration")...)
-		diags.Append(disallowConfigString(m.RoutingKey, "config.routing_key", "pagerduty-integration")...)
-		diags.Append(disallowConfigString(m.Region, "config.region", "pagerduty-integration")...)
-		diags.Append(disallowConfigString(m.ChannelID, "config.channel_id", "pagerduty-integration")...)
-		if !m.IncludeAgentPrompt.IsNull() && !m.IncludeAgentPrompt.IsUnknown() {
-			diags.Append(diag.NewErrorDiagnostic(
-				"Invalid channel config",
-				"config.include_agent_prompt cannot be set for pagerduty-integration channels.",
-			))
-		}
-		if diags.HasError() {
-			return nil, diags
-		}
-		return &logclient.PagerdutyIntegrationConfig{
-			ChannelConfigBase: logclient.ChannelConfigBase{Type: "pagerduty-integration"},
-			InstallID:         stringPointer(installID),
-			ServiceID:         stringPointer(serviceID),
-		}, diags
-	case "slack-integration":
-		installID, iDiags := requiredConfigString(m.InstallID, "config.install_id", "slack-integration")
-		diags.Append(iDiags...)
-		channelID, cDiags := requiredConfigString(m.ChannelID, "config.channel_id", "slack-integration")
-		diags.Append(cDiags...)
-		diags.Append(disallowConfigString(m.Format, "config.format", "slack-integration")...)
-		diags.Append(disallowConfigString(m.URL, "config.url", "slack-integration")...)
-		diags.Append(disallowConfigString(m.AuthKey, "config.auth_key", "slack-integration")...)
-		diags.Append(disallowConfigString(m.RoutingKey, "config.routing_key", "slack-integration")...)
-		diags.Append(disallowConfigString(m.Region, "config.region", "slack-integration")...)
-		diags.Append(disallowConfigString(m.ServiceID, "config.service_id", "slack-integration")...)
-		if diags.HasError() {
-			return nil, diags
-		}
-		cfg := &logclient.SlackIntegrationConfig{
-			ChannelConfigBase: logclient.ChannelConfigBase{Type: "slack-integration"},
-			InstallID:         stringPointer(installID),
-			ChannelID:         stringPointer(channelID),
-		}
-		if !m.IncludeAgentPrompt.IsNull() && !m.IncludeAgentPrompt.IsUnknown() {
-			v := m.IncludeAgentPrompt.ValueBool()
-			cfg.IncludeAgentPrompt = &v
-		}
-		return cfg, diags
-	case "email":
+	mapper, ok := channelConfigModelToAPIMappers[cfgType]
+	if ok {
+		return mapper(m)
+	}
+	if cfgType == "email" {
 		// Email config exists in API but not exposed in Terraform yet
 		diags.Append(diag.NewErrorDiagnostic("Invalid channel config", "email channels are not yet supported via Terraform."))
 		return nil, diags
-	default:
-		diags.Append(diag.NewErrorDiagnostic("Invalid channel config", fmt.Sprintf("unsupported config type %q", cfgType)))
+	}
+	diags.Append(diag.NewErrorDiagnostic("Invalid channel config", fmt.Sprintf("unsupported config type %q", cfgType)))
+	return nil, diags
+}
+
+type channelConfigString struct {
+	value types.String
+	name  string
+}
+
+func webhookConfigModelToAPI(m *ChannelConfigModel) (interface{}, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	format, formatDiags := requiredConfigString(m.Format, "config.format", "webhook")
+	diags.Append(formatDiags...)
+	webhookURL, urlDiags := requiredConfigString(m.URL, "config.url", "webhook")
+	diags.Append(urlDiags...)
+	diags.Append(disallowConfigFields("webhook",
+		channelConfigString{m.AuthKey, "config.auth_key"},
+		channelConfigString{m.RoutingKey, "config.routing_key"},
+		channelConfigString{m.Region, "config.region"},
+		channelConfigString{m.InstallID, "config.install_id"},
+		channelConfigString{m.ChannelID, "config.channel_id"},
+		channelConfigString{m.ServiceID, "config.service_id"},
+	)...)
+	diags.Append(disallowIncludeAgentPrompt(m.IncludeAgentPrompt, "webhook")...)
+	if diags.HasError() {
 		return nil, diags
 	}
+	return &logclient.WebhookConfig{
+		ChannelConfigBase: logclient.ChannelConfigBase{Type: "webhook"},
+		Format:            stringPointer(format),
+		URL:               stringPointer(webhookURL),
+	}, diags
+}
+
+func opsgenieConfigModelToAPI(m *ChannelConfigModel) (interface{}, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	key, keyDiags := requiredConfigString(m.AuthKey, "config.auth_key", "opsgenie")
+	diags.Append(keyDiags...)
+	diags.Append(disallowConfigFields("opsgenie",
+		channelConfigString{m.Format, "config.format"},
+		channelConfigString{m.URL, "config.url"},
+		channelConfigString{m.RoutingKey, "config.routing_key"},
+		channelConfigString{m.Region, "config.region"},
+		channelConfigString{m.InstallID, "config.install_id"},
+		channelConfigString{m.ChannelID, "config.channel_id"},
+		channelConfigString{m.ServiceID, "config.service_id"},
+	)...)
+	diags.Append(disallowIncludeAgentPrompt(m.IncludeAgentPrompt, "opsgenie")...)
+	if diags.HasError() {
+		return nil, diags
+	}
+	return &logclient.OpsgenieConfig{
+		ChannelConfigBase: logclient.ChannelConfigBase{Type: "opsgenie"},
+		AuthKey:           stringPointer(key),
+	}, diags
+}
+
+func pagerdutyConfigModelToAPI(m *ChannelConfigModel) (interface{}, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	routingKey, keyDiags := requiredConfigString(m.RoutingKey, "config.routing_key", "pagerduty")
+	diags.Append(keyDiags...)
+	diags.Append(disallowConfigFields("pagerduty",
+		channelConfigString{m.Format, "config.format"},
+		channelConfigString{m.URL, "config.url"},
+		channelConfigString{m.AuthKey, "config.auth_key"},
+		channelConfigString{m.InstallID, "config.install_id"},
+		channelConfigString{m.ChannelID, "config.channel_id"},
+		channelConfigString{m.ServiceID, "config.service_id"},
+	)...)
+	diags.Append(disallowIncludeAgentPrompt(m.IncludeAgentPrompt, "pagerduty")...)
+	if diags.HasError() {
+		return nil, diags
+	}
+	return &logclient.PagerdutyConfig{
+		ChannelConfigBase: logclient.ChannelConfigBase{Type: "pagerduty"},
+		RoutingKey:        stringPointer(routingKey),
+		Region:            optionalConfigStringPointer(m.Region),
+	}, diags
+}
+
+func pagerdutyIntegrationConfigModelToAPI(m *ChannelConfigModel) (interface{}, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	installID, installDiags := requiredConfigString(m.InstallID, "config.install_id", "pagerduty-integration")
+	diags.Append(installDiags...)
+	serviceID, serviceDiags := requiredConfigString(m.ServiceID, "config.service_id", "pagerduty-integration")
+	diags.Append(serviceDiags...)
+	diags.Append(disallowConfigFields("pagerduty-integration",
+		channelConfigString{m.Format, "config.format"},
+		channelConfigString{m.URL, "config.url"},
+		channelConfigString{m.AuthKey, "config.auth_key"},
+		channelConfigString{m.RoutingKey, "config.routing_key"},
+		channelConfigString{m.Region, "config.region"},
+		channelConfigString{m.ChannelID, "config.channel_id"},
+	)...)
+	diags.Append(disallowIncludeAgentPrompt(m.IncludeAgentPrompt, "pagerduty-integration")...)
+	if diags.HasError() {
+		return nil, diags
+	}
+	return &logclient.PagerdutyIntegrationConfig{
+		ChannelConfigBase: logclient.ChannelConfigBase{Type: "pagerduty-integration"},
+		InstallID:         stringPointer(installID),
+		ServiceID:         stringPointer(serviceID),
+	}, diags
+}
+
+func slackIntegrationConfigModelToAPI(m *ChannelConfigModel) (interface{}, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	installID, installDiags := requiredConfigString(m.InstallID, "config.install_id", "slack-integration")
+	diags.Append(installDiags...)
+	channelID, channelDiags := requiredConfigString(m.ChannelID, "config.channel_id", "slack-integration")
+	diags.Append(channelDiags...)
+	diags.Append(disallowConfigFields("slack-integration",
+		channelConfigString{m.Format, "config.format"},
+		channelConfigString{m.URL, "config.url"},
+		channelConfigString{m.AuthKey, "config.auth_key"},
+		channelConfigString{m.RoutingKey, "config.routing_key"},
+		channelConfigString{m.Region, "config.region"},
+		channelConfigString{m.ServiceID, "config.service_id"},
+	)...)
+	if diags.HasError() {
+		return nil, diags
+	}
+	cfg := &logclient.SlackIntegrationConfig{
+		ChannelConfigBase: logclient.ChannelConfigBase{Type: "slack-integration"},
+		InstallID:         stringPointer(installID),
+		ChannelID:         stringPointer(channelID),
+	}
+	if !m.IncludeAgentPrompt.IsNull() && !m.IncludeAgentPrompt.IsUnknown() {
+		v := m.IncludeAgentPrompt.ValueBool()
+		cfg.IncludeAgentPrompt = &v
+	}
+	return cfg, diags
 }
 
 func channelConfigAPIToModel(cfg interface{}) (*ChannelConfigModel, diag.Diagnostics) {
@@ -328,94 +371,13 @@ func channelConfigAPIToModel(cfg interface{}) (*ChannelConfigModel, diag.Diagnos
 		Region:             types.StringNull(),
 		InstallID:          types.StringNull(),
 		ChannelID:          types.StringNull(),
+		ServiceID:          types.StringNull(),
 		IncludeAgentPrompt: types.BoolNull(),
 	}
 
 	switch genericCfg.Type {
-	case "webhook":
-		// Type assert to WebhookConfig
-		if webhookCfg, ok := cfg.(*logclient.WebhookConfig); ok {
-			if webhookCfg.Format != nil {
-				model.Format = types.StringValue(*webhookCfg.Format)
-			}
-			if webhookCfg.URL != nil {
-				model.URL = types.StringValue(*webhookCfg.URL)
-			}
-		} else {
-			// Fallback to generic fields
-			if genericCfg.Format != nil {
-				model.Format = types.StringValue(*genericCfg.Format)
-			}
-			if genericCfg.URL != nil {
-				model.URL = types.StringValue(*genericCfg.URL)
-			}
-		}
-	case "opsgenie":
-		// Type assert to OpsgenieConfig
-		if opsgenieCfg, ok := cfg.(*logclient.OpsgenieConfig); ok {
-			if opsgenieCfg.AuthKey != nil {
-				model.AuthKey = types.StringValue(*opsgenieCfg.AuthKey)
-			}
-		} else {
-			// Fallback to generic fields
-			if genericCfg.AuthKey != nil {
-				model.AuthKey = types.StringValue(*genericCfg.AuthKey)
-			}
-		}
-	case "pagerduty":
-		if pagerdutyCfg, ok := cfg.(*logclient.PagerdutyConfig); ok {
-			if pagerdutyCfg.RoutingKey != nil {
-				model.RoutingKey = types.StringValue(*pagerdutyCfg.RoutingKey)
-			}
-			if pagerdutyCfg.Region != nil {
-				model.Region = types.StringValue(*pagerdutyCfg.Region)
-			}
-		} else {
-			if genericCfg.RoutingKey != nil {
-				model.RoutingKey = types.StringValue(*genericCfg.RoutingKey)
-			}
-			if genericCfg.Region != nil {
-				model.Region = types.StringValue(*genericCfg.Region)
-			}
-		}
-	case "pagerduty-integration":
-		if pagerdutyCfg, ok := cfg.(*logclient.PagerdutyIntegrationConfig); ok {
-			if pagerdutyCfg.InstallID != nil {
-				model.InstallID = types.StringValue(*pagerdutyCfg.InstallID)
-			}
-			if pagerdutyCfg.ServiceID != nil {
-				model.ServiceID = types.StringValue(*pagerdutyCfg.ServiceID)
-			}
-		} else {
-			if genericCfg.InstallID != nil {
-				model.InstallID = types.StringValue(*genericCfg.InstallID)
-			}
-			if genericCfg.ServiceID != nil {
-				model.ServiceID = types.StringValue(*genericCfg.ServiceID)
-			}
-		}
-	case "slack-integration":
-		if slackCfg, ok := cfg.(*logclient.SlackIntegrationConfig); ok {
-			if slackCfg.InstallID != nil {
-				model.InstallID = types.StringValue(*slackCfg.InstallID)
-			}
-			if slackCfg.ChannelID != nil {
-				model.ChannelID = types.StringValue(*slackCfg.ChannelID)
-			}
-			if slackCfg.IncludeAgentPrompt != nil {
-				model.IncludeAgentPrompt = types.BoolValue(*slackCfg.IncludeAgentPrompt)
-			}
-		} else {
-			if genericCfg.InstallID != nil {
-				model.InstallID = types.StringValue(*genericCfg.InstallID)
-			}
-			if genericCfg.ChannelID != nil {
-				model.ChannelID = types.StringValue(*genericCfg.ChannelID)
-			}
-			if genericCfg.IncludeAgentPrompt != nil {
-				model.IncludeAgentPrompt = types.BoolValue(*genericCfg.IncludeAgentPrompt)
-			}
-		}
+	case "webhook", "opsgenie", "pagerduty", "pagerduty-integration", "slack-integration":
+		populateChannelConfigModel(model, &genericCfg)
 	case "email":
 		// Email channels exist in API but not exposed in Terraform yet
 		return nil, diag.Diagnostics{
@@ -427,6 +389,26 @@ func channelConfigAPIToModel(cfg interface{}) (*ChannelConfigModel, diag.Diagnos
 		}
 	}
 	return model, nil
+}
+
+func populateChannelConfigModel(model *ChannelConfigModel, cfg *logclient.ChannelConfig) {
+	setOptionalConfigString(&model.Format, cfg.Format)
+	setOptionalConfigString(&model.URL, cfg.URL)
+	setOptionalConfigString(&model.AuthKey, cfg.AuthKey)
+	setOptionalConfigString(&model.RoutingKey, cfg.RoutingKey)
+	setOptionalConfigString(&model.Region, cfg.Region)
+	setOptionalConfigString(&model.InstallID, cfg.InstallID)
+	setOptionalConfigString(&model.ChannelID, cfg.ChannelID)
+	setOptionalConfigString(&model.ServiceID, cfg.ServiceID)
+	if cfg.IncludeAgentPrompt != nil {
+		model.IncludeAgentPrompt = types.BoolValue(*cfg.IncludeAgentPrompt)
+	}
+}
+
+func setOptionalConfigString(target *types.String, value *string) {
+	if value != nil {
+		*target = types.StringValue(*value)
+	}
 }
 
 func requiredConfigString(val types.String, fieldName, channelType string) (string, diag.Diagnostics) {
@@ -471,20 +453,21 @@ func disallowConfigString(val types.String, fieldName, channelType string) diag.
 	}
 }
 
-// disallowConnectedChannelFields rejects the fields that only a channel delivering through an
-// installed app accepts, for the types that carry their own credential instead.
-func disallowConnectedChannelFields(m *ChannelConfigModel, channelType string) diag.Diagnostics {
+func disallowConfigFields(channelType string, fields ...channelConfigString) diag.Diagnostics {
 	var diags diag.Diagnostics
-	diags.Append(disallowConfigString(m.InstallID, "config.install_id", channelType)...)
-	diags.Append(disallowConfigString(m.ChannelID, "config.channel_id", channelType)...)
-	diags.Append(disallowConfigString(m.ServiceID, "config.service_id", channelType)...)
-	if !m.IncludeAgentPrompt.IsNull() && !m.IncludeAgentPrompt.IsUnknown() {
-		diags.Append(diag.NewErrorDiagnostic(
-			"Invalid channel config",
-			fmt.Sprintf("config.include_agent_prompt cannot be set for %s channels.", channelType),
-		))
+	for _, field := range fields {
+		diags.Append(disallowConfigString(field.value, field.name, channelType)...)
 	}
 	return diags
+}
+
+func disallowIncludeAgentPrompt(value types.Bool, channelType string) diag.Diagnostics {
+	if value.IsNull() || value.IsUnknown() {
+		return nil
+	}
+	return diag.Diagnostics{
+		diag.NewErrorDiagnostic("Invalid channel config", fmt.Sprintf("config.include_agent_prompt cannot be set for %s channels.", channelType)),
+	}
 }
 
 func channelReadToModel(c *logclient.ChannelRead, m *ChannelModel) diag.Diagnostics {
