@@ -215,3 +215,36 @@ func TestDeleteAPIKeyRequest(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+
+func TestAPIKeyUpdateOmitsUnsetFields(t *testing.T) {
+	t.Parallel()
+	// A claims-only update must not send name/description at all: the backend
+	// rejects explicit nulls there with 422.
+	claims := map[string]any{"project:gateway_proxy": map[string]any{"cache_enabled": true}}
+	body, err := json.Marshal(APIKeyUpdate{Claims: &claims})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := decoded["name"]; present {
+		t.Fatalf("unset name must be omitted, got %s", body)
+	}
+	if _, present := decoded["description"]; present {
+		t.Fatalf("unset description must be omitted, got %s", body)
+	}
+	// An explicit null description must still serialize as null (clear).
+	cleared, err := json.Marshal(APIKeyUpdate{Description: NullableFieldNull[string]()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decodedClear map[string]any
+	if err := json.Unmarshal(cleared, &decodedClear); err != nil {
+		t.Fatal(err)
+	}
+	if v, present := decodedClear["description"]; !present || v != nil {
+		t.Fatalf("cleared description must be explicit null, got %s", cleared)
+	}
+}

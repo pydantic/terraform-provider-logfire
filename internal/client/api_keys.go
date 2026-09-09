@@ -95,9 +95,14 @@ type APIKeyCreateOutput struct {
 // unchanged, while an explicitly null Description clears it. Claims is a
 // PATCH-merge map: a nil Claims omits claims entirely, a present scope object
 // merges per settings field (value sets, null clears).
+//
+// The `omitzero` tags are load-bearing, not stylistic: encoding/json's
+// `omitempty` does not consult IsZero, so with `omitempty` an unset
+// NullableField would serialize as an explicit null and the backend would
+// reject a claims-only PATCH with 422 on `body.name`.
 type APIKeyUpdate struct {
-	Name        NullableField[string] `json:"name,omitempty"`
-	Description NullableField[string] `json:"description,omitempty"`
+	Name        NullableField[string] `json:"name,omitzero"`
+	Description NullableField[string] `json:"description,omitzero"`
 	Claims      *map[string]any       `json:"claims,omitempty"`
 }
 
