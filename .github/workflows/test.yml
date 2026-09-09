@@ -90,6 +90,16 @@ jobs:
             echo "skip_tests=false" >> $GITHUB_OUTPUT
             echo "LOGFIRE_API_KEY secret available, running acceptance tests"
           fi
+      - name: Debug credential shape (temporary)
+        env:
+          LOGFIRE_API_KEY: ${{ secrets.LOGFIRE_API_KEY }}
+        run: |
+          python3 - <<'EOF'
+          import os
+          v = os.environ.get('LOGFIRE_API_KEY', '')
+          parts = v.split('_')
+          print('len:', len(v), 'segments:', len(parts), 'head:', parts[0] if parts else '')
+          EOF
       - name: Run acceptance tests
         if: steps.check-secrets.outputs.skip_tests == 'false'
         env:
