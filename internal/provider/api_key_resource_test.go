@@ -18,7 +18,7 @@ import (
 func TestAccAPIKeyResource(t *testing.T) {
 	t.Parallel()
 
-	projectName := fmt.Sprintf("acc-api-key-%s", acctest.RandStringFromCharSet(6, acctest.CharSetAlphaNum))
+	projectID := testAccScopedProjectID(t)
 	keyName := fmt.Sprintf("acc-key-%s", acctest.RandStringFromCharSet(6, acctest.CharSetAlphaNum))
 	expiresAt := "2026-12-31T23:59:59Z"
 
@@ -27,7 +27,7 @@ func TestAccAPIKeyResource(t *testing.T) {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccAPIKeyResourceConfig(projectName, keyName, nil, false),
+				Config: testAccAPIKeyResourceConfig(projectID, keyName, nil, false),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue("logfire_api_key.test", tfjsonpath.New("id"), knownvalue.NotNull()),
 					statecheck.ExpectKnownValue("logfire_api_key.test", tfjsonpath.New("token"), knownvalue.NotNull()),
@@ -37,7 +37,7 @@ func TestAccAPIKeyResource(t *testing.T) {
 				},
 			},
 			{
-				Config: testAccAPIKeyResourceConfig(projectName, keyName, nil, false),
+				Config: testAccAPIKeyResourceConfig(projectID, keyName, nil, false),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectEmptyPlan(),
@@ -49,7 +49,7 @@ func TestAccAPIKeyResource(t *testing.T) {
 			},
 			{
 				// Name and description update in place.
-				Config: testAccAPIKeyResourceConfig(projectName, keyName+"-renamed", nil, true),
+				Config: testAccAPIKeyResourceConfig(projectID, keyName+"-renamed", nil, true),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction("logfire_api_key.test", plancheck.ResourceActionUpdate),
@@ -62,7 +62,7 @@ func TestAccAPIKeyResource(t *testing.T) {
 			},
 			{
 				// Expiry change replaces the key.
-				Config: testAccAPIKeyResourceConfigWithExpiry(projectName, keyName+"-renamed", expiresAt),
+				Config: testAccAPIKeyResourceConfigWithExpiry(projectID, keyName+"-renamed", expiresAt),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction("logfire_api_key.test", plancheck.ResourceActionReplace),
@@ -86,7 +86,7 @@ func TestAccAPIKeyResource(t *testing.T) {
 	})
 }
 
-func testAccAPIKeyResourceConfig(projectName, keyName string, expiresAt *string, withDescription bool) string {
+func testAccAPIKeyResourceConfig(projectID, keyName string, expiresAt *string, withDescription bool) string {
 	expiresAtLine := ""
 	if expiresAt != nil {
 		expiresAtLine = fmt.Sprintf("  expires_at  = %q\n", *expiresAt)
@@ -96,20 +96,17 @@ func testAccAPIKeyResourceConfig(projectName, keyName string, expiresAt *string,
 		descriptionLine = "  description = \"acceptance test key\"\n"
 	}
 	return fmt.Sprintf(`%s
-
-resource "logfire_project" "test" {
-  name        = %q
-  description = "Acceptance test project for API key"
-}
+%s
 
 resource "logfire_api_key" "test" {
+  provider    = logfire.keys
   name        = %q
   scopes      = ["project:read_otlp", "project:write_otlp"]
-  project_id  = logfire_project.test.id
+  project_id  = %q
 %s%s}
-`, testAccProviderConfig(), projectName, keyName, descriptionLine, expiresAtLine)
+`, testAccProviderConfig(), testAccScopedProviderConfig(), keyName, projectID, descriptionLine, expiresAtLine)
 }
 
-func testAccAPIKeyResourceConfigWithExpiry(projectName, keyName, expiresAt string) string {
-	return testAccAPIKeyResourceConfig(projectName, keyName, &expiresAt, true)
+func testAccAPIKeyResourceConfigWithExpiry(projectID, keyName, expiresAt string) string {
+	return testAccAPIKeyResourceConfig(projectID, keyName, &expiresAt, true)
 }

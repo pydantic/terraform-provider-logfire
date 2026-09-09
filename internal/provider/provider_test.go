@@ -50,3 +50,39 @@ provider "logfire" {
 }
 `, base, key)
 }
+
+// testAccScopedProviderConfig builds an aliased provider config authenticated
+// as the project-pinned API key. Only keys for the pinned test project can be
+// managed through it: the public API-keys endpoint delegates solely scopes the
+// caller holds, and project-bound scopes (read_otlp, write_otlp,
+// gateway_proxy) can only live on a project-scoped key.
+func testAccScopedProviderConfig() string {
+	base := os.Getenv("LOGFIRE_BASE_URL")
+	key := os.Getenv("LOGFIRE_SCOPED_API_KEY")
+	if base == "" {
+		return fmt.Sprintf(`
+provider "logfire" {
+  alias    = "keys"
+  api_key  = %q
+}
+`, key)
+	}
+	return fmt.Sprintf(`
+provider "logfire" {
+  alias    = "keys"
+  base_url = %q
+  api_key  = %q
+}
+`, base, key)
+}
+
+// testAccScopedProjectID returns the pinned project that scoped-key tests
+// manage keys in, skipping the test when the scoped credential is not
+// configured (for example local runs without the pinned CI secret).
+func testAccScopedProjectID(t *testing.T) string {
+	t.Helper()
+	if os.Getenv("LOGFIRE_SCOPED_API_KEY") == "" || os.Getenv("LOGFIRE_API_KEY_TEST_PROJECT_ID") == "" {
+		t.Skip("skipping scoped API key test: LOGFIRE_SCOPED_API_KEY and LOGFIRE_API_KEY_TEST_PROJECT_ID must be set")
+	}
+	return os.Getenv("LOGFIRE_API_KEY_TEST_PROJECT_ID")
+}

@@ -18,7 +18,7 @@ import (
 func TestAccGatewayAPIKeyResource(t *testing.T) {
 	t.Parallel()
 
-	projectName := fmt.Sprintf("acc-gw-key-%s", acctest.RandStringFromCharSet(6, acctest.CharSetAlphaNum))
+	projectID := testAccScopedProjectID(t)
 	keyName := fmt.Sprintf("acc-gw-%s", acctest.RandStringFromCharSet(6, acctest.CharSetAlphaNum))
 
 	resource.Test(t, resource.TestCase{
@@ -26,7 +26,7 @@ func TestAccGatewayAPIKeyResource(t *testing.T) {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccGatewayAPIKeyResourceConfig(projectName, keyName, "10", "false"),
+				Config: testAccGatewayAPIKeyResourceConfig(projectID, keyName, "10", "false"),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue("logfire_gateway_api_key.test", tfjsonpath.New("id"), knownvalue.NotNull()),
 					statecheck.ExpectKnownValue("logfire_gateway_api_key.test", tfjsonpath.New("token"), knownvalue.NotNull()),
@@ -35,7 +35,7 @@ func TestAccGatewayAPIKeyResource(t *testing.T) {
 				},
 			},
 			{
-				Config: testAccGatewayAPIKeyResourceConfig(projectName, keyName, "10", "false"),
+				Config: testAccGatewayAPIKeyResourceConfig(projectID, keyName, "10", "false"),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectEmptyPlan(),
@@ -44,7 +44,7 @@ func TestAccGatewayAPIKeyResource(t *testing.T) {
 			},
 			{
 				// Spend caps update in place.
-				Config: testAccGatewayAPIKeyResourceConfig(projectName, keyName, "25", "true"),
+				Config: testAccGatewayAPIKeyResourceConfig(projectID, keyName, "25", "true"),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction("logfire_gateway_api_key.test", plancheck.ResourceActionUpdate),
@@ -68,19 +68,16 @@ func TestAccGatewayAPIKeyResource(t *testing.T) {
 	})
 }
 
-func testAccGatewayAPIKeyResourceConfig(projectName, keyName, dailyLimit, cacheEnabled string) string {
+func testAccGatewayAPIKeyResourceConfig(projectID, keyName, dailyLimit, cacheEnabled string) string {
 	return fmt.Sprintf(`%s
-
-resource "logfire_project" "test" {
-  name        = %q
-  description = "Acceptance test project for gateway API key"
-}
+%s
 
 resource "logfire_gateway_api_key" "test" {
+  provider             = logfire.keys
   name                 = %q
-  project_id           = logfire_project.test.id
+  project_id           = %q
   spending_limit_daily = %s
   cache_enabled        = %s
 }
-`, testAccProviderConfig(), projectName, keyName, dailyLimit, cacheEnabled)
+`, testAccProviderConfig(), testAccScopedProviderConfig(), keyName, projectID, dailyLimit, cacheEnabled)
 }

@@ -96,6 +96,13 @@ jobs:
           TF_ACC: "1"
           LOGFIRE_API_KEY: ${{ secrets.LOGFIRE_API_KEY }}
           LOGFIRE_EXPECTED_ORG: "terraform-provider-logfire"
+          # Project-pinned credential for API-key acceptance tests. The public
+          # API-keys endpoint only delegates scopes the caller holds, and
+          # project-bound scopes cannot live on an org-wide key, so OTLP and
+          # gateway keys are exercised through this key in the pinned project.
+          # Tests skip when it is absent (forks without secrets).
+          LOGFIRE_SCOPED_API_KEY: ${{ secrets.LOGFIRE_SCOPED_API_KEY }}
+          LOGFIRE_API_KEY_TEST_PROJECT_ID: "e9731857-2b0f-4731-b21d-bbe39cb8540b"
         run: go test -v -cover ./internal/provider/
         timeout-minutes: 10
       - name: Skip acceptance tests
