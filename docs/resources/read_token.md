@@ -3,12 +3,12 @@
 page_title: "logfire_read_token Resource - logfire"
 subcategory: ""
 description: |-
-  Manages a Logfire read token.
+  Manages a Logfire read token. Equivalent to logfire_api_key with scopes ["project:read_otlp"].
 ---
 
 # logfire_read_token (Resource)
 
-Manages a Logfire read token.
+Manages a Logfire read token. Equivalent to logfire_api_key with scopes `["project:read_otlp"]`.
 
 ## Example Usage
 

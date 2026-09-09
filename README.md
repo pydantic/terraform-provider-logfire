@@ -123,8 +123,10 @@ accepted for multi-part import IDs.
 - `logfire_channel` — configure webhook or Opsgenie notification channels.
 - `logfire_alert` — define alerting rules tied to channels.
 - `logfire_dashboard` — provision dashboards from exported definitions.
-- `logfire_write_token` — issue write tokens for ingesting data.
-- `logfire_read_token` — issue read tokens for querying projects.
+- `logfire_api_key` — issue unified API keys with any scopes (multi-scope, org-wide, or management keys).
+- `logfire_write_token` — issue write tokens for ingesting data (single-scope `project:write_otlp` convenience over `logfire_api_key`).
+- `logfire_read_token` — issue read tokens for querying projects (single-scope `project:read_otlp` convenience over `logfire_api_key`).
+- `logfire_gateway_api_key` — issue project-scoped gateway keys with spend caps and cache settings.
 
 Generated documentation for each resource lives in `docs/` and publishes to the Terraform Registry.
 

@@ -297,10 +297,12 @@ func (p *LogfireProvider) DataSources(ctx context.Context) []func() datasource.D
 func (p *LogfireProvider) Resources(ctx context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		NewAlertResource,
+		NewAPIKeyResource,
 		NewChannelResource,
 		NewDashboardResource,
 		NewFrontendApplicationResource,
 		NewFrontendApplicationTokenResource,
+		NewGatewayAPIKeyResource,
 		NewGatewayProviderResource,
 		NewOrganizationResource,
 		NewProjectResource,
