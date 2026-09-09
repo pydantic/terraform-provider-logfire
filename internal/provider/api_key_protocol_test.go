@@ -127,6 +127,21 @@ func TestAPIKeyValidateConfig(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "empty gateway block",
+			values: map[string]any{
+				"name": "gateway", "scopes": stringSetValue(t, "project:gateway_proxy"),
+				"project_id": "33333333-3333-3333-3333-333333333333",
+				"gateway": map[string]tftypes.Value{
+					"spending_limit_daily":   tftypes.NewValue(tftypes.Number, nil),
+					"spending_limit_weekly":  tftypes.NewValue(tftypes.Number, nil),
+					"spending_limit_monthly": tftypes.NewValue(tftypes.Number, nil),
+					"spending_limit_total":   tftypes.NewValue(tftypes.Number, nil),
+					"cache_enabled":          tftypes.NewValue(tftypes.Bool, nil),
+				},
+			},
+			wantErr: true,
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()

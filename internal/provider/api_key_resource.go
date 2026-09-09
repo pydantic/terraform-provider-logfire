@@ -254,6 +254,16 @@ func (r *APIKeyResource) ValidateConfig(ctx context.Context, req resource.Valida
 			fmt.Sprintf("The gateway block configures the %q scope, which is not in scopes. Add it or remove the block.", GatewayProxyScope),
 		)
 	}
+	// An empty block carries no settings and reads back as null, which would
+	// diff forever against the configured empty object. Unknown fields skip
+	// this check: gatewaySettingsIsEmpty is false while any field is unknown.
+	if gw := config.Gateway; gw != nil && gatewaySettingsIsEmpty(gw) {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("gateway"),
+			"Empty gateway settings",
+			"Set at least one spending limit or cache_enabled, or remove the gateway block.",
+		)
+	}
 }
 
 func apiKeyCreateFromPlan(plan *APIKeyModel) (logclient.APIKeyCreate, error) {
