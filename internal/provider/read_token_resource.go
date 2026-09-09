@@ -47,7 +47,7 @@ func (r *ReadTokenResource) Metadata(ctx context.Context, req resource.MetadataR
 
 func (r *ReadTokenResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = rschema.Schema{
-		MarkdownDescription: "Manages a Logfire read token.",
+		MarkdownDescription: "Manages a Logfire read token. Equivalent to logfire_api_key with scopes `[\"project:read_otlp\"]`.",
 		Attributes: map[string]rschema.Attribute{
 			"id": rschema.StringAttribute{
 				Computed:            true,

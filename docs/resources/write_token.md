@@ -3,12 +3,12 @@
 page_title: "logfire_write_token Resource - logfire"
 subcategory: ""
 description: |-
-  Manages a Logfire write token.
+  Manages a Logfire write token. Equivalent to logfire_api_key with scopes ["project:write_otlp"].
 ---
 
 # logfire_write_token (Resource)
 
-Manages a Logfire write token.
+Manages a Logfire write token. Equivalent to logfire_api_key with scopes `["project:write_otlp"]`.
 
 ## Example Usage
 

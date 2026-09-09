@@ -86,3 +86,36 @@ output "production_read_token" {
   value       = logfire_read_token.production_read.token
   sensitive   = true
 }
+
+# Unified API keys: write tokens, read tokens, gateway keys, and management
+# keys are all API keys with different scopes. The typed resources above are
+# single-scope conveniences; use logfire_api_key for multi-scope, org-wide,
+# or management keys, and logfire_gateway_api_key for gateway keys with
+# spend caps.
+resource "logfire_api_key" "production_otel" {
+  name       = "production-otel"
+  scopes     = ["project:read_otlp", "project:write_otlp"]
+  project_id = logfire_project.production.id
+  # Optional RFC3339 expiration (changing it replaces the key):
+  # expires_at = "2099-12-31T23:59:59Z"
+}
+
+output "production_otel_key" {
+  description = "Combined ingest/query API key for the project"
+  value       = logfire_api_key.production_otel.token
+  sensitive   = true
+}
+
+resource "logfire_gateway_api_key" "production_gateway" {
+  name                 = "production-gateway"
+  project_id           = logfire_project.production.id
+  spending_limit_daily = 25
+  # Optional RFC3339 expiration (changing it replaces the key):
+  # expires_at = "2099-12-31T23:59:59Z"
+}
+
+output "production_gateway_key" {
+  description = "Gateway API key for the project"
+  value       = logfire_gateway_api_key.production_gateway.token
+  sensitive   = true
+}
