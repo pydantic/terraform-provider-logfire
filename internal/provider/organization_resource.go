@@ -60,8 +60,10 @@ func (r *OrganizationResource) Schema(ctx context.Context, req resource.SchemaRe
 		MarkdownDescription: "Manages a Logfire organization. This resource is only available for self-hosted deployments " +
 			"and requires an API key created in the admin organization (the one with the admin panel) " +
 			"carrying the `organization:admin` scope. A key minted inside another organization cannot " +
-			"manage organizations regardless of its scopes. Creating and listing organizations requires " +
-			"a Logfire backend from 2026-06-03 (v2026-06-03.01) or newer.",
+			"manage organizations regardless of its scopes. Reading, updating, and deleting an organization " +
+			"authenticates with a short-lived organization-scoped token exchanged from that key, so these " +
+			"operations require a Logfire backend from 2026-06-25 (v2026-06-25.01) or newer; creating and " +
+			"listing organizations require 2026-06-03 (v2026-06-03.01) or newer.",
 		Attributes: map[string]rschema.Attribute{
 			"id": rschema.StringAttribute{
 				Computed:            true,
@@ -206,7 +208,7 @@ func (r *OrganizationResource) Create(ctx context.Context, req resource.CreateRe
 	}
 
 	if billingEmail := terraformStringPointer(plan.BillingEmail); billingEmail != nil {
-		updated, updateErr := r.client.UpdateOrganization(ctx, out.ID, logclient.OrganizationUpdate{
+		updated, updateErr := r.client.UpdateOrganizationContext(ctx, out.OrganizationName, logclient.OrganizationUpdate{
 			BillingEmail: billingEmail,
 		})
 		if updateErr != nil {
@@ -243,9 +245,12 @@ func (r *OrganizationResource) Read(ctx context.Context, req resource.ReadReques
 
 	currentDeletionProtection := normalizeDeletionProtection(state.DeletionProtection)
 
-	out, status, err := r.client.GetOrganization(ctx, state.ID.ValueString())
+	out, status, err := r.client.GetOrganizationContext(ctx, state.Name.ValueString())
 	if err != nil {
-		if status == 404 {
+		// An invalid_target exchange means the audience names no existing
+		// organization: the resource is gone. 404 is the route's own gone
+		// answer (possible when the org vanishes between exchange and read).
+		if status == 404 || logclient.IsInvalidTargetError(err) {
 			resp.State.RemoveResource(ctx)
 			return
 		}
@@ -317,7 +322,9 @@ func (r *OrganizationResource) Update(ctx context.Context, req resource.UpdateRe
 		return
 	}
 
-	out, err := r.client.UpdateOrganization(ctx, state.ID.ValueString(), payload)
+	// The audience is the organization's current (state) name; a rename is
+	// carried in the payload, not in the audience.
+	out, err := r.client.UpdateOrganizationContext(ctx, state.Name.ValueString(), payload)
 	if err != nil {
 		resp.Diagnostics.AddError("Update organization failed", err.Error())
 		return
@@ -354,9 +361,10 @@ func (r *OrganizationResource) Delete(ctx context.Context, req resource.DeleteRe
 		return
 	}
 
-	if err := r.client.DeleteOrganization(ctx, state.ID.ValueString()); err != nil {
-		if logclient.IsNotFoundError(err) {
-			// Already gone, treat as successful delete.
+	if err := r.client.DeleteOrganizationContext(ctx, state.Name.ValueString()); err != nil {
+		// invalid_target: the audience names no existing organization, so the
+		// org is already gone; 404 is the route's own gone answer.
+		if logclient.IsInvalidTargetError(err) || logclient.IsNotFoundError(err) {
 			return
 		}
 		resp.Diagnostics.AddError("Delete organization failed", err.Error())
@@ -404,16 +412,6 @@ func (r *OrganizationResource) ImportState(ctx context.Context, req resource.Imp
 }
 
 func (r *OrganizationResource) findOrganizationByNameOrID(ctx context.Context, key string) (*logclient.OrganizationRead, bool, error) {
-	if uuidPattern.MatchString(key) {
-		out, status, err := r.client.GetOrganization(ctx, key)
-		if err == nil {
-			return out, true, nil
-		}
-		if status != 404 {
-			return nil, false, err
-		}
-	}
-
 	list, err := r.client.ListOrganizations(ctx)
 	if err != nil {
 		return nil, false, err
