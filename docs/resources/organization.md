@@ -3,12 +3,12 @@
 page_title: "logfire_organization Resource - logfire"
 subcategory: ""
 description: |-
-  Manages a Logfire organization. This resource is only available for self-hosted deployments and requires an API key created in the admin organization (the one with the admin panel) carrying the organization:admin scope. A key minted inside another organization cannot manage organizations regardless of its scopes.
+  Manages a Logfire organization. This resource is only available for self-hosted deployments and requires an API key created in the admin organization (the one with the admin panel) carrying the organization:admin scope. A key minted inside another organization cannot manage organizations regardless of its scopes. Creating and listing organizations requires a Logfire backend from 2026-06-03 (v2026-06-03.01) or newer.
 ---
 
 # logfire_organization (Resource)
 
-Manages a Logfire organization. This resource is only available for self-hosted deployments and requires an API key created in the admin organization (the one with the admin panel) carrying the `organization:admin` scope. A key minted inside another organization cannot manage organizations regardless of its scopes.
+Manages a Logfire organization. This resource is only available for self-hosted deployments and requires an API key created in the admin organization (the one with the admin panel) carrying the `organization:admin` scope. A key minted inside another organization cannot manage organizations regardless of its scopes. Creating and listing organizations requires a Logfire backend from 2026-06-03 (v2026-06-03.01) or newer.
 
 ## Example Usage
 

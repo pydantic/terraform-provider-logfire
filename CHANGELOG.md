@@ -13,6 +13,7 @@ FEATURES:
 - Add an experimental `logfire_slo` resource for managing Service Level Objectives. The backing Logfire API is not yet stable, so the resource schema and behavior may change in backwards-incompatible ways.
 - Add an optional `environments` attribute (set of strings) to the `logfire_alert` resource to scope the alert query to specific deployment environments. Omitting it (or setting it empty) keeps the current behavior of evaluating against all environments.
 - `logfire_gateway_provider` import now accepts the organization-unique slug in addition to the provider UUID, so an import does not require fetching the UUID from the provider list endpoint first.
+- Organization creation and listing now use the `/api/v1/instance/organizations/` endpoints; the legacy `/api/v1/organizations/` create and list routes are deprecated server-side. Requires a Logfire backend from 2026-06-03 (v2026-06-03.01) or newer. Organization read, update, delete, and import still use the legacy routes until the org-context migration lands.
 
 DOCUMENTATION:
 - Name the `organization:admin` scope requirement on `logfire_organization` explicitly (created in the admin organization), replacing the vague "special organization scope" wording, and add import instructions by organization name or UUID.

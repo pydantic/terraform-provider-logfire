@@ -578,13 +578,21 @@ func (c *APIClient) organizationsBase() string {
 	return "/api/v1/organizations/"
 }
 
+// instanceOrganizationsBase is the canonical home of the org create and list
+// operations; the legacy /organizations/ variants are deprecated. The org
+// read/update/delete operations are still served from the legacy paths (their
+// replacements are org-context routes and need a token-exchange client).
+func (c *APIClient) instanceOrganizationsBase() string {
+	return "/api/v1/instance/organizations/"
+}
+
 func (c *APIClient) organizationPath(id string) string {
 	return fmt.Sprintf("%s%s/", c.organizationsBase(), url.PathEscape(id))
 }
 
 func (c *APIClient) CreateOrganization(ctx context.Context, in OrganizationCreate) (*OrganizationRead, error) {
 	var out OrganizationRead
-	_, err := c.doJSON(ctx, http.MethodPost, c.organizationsBase(), in, &out, http.StatusCreated, http.StatusOK)
+	_, err := c.doJSON(ctx, http.MethodPost, c.instanceOrganizationsBase(), in, &out, http.StatusCreated, http.StatusOK)
 	if err != nil {
 		return nil, err
 	}
@@ -619,7 +627,7 @@ func (c *APIClient) DeleteOrganization(ctx context.Context, id string) error {
 
 func (c *APIClient) ListOrganizations(ctx context.Context) ([]OrganizationRead, error) {
 	var out []OrganizationRead
-	_, err := c.doJSON(ctx, http.MethodGet, c.organizationsBase(), nil, &out, http.StatusOK)
+	_, err := c.doJSON(ctx, http.MethodGet, c.instanceOrganizationsBase(), nil, &out, http.StatusOK)
 	if err != nil {
 		return nil, err
 	}
