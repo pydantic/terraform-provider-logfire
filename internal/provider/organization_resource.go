@@ -247,11 +247,30 @@ func (r *OrganizationResource) Read(ctx context.Context, req resource.ReadReques
 
 	out, status, err := r.client.GetOrganizationContext(ctx, state.Name.ValueString())
 	if err != nil {
-		// An invalid_target exchange means the audience names no existing
-		// organization: the resource is gone. 404 is the route's own gone
-		// answer (possible when the org vanishes between exchange and read).
-		if status == 404 || logclient.IsInvalidTargetError(err) {
+		if status == 404 {
+			// The route's own gone answer (possible when the org vanishes
+			// between exchange and read).
 			resp.State.RemoveResource(ctx)
+			return
+		}
+		if logclient.IsInvalidTargetError(err) {
+			// invalid_target can mean the audience names no existing
+			// organization (gone) or that the audience does not match the
+			// instance's configured base URL (a configuration error that
+			// must not silently drop state). Distinguish via the org list.
+			exists, listErr := r.organizationExists(ctx, state.Name.ValueString(), state.ID.ValueString())
+			if listErr != nil {
+				resp.Diagnostics.AddError("Read organization failed", fmt.Sprintf(
+					"token exchange rejected the organization audience (%v) and the follow-up organization list failed: %v", err, listErr))
+				return
+			}
+			if !exists {
+				resp.State.RemoveResource(ctx)
+				return
+			}
+			resp.Diagnostics.AddError("Read organization failed", fmt.Sprintf(
+				"the organization exists, but the token exchange rejected its audience: %v. "+
+					"Check that the provider base_url matches the instance's configured frontend host.", err))
 			return
 		}
 		resp.Diagnostics.AddError("Read organization failed", err.Error())
@@ -362,9 +381,26 @@ func (r *OrganizationResource) Delete(ctx context.Context, req resource.DeleteRe
 	}
 
 	if err := r.client.DeleteOrganizationContext(ctx, state.Name.ValueString()); err != nil {
-		// invalid_target: the audience names no existing organization, so the
-		// org is already gone; 404 is the route's own gone answer.
-		if logclient.IsInvalidTargetError(err) || logclient.IsNotFoundError(err) {
+		// invalid_target can mean the audience names no existing organization
+		// (already gone: succeed) or an audience that does not match the
+		// instance's base URL (a configuration error: fail). Distinguish via
+		// the org list. 404 is the route's own gone answer.
+		if logclient.IsNotFoundError(err) {
+			return
+		}
+		if logclient.IsInvalidTargetError(err) {
+			exists, listErr := r.organizationExists(ctx, state.Name.ValueString(), state.ID.ValueString())
+			if listErr != nil {
+				resp.Diagnostics.AddError("Delete organization failed", fmt.Sprintf(
+					"token exchange rejected the organization audience (%v) and the follow-up organization list failed: %v", err, listErr))
+				return
+			}
+			if !exists {
+				return
+			}
+			resp.Diagnostics.AddError("Delete organization failed", fmt.Sprintf(
+				"the organization exists, but the token exchange rejected its audience: %v. "+
+					"Check that the provider base_url matches the instance's configured frontend host.", err))
 			return
 		}
 		resp.Diagnostics.AddError("Delete organization failed", err.Error())
@@ -422,6 +458,24 @@ func (r *OrganizationResource) findOrganizationByNameOrID(ctx context.Context, k
 		}
 	}
 	return nil, false, nil
+}
+
+// organizationExists reports whether an organization with the given name or ID
+// appears in the instance organization list. Used to distinguish an
+// invalid_target exchange caused by a missing organization (gone) from one
+// caused by an audience that does not match the instance's base URL (a
+// configuration error).
+func (r *OrganizationResource) organizationExists(ctx context.Context, name, id string) (bool, error) {
+	list, err := r.client.ListOrganizations(ctx)
+	if err != nil {
+		return false, err
+	}
+	for i := range list {
+		if list[i].OrganizationName == name || (id != "" && list[i].ID == id) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func organizationReadToModel(o *logclient.OrganizationRead, m *OrganizationModel) {
