@@ -342,6 +342,9 @@ type APIClient struct {
 
 	userAgent string
 	headers   http.Header
+
+	orgTokenMu    sync.Mutex
+	orgTokenCache map[string]orgTokenEntry
 }
 
 type APIError struct {
@@ -409,11 +412,12 @@ func NewAPIClient(baseURL, token string, httpClient *http.Client, opts ...Option
 		return nil, fmt.Errorf("invalid endpoint: %w", err)
 	}
 	apiClient := &APIClient{
-		BaseURL:   u,
-		HTTP:      httpClient,
-		token:     token,
-		userAgent: defaultUserAgent,
-		headers:   make(http.Header),
+		BaseURL:       u,
+		HTTP:          httpClient,
+		token:         token,
+		userAgent:     defaultUserAgent,
+		headers:       make(http.Header),
+		orgTokenCache: make(map[string]orgTokenEntry),
 	}
 
 	for _, opt := range opts {
@@ -424,6 +428,12 @@ func NewAPIClient(baseURL, token string, httpClient *http.Client, opts ...Option
 }
 
 func (c *APIClient) doJSON(ctx context.Context, method, path string, in any, out any, expectedStatus ...int) (*http.Response, error) {
+	return c.doJSONAuthorized(ctx, c.token, method, path, in, out, expectedStatus...)
+}
+
+// doJSONAuthorized is doJSON with an explicit bearer token, for calls made with
+// a short-lived exchanged credential instead of the configured provider token.
+func (c *APIClient) doJSONAuthorized(ctx context.Context, bearer, method, path string, in any, out any, expectedStatus ...int) (*http.Response, error) {
 	var body io.ReadCloser
 	var bodyBytes []byte
 	if in != nil {
@@ -453,8 +463,8 @@ func (c *APIClient) doJSON(ctx context.Context, method, path string, in any, out
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Accept", "application/json")
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
 	}
 	if c.userAgent != "" {
 		req.Header.Set("User-Agent", c.userAgent)
@@ -574,52 +584,24 @@ type OrganizationUpdate struct {
 	Description             *string             `json:"description,omitempty"`
 }
 
-func (c *APIClient) organizationsBase() string {
-	return "/api/v1/organizations/"
-}
-
-func (c *APIClient) organizationPath(id string) string {
-	return fmt.Sprintf("%s%s/", c.organizationsBase(), url.PathEscape(id))
+// instanceOrganizationsBase is the canonical home of the org create and list
+// operations; the legacy /organizations/ variants are deprecated.
+func (c *APIClient) instanceOrganizationsBase() string {
+	return "/api/v1/instance/organizations/"
 }
 
 func (c *APIClient) CreateOrganization(ctx context.Context, in OrganizationCreate) (*OrganizationRead, error) {
 	var out OrganizationRead
-	_, err := c.doJSON(ctx, http.MethodPost, c.organizationsBase(), in, &out, http.StatusCreated, http.StatusOK)
+	_, err := c.doJSON(ctx, http.MethodPost, c.instanceOrganizationsBase(), in, &out, http.StatusCreated, http.StatusOK)
 	if err != nil {
 		return nil, err
 	}
 	return &out, nil
-}
-
-func (c *APIClient) GetOrganization(ctx context.Context, id string) (*OrganizationRead, int, error) {
-	var out OrganizationRead
-	resp, err := c.doJSON(ctx, http.MethodGet, c.organizationPath(id), nil, &out, http.StatusOK)
-	if err != nil {
-		if resp != nil {
-			return nil, resp.StatusCode, err
-		}
-		return nil, 0, err
-	}
-	return &out, http.StatusOK, nil
-}
-
-func (c *APIClient) UpdateOrganization(ctx context.Context, id string, in OrganizationUpdate) (*OrganizationRead, error) {
-	var out OrganizationRead
-	_, err := c.doJSON(ctx, http.MethodPut, c.organizationPath(id), in, &out, http.StatusOK)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-func (c *APIClient) DeleteOrganization(ctx context.Context, id string) error {
-	_, err := c.doJSON(ctx, http.MethodDelete, c.organizationPath(id), nil, nil, http.StatusNoContent)
-	return err
 }
 
 func (c *APIClient) ListOrganizations(ctx context.Context) ([]OrganizationRead, error) {
 	var out []OrganizationRead
-	_, err := c.doJSON(ctx, http.MethodGet, c.organizationsBase(), nil, &out, http.StatusOK)
+	_, err := c.doJSON(ctx, http.MethodGet, c.instanceOrganizationsBase(), nil, &out, http.StatusOK)
 	if err != nil {
 		return nil, err
 	}

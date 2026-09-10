@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	stringvalidator "github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	rschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
@@ -60,7 +61,11 @@ func (r *OrganizationResource) Schema(ctx context.Context, req resource.SchemaRe
 		MarkdownDescription: "Manages a Logfire organization. This resource is only available for self-hosted deployments " +
 			"and requires an API key created in the admin organization (the one with the admin panel) " +
 			"carrying the `organization:admin` scope. A key minted inside another organization cannot " +
-			"manage organizations regardless of its scopes.",
+			"manage organizations regardless of its scopes. Reading, updating, and deleting an organization " +
+			"authenticates with a short-lived organization-scoped token exchanged from that key, and the same " +
+			"exchange backs setting `billing_email` at creation, so every operation beyond creating and listing " +
+			"requires a Logfire backend from 2026-06-25 (v2026-06-25.01) or newer; creating and listing " +
+			"organizations require 2026-06-03 (v2026-06-03.01) or newer.",
 		Attributes: map[string]rschema.Attribute{
 			"id": rschema.StringAttribute{
 				Computed:            true,
@@ -205,7 +210,7 @@ func (r *OrganizationResource) Create(ctx context.Context, req resource.CreateRe
 	}
 
 	if billingEmail := terraformStringPointer(plan.BillingEmail); billingEmail != nil {
-		updated, updateErr := r.client.UpdateOrganization(ctx, out.ID, logclient.OrganizationUpdate{
+		updated, updateErr := r.client.UpdateOrganizationContext(ctx, out.OrganizationName, logclient.OrganizationUpdate{
 			BillingEmail: billingEmail,
 		})
 		if updateErr != nil {
@@ -242,13 +247,28 @@ func (r *OrganizationResource) Read(ctx context.Context, req resource.ReadReques
 
 	currentDeletionProtection := normalizeDeletionProtection(state.DeletionProtection)
 
-	out, status, err := r.client.GetOrganization(ctx, state.ID.ValueString())
+	out, status, err := r.client.GetOrganizationContext(ctx, state.Name.ValueString())
 	if err != nil {
-		if status == 404 {
+		gone := r.appendOrganizationContextError(ctx, &resp.Diagnostics, "Read organization failed", err, status, &state)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		if gone {
 			resp.State.RemoveResource(ctx)
 			return
 		}
 		resp.Diagnostics.AddError("Read organization failed", err.Error())
+		return
+	}
+
+	// The org-context API resolves the organization from the audience name;
+	// verify the UUID against state so a reused name never silently adopts an
+	// unrelated organization.
+	if out.ID != state.ID.ValueString() {
+		resp.Diagnostics.AddError("Read organization failed", fmt.Sprintf(
+			"the organization at name %q has id %s, but state holds id %s. "+
+				"The name was reused by a different organization; re-import the intended organization to re-bind state.",
+			state.Name.ValueString(), out.ID, state.ID.ValueString()))
 		return
 	}
 
@@ -316,9 +336,43 @@ func (r *OrganizationResource) Update(ctx context.Context, req resource.UpdateRe
 		return
 	}
 
-	out, err := r.client.UpdateOrganization(ctx, state.ID.ValueString(), payload)
+	// The org-context API addresses the organization by name and resolves it
+	// from the exchanged token, so a reused name would modify an unrelated
+	// organization. Verify identity before the write.
+	current, status, err := r.client.GetOrganizationContext(ctx, state.Name.ValueString())
+	if err != nil {
+		gone := r.appendOrganizationContextError(ctx, &resp.Diagnostics, "Update organization failed", err, status, &state)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		if gone {
+			resp.Diagnostics.AddError("Update organization failed",
+				"the organization no longer exists; refresh the state before updating.")
+			return
+		}
+		resp.Diagnostics.AddError("Update organization failed", err.Error())
+		return
+	}
+	if current.ID != state.ID.ValueString() {
+		resp.Diagnostics.AddError("Update organization failed", fmt.Sprintf(
+			"the organization at name %q has id %s, but state holds id %s. "+
+				"The name was reused by a different organization; re-import the intended organization to re-bind state.",
+			state.Name.ValueString(), current.ID, state.ID.ValueString()))
+		return
+	}
+
+	// The audience is the organization's current (state) name; a rename is
+	// carried in the payload, not in the audience.
+	out, err := r.client.UpdateOrganizationContext(ctx, state.Name.ValueString(), payload)
 	if err != nil {
 		resp.Diagnostics.AddError("Update organization failed", err.Error())
+		return
+	}
+	if out.ID != state.ID.ValueString() {
+		resp.Diagnostics.AddError("Update organization failed", fmt.Sprintf(
+			"the update applied to organization id %s, but state holds id %s. "+
+				"Refusing to record the change; re-import the intended organization to re-bind state.",
+			out.ID, state.ID.ValueString()))
 		return
 	}
 
@@ -353,10 +407,44 @@ func (r *OrganizationResource) Delete(ctx context.Context, req resource.DeleteRe
 		return
 	}
 
-	if err := r.client.DeleteOrganization(ctx, state.ID.ValueString()); err != nil {
-		if logclient.IsNotFoundError(err) {
-			// Already gone, treat as successful delete.
+	// The org-context API addresses the organization by name, so a reused name
+	// would delete an unrelated organization that inherited the slug. Verify
+	// identity before the delete.
+	current, status, err := r.client.GetOrganizationContext(ctx, state.Name.ValueString())
+	if err != nil {
+		gone := r.appendOrganizationContextError(ctx, &resp.Diagnostics, "Delete organization failed", err, status, &state)
+		if resp.Diagnostics.HasError() {
 			return
+		}
+		if gone {
+			// Already gone: the destroy succeeds.
+			return
+		}
+		resp.Diagnostics.AddError("Delete organization failed", err.Error())
+		return
+	}
+	if current.ID != state.ID.ValueString() {
+		resp.Diagnostics.AddError("Delete organization failed", fmt.Sprintf(
+			"the organization at name %q has id %s, but state holds id %s. "+
+				"The name was reused by a different organization; refusing to delete it. "+
+				"Re-import the intended organization to re-bind state.",
+			state.Name.ValueString(), current.ID, state.ID.ValueString()))
+		return
+	}
+
+	if err := r.client.DeleteOrganizationContext(ctx, state.Name.ValueString()); err != nil {
+		if logclient.IsNotFoundError(err) {
+			// Vanished between the identity check and the delete: already gone.
+			return
+		}
+		if logclient.IsInvalidTargetError(err) {
+			gone := r.appendOrganizationContextError(ctx, &resp.Diagnostics, "Delete organization failed", err, 0, &state)
+			if resp.Diagnostics.HasError() {
+				return
+			}
+			if gone {
+				return
+			}
 		}
 		resp.Diagnostics.AddError("Delete organization failed", err.Error())
 	}
@@ -403,26 +491,112 @@ func (r *OrganizationResource) ImportState(ctx context.Context, req resource.Imp
 }
 
 func (r *OrganizationResource) findOrganizationByNameOrID(ctx context.Context, key string) (*logclient.OrganizationRead, bool, error) {
-	if uuidPattern.MatchString(key) {
-		out, status, err := r.client.GetOrganization(ctx, key)
-		if err == nil {
-			return out, true, nil
-		}
-		if status != 404 {
-			return nil, false, err
-		}
-	}
-
 	list, err := r.client.ListOrganizations(ctx)
 	if err != nil {
 		return nil, false, err
 	}
+	// An ID match is authoritative: organization names may themselves be
+	// UUID-shaped, and a name-equals-ID coincidence must not win.
 	for i := range list {
-		if list[i].ID == key || list[i].OrganizationName == key {
+		if list[i].ID == key {
+			return &list[i], true, nil
+		}
+	}
+	for i := range list {
+		if list[i].OrganizationName == key {
 			return &list[i], true, nil
 		}
 	}
 	return nil, false, nil
+}
+
+// organizationIdentity classifies an invalid_target token exchange against the
+// instance organization list: the org-context API addresses organizations by
+// name, so the same error covers a missing organization, an externally
+// renamed one, a reused name, and an audience that does not match the
+// instance's configured base URL.
+type organizationIdentity int
+
+const (
+	organizationIdentityGone organizationIdentity = iota
+	organizationIdentityRenamed
+	organizationIdentityNameReused
+	organizationIdentityBaseMismatch
+)
+
+// classifyOrganization resolves which organization the state refers to from
+// the instance organization list. An ID match is authoritative; a name match
+// without the ID means the slug now belongs to a different organization.
+func (r *OrganizationResource) classifyOrganization(
+	ctx context.Context, name, id string,
+) (organizationIdentity, *logclient.OrganizationRead, error) {
+	list, err := r.client.ListOrganizations(ctx)
+	if err != nil {
+		return 0, nil, err
+	}
+	for i := range list {
+		if id != "" && list[i].ID == id {
+			if list[i].OrganizationName == name {
+				// The organization exists under its state name, so the
+				// exchange failure is an audience/base-URL mismatch.
+				return organizationIdentityBaseMismatch, &list[i], nil
+			}
+			return organizationIdentityRenamed, &list[i], nil
+		}
+	}
+	for i := range list {
+		if list[i].OrganizationName == name {
+			return organizationIdentityNameReused, &list[i], nil
+		}
+	}
+	return organizationIdentityGone, nil, nil
+}
+
+// appendOrganizationContextError appends diagnostics for a failed org-context
+// operation, classifying invalid_target audiences against the instance
+// organization list. It reports whether the state's organization verifiably
+// no longer exists; the caller decides what gone means (remove on read,
+// succeed on delete). A 404 is the route's own gone answer and appends
+// nothing.
+func (r *OrganizationResource) appendOrganizationContextError(
+	ctx context.Context,
+	diags *diag.Diagnostics,
+	summary string,
+	err error,
+	status int,
+	state *OrganizationModel,
+) (gone bool) {
+	if status == 404 {
+		return true
+	}
+	if !logclient.IsInvalidTargetError(err) {
+		diags.AddError(summary, err.Error())
+		return false
+	}
+	identity, entry, listErr := r.classifyOrganization(ctx, state.Name.ValueString(), state.ID.ValueString())
+	if listErr != nil {
+		diags.AddError(summary, fmt.Sprintf(
+			"token exchange rejected the organization audience (%v) and the follow-up organization list failed: %v", err, listErr))
+		return false
+	}
+	switch identity {
+	case organizationIdentityGone:
+		return true
+	case organizationIdentityRenamed:
+		diags.AddError(summary, fmt.Sprintf(
+			"the organization was renamed outside Terraform and is now %q. "+
+				"The organization API addresses organizations by name, so re-import the resource with the new name to re-sync state: "+
+				"terraform import logfire_organization.<address> %q", entry.OrganizationName, entry.OrganizationName))
+	case organizationIdentityNameReused:
+		diags.AddError(summary, fmt.Sprintf(
+			"the state's organization name now belongs to a different organization (id %s). "+
+				"Refusing to operate on it; re-import the intended organization to re-bind state.", entry.ID))
+	default:
+		diags.AddError(summary, fmt.Sprintf(
+			"the organization exists, but the token exchange rejected its audience: %v. "+
+				"Check that the provider base_url matches the instance's configured frontend host.", err))
+	}
+	return false
 }
 
 func organizationReadToModel(o *logclient.OrganizationRead, m *OrganizationModel) {
