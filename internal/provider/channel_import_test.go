@@ -47,8 +47,35 @@ func newChannelImportResponse(t *testing.T) resource.ImportStateResponse {
 
 func TestChannelImportByUUID(t *testing.T) {
 	t.Parallel()
-	// A UUID import must resolve without any HTTP call.
-	r := &ChannelResource{}
+	// A UUID import resolves through the same channel list, matching by ID.
+	list := `[
+		{"id":"9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff","organization_id":"22222222-2222-2222-2222-222222222222","label":"other-channel","active":true,"created_at":"2026-01-01T00:00:00Z","config":{"type":"webhook"}}
+	]`
+	c, err := logclient.NewAPIClient("https://example.invalid", "test-token", &http.Client{Transport: channelListTransport{body: list}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := &ChannelResource{client: c}
+	response := newChannelImportResponse(t)
+	r.ImportState(t.Context(), resource.ImportStateRequest{ID: "9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff"}, &response)
+	if response.Diagnostics.HasError() {
+		t.Fatal(response.Diagnostics)
+	}
+}
+
+// TestChannelImportUUIDShapedLabel verifies that a label that happens to be
+// UUID-shaped resolves to the channel carrying that label, not to whatever
+// the UUID-shaped string would point at as an ID.
+func TestChannelImportUUIDShapedLabel(t *testing.T) {
+	t.Parallel()
+	list := `[
+		{"id":"11111111-1111-1111-1111-111111111111","organization_id":"22222222-2222-2222-2222-222222222222","label":"9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff","active":true,"created_at":"2026-01-01T00:00:00Z","config":{"type":"webhook"}}
+	]`
+	c, err := logclient.NewAPIClient("https://example.invalid", "test-token", &http.Client{Transport: channelListTransport{body: list}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := &ChannelResource{client: c}
 	response := newChannelImportResponse(t)
 	r.ImportState(t.Context(), resource.ImportStateRequest{ID: "9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff"}, &response)
 	if response.Diagnostics.HasError() {
