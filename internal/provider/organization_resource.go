@@ -32,7 +32,7 @@ type OrganizationResource struct {
 	client *logclient.APIClient
 }
 
-var organizationIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 type OrganizationModel struct {
 	ID                 types.String `tfsdk:"id"`
@@ -400,7 +400,7 @@ func (r *OrganizationResource) ImportState(ctx context.Context, req resource.Imp
 }
 
 func (r *OrganizationResource) findOrganizationByNameOrID(ctx context.Context, key string) (*logclient.OrganizationRead, bool, error) {
-	if organizationIDPattern.MatchString(key) {
+	if uuidPattern.MatchString(key) {
 		out, status, err := r.client.GetOrganization(ctx, key)
 		if err == nil {
 			return out, true, nil

@@ -6,6 +6,7 @@ package client
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 )
@@ -76,6 +77,56 @@ func (c *APIClient) GetGatewayProvider(ctx context.Context, id string) (*Gateway
 		return nil, gatewayProviderError(err)
 	}
 	return &out, nil
+}
+
+// GatewayProvidersPage is one page of the slug-ordered keyset-paginated provider list.
+type GatewayProvidersPage struct {
+	Providers  []GatewayProviderRead `json:"providers"`
+	NextCursor *string               `json:"next_cursor"`
+}
+
+// ListGatewayProviders returns every provider owned by the authenticated
+// organization, following the list endpoint's keyset pagination.
+func (c *APIClient) ListGatewayProviders(ctx context.Context) ([]GatewayProviderRead, error) {
+	var providers []GatewayProviderRead
+	cursor := ""
+	for {
+		query := url.Values{"limit": []string{"100"}}
+		if cursor != "" {
+			query.Set("cursor", cursor)
+		}
+		var page GatewayProvidersPage
+		_, err := c.doJSON(
+			ctx, http.MethodGet, "/api/v1/gateway/providers/?"+query.Encode(), nil, &page, http.StatusOK,
+		)
+		if err != nil {
+			return nil, gatewayProviderError(err)
+		}
+		providers = append(providers, page.Providers...)
+		if page.NextCursor == nil || *page.NextCursor == "" {
+			return providers, nil
+		}
+		cursor = *page.NextCursor
+	}
+}
+
+// FindGatewayProviderBySlug lists the organization's providers and returns the
+// one whose slug matches. It mirrors the name-based imports of projects and
+// organizations so provider imports do not require knowing the UUID upfront.
+func (c *APIClient) FindGatewayProviderBySlug(ctx context.Context, slug string) (*GatewayProviderRead, error) {
+	providers, err := c.ListGatewayProviders(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range providers {
+		if providers[i].Slug == slug {
+			return &providers[i], nil
+		}
+	}
+	return nil, &APIError{
+		StatusCode: http.StatusNotFound,
+		Message:    fmt.Sprintf("Gateway provider with slug %q not found in the credential's organization", slug),
+	}
 }
 
 // UpdateGatewayProvider patches a provider without changing its slug or vendor.

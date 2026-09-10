@@ -5,6 +5,7 @@ package provider
 
 import (
 	"context"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -164,11 +165,35 @@ func (r *GatewayProviderResource) Delete(
 	}
 }
 
-// ImportState imports a provider by its UUID within the authenticated organization.
+// ImportState imports a provider by its UUID, or by its organization-unique
+// slug. The slug form lists the organization's providers and matches, so an
+// import does not require knowing the UUID (which only the list endpoint
+// exposes) upfront.
 func (r *GatewayProviderResource) ImportState(
 	ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse,
 ) {
-	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	rawID := strings.TrimSpace(req.ID)
+	if rawID == "" {
+		resp.Diagnostics.AddError(
+			"Missing import ID",
+			`Expected the provider UUID or the provider slug. Example: terraform import logfire_gateway_provider.openai "018f45c0-3cab-7b2f-a8f7-8a0b55a7ed11"`,
+		)
+		return
+	}
+	if uuidPattern.MatchString(rawID) {
+		resource.ImportStatePassthroughID(ctx, path.Root("id"), resource.ImportStateRequest{ID: rawID}, resp)
+		return
+	}
+	if r.client == nil {
+		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
+		return
+	}
+	found, err := r.client.FindGatewayProviderBySlug(ctx, rawID)
+	if err != nil {
+		resp.Diagnostics.AddError("Import Gateway provider failed", err.Error())
+		return
+	}
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), found.ID)...)
 }
 
 func (m *GatewayProviderModel) refresh(out *logclient.GatewayProviderRead) {
