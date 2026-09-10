@@ -109,6 +109,7 @@ look up by name or slug, prefer the name-based import IDs:
 
 | Resource | Recommended import ID | Example |
 | --- | --- | --- |
+| `logfire_organization` | `organization-name` | `terraform import logfire_organization.prod "acme"` |
 | `logfire_project` | `organization/project-name` | `terraform import logfire_project.prod "acme/prod-logs"` |
 | `logfire_alert` | `project-name/alert-name` | `terraform import logfire_alert.errors "prod-logs/error-alert"` |
 | `logfire_dashboard` | `project-name/dashboard-slug` | `terraform import logfire_dashboard.overview "prod-logs/prod-overview"` |
@@ -117,8 +118,12 @@ UUID-based import IDs are also supported if you already have the backend IDs,
 but most users should not need them. The separators `/`, `,`, and `|` are
 accepted for multi-part import IDs.
 
+Importing `logfire_organization` additionally requires the provider credential
+to be an API key from the admin organization (the one with the admin panel)
+carrying the `organization:admin` scope.
+
 ## Resources
-- `logfire_organization` — manage organizations (self-hosted only; requires a special organization scope) with default-on deletion protection.
+- `logfire_organization` — manage organizations (self-hosted only; requires an API key from the admin organization with the `organization:admin` scope) with default-on deletion protection.
 - `logfire_project` — manage Logfire projects.
 - `logfire_channel` — configure webhook or Opsgenie notification channels.
 - `logfire_alert` — define alerting rules tied to channels.

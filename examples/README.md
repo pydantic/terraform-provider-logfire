@@ -10,7 +10,7 @@ This directory contains runnable Terraform examples for the Logfire provider.
 ## Available examples
 
 - `main.tf`: SaaS-compatible example (project, channel, alert, dashboard, and one read/write token).
-- `self-hosted-organization/main.tf`: self-hosted only example for `logfire_organization` (requires a special organization scope).
+- `self-hosted-organization/main.tf`: self-hosted only example for `logfire_organization` (requires an API key from the admin organization with the `organization:admin` scope).
 
 ## Running the SaaS-compatible example
 
