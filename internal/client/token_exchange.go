@@ -76,15 +76,21 @@ type tokenExchangeResponse struct {
 // orgName, exchanging the configured instance-admin credential via the OAuth
 // token endpoint and caching the result until shortly before its expiry.
 // force bypasses the cache, for a retry after an unexpected 401.
+//
+// The cache lock is never held across the exchange request: an exchange for
+// one organization would otherwise block operations for every other
+// organization for up to the HTTP client timeout. Concurrent exchanges for
+// the same organization may mint a duplicate token; minting is idempotent
+// and the last write wins.
 func (c *APIClient) organizationContextToken(ctx context.Context, orgName string, force bool) (string, error) {
 	c.orgTokenMu.Lock()
-	defer c.orgTokenMu.Unlock()
-
 	if !force {
 		if entry, ok := c.orgTokenCache[orgName]; ok && time.Now().Before(entry.expires) {
+			c.orgTokenMu.Unlock()
 			return entry.token, nil
 		}
 	}
+	c.orgTokenMu.Unlock()
 
 	form := url.Values{
 		"grant_type":         {"urn:ietf:params:oauth:grant-type:token-exchange"},
@@ -111,7 +117,9 @@ func (c *APIClient) organizationContextToken(ctx context.Context, orgName string
 	} else {
 		valid /= 2
 	}
+	c.orgTokenMu.Lock()
 	c.orgTokenCache[orgName] = orgTokenEntry{token: out.AccessToken, expires: time.Now().Add(valid)}
+	c.orgTokenMu.Unlock()
 	return out.AccessToken, nil
 }
 

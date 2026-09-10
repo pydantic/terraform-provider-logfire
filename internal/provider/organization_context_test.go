@@ -18,6 +18,10 @@ import (
 
 const organizationExchangeInvalidTarget = `{"error":"invalid_target","error_description":"unknown organization: 'acme'"}`
 
+// exchangeOKBody mirrors a successful RFC 8693 exchange response.
+const exchangeOKBody = `{"access_token":"exchanged-token","token_type":"Bearer","expires_in":900,
+	"scope":"organization:read organization:write","issued_token_type":"urn:ietf:params:oauth:token-type:access_token"}`
+
 // organizationListBody is one organization matching the test state's name
 // and ID, as returned by the instance organization list route.
 const organizationListBody = `[{"id":"9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff","organization_name":"acme",
@@ -30,15 +34,35 @@ const organizationListBody = `[{"id":"9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff","org
 type organizationTestTransport struct {
 	exchangeBody string
 	listBody     string
+	contextBody  string
 }
 
 func (t organizationTestTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	switch {
 	case req.URL.Path == "/api/oauth/token":
+		if t.exchangeBody == "" {
+			// A successful exchange by default.
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(exchangeOKBody)),
+				Request:    req,
+			}, nil
+		}
 		return &http.Response{
 			StatusCode: http.StatusBadRequest,
 			Header:     make(http.Header),
 			Body:       io.NopCloser(strings.NewReader(t.exchangeBody)),
+			Request:    req,
+		}, nil
+	case req.Method == http.MethodGet && req.URL.Path == "/api/v1/organization/":
+		if t.contextBody == "" {
+			return nil, fmt.Errorf("unexpected org-context request without a contextBody")
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(t.contextBody)),
 			Request:    req,
 		}, nil
 	case req.Method == http.MethodGet && req.URL.Path == "/api/v1/instance/organizations/":
@@ -156,11 +180,10 @@ func TestOrganizationDeleteToleratesGoneOrg(t *testing.T) {
 // the invalid_target exchange targets an organization that still exists.
 func TestOrganizationDeleteFailsOnAudienceMismatch(t *testing.T) {
 	t.Parallel()
-	list := organizationListBody
 	c, err := logclient.NewAPIClient("https://example.invalid", "admin-key", &http.Client{
 		Transport: organizationTestTransport{
 			exchangeBody: organizationExchangeInvalidTarget,
-			listBody:     list,
+			listBody:     organizationListBody,
 		},
 	})
 	if err != nil {
@@ -172,5 +195,91 @@ func TestOrganizationDeleteFailsOnAudienceMismatch(t *testing.T) {
 	r.Delete(t.Context(), resource.DeleteRequest{State: state}, &response)
 	if !response.Diagnostics.HasError() {
 		t.Fatal("delete of an existing organization behind a broken audience must error")
+	}
+}
+
+// TestOrganizationReadFailsOnExternalRename verifies that an organization
+// renamed outside Terraform (found by ID under a different name) errors with
+// a re-import hint instead of dropping the resource from state.
+func TestOrganizationReadFailsOnExternalRename(t *testing.T) {
+	t.Parallel()
+	list := `[{"id":"9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff","organization_name":"renamed-elsewhere",
+		"subscription_plan":"non_stripe","has_admin_panel":false,"created_at":"2026-01-01T00:00:00Z",
+		"updated_at":"2026-01-01T00:00:00Z","billing_email":null,"organization_display_name":null,
+		"github_handle":null,"location":null,"avatar":null,"links":[],"description":null,
+		"spending_cap":null,"spending_cap_reached_at":null,"planless_grace_period_ends_at":null,
+		"gateway_enabled":false,"ai_enabled":false}]`
+	c, err := logclient.NewAPIClient("https://example.invalid", "admin-key", &http.Client{
+		Transport: organizationTestTransport{
+			exchangeBody: organizationExchangeInvalidTarget,
+			listBody:     list,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := &OrganizationResource{client: c}
+	state := organizationTestState(t)
+	response := resource.ReadResponse{State: state}
+	r.Read(t.Context(), resource.ReadRequest{State: state}, &response)
+	if !response.Diagnostics.HasError() {
+		t.Fatal("an externally renamed organization must error")
+	}
+	if response.State.Raw.IsNull() {
+		t.Fatal("an externally renamed organization must not be removed from state")
+	}
+}
+
+// organizationReusedNameContextBody is the org-context read result for an
+// unrelated organization that inherited the state's name.
+const organizationReusedNameContextBody = `{"id":"33333333-3333-3333-3333-333333333333","organization_name":"acme",
+	"subscription_plan":"non_stripe","has_admin_panel":false,"created_at":"2026-01-01T00:00:00Z",
+	"updated_at":"2026-01-01T00:00:00Z","billing_email":null,"organization_display_name":null,
+	"github_handle":null,"location":null,"avatar":null,"links":[],"description":null,
+	"spending_cap":null,"spending_cap_reached_at":null,"planless_grace_period_ends_at":null,
+	"gateway_enabled":false,"ai_enabled":false}`
+
+// TestOrganizationReadRefusesNameReuse verifies that a name now belonging to a
+// different organization is refused instead of silently adopted.
+func TestOrganizationReadRefusesNameReuse(t *testing.T) {
+	t.Parallel()
+	c, err := logclient.NewAPIClient("https://example.invalid", "admin-key", &http.Client{
+		Transport: organizationTestTransport{
+			contextBody: organizationReusedNameContextBody,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := &OrganizationResource{client: c}
+	state := organizationTestState(t)
+	response := resource.ReadResponse{State: state}
+	r.Read(t.Context(), resource.ReadRequest{State: state}, &response)
+	if !response.Diagnostics.HasError() {
+		t.Fatal("a reused organization name must error instead of being adopted")
+	}
+	if response.State.Raw.IsNull() {
+		t.Fatal("a reused organization name must not remove state")
+	}
+}
+
+// TestOrganizationDeleteRefusesNameReuse verifies delete refuses to remove an
+// unrelated organization that inherited the state's name.
+func TestOrganizationDeleteRefusesNameReuse(t *testing.T) {
+	t.Parallel()
+	c, err := logclient.NewAPIClient("https://example.invalid", "admin-key", &http.Client{
+		Transport: organizationTestTransport{
+			contextBody: organizationReusedNameContextBody,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := &OrganizationResource{client: c}
+	state := organizationTestState(t)
+	response := resource.DeleteResponse{State: state}
+	r.Delete(t.Context(), resource.DeleteRequest{State: state}, &response)
+	if !response.Diagnostics.HasError() {
+		t.Fatal("delete of an unrelated organization behind a reused name must error")
 	}
 }
