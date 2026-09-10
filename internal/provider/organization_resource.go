@@ -495,8 +495,15 @@ func (r *OrganizationResource) findOrganizationByNameOrID(ctx context.Context, k
 	if err != nil {
 		return nil, false, err
 	}
+	// An ID match is authoritative: organization names may themselves be
+	// UUID-shaped, and a name-equals-ID coincidence must not win.
 	for i := range list {
-		if list[i].ID == key || list[i].OrganizationName == key {
+		if list[i].ID == key {
+			return &list[i], true, nil
+		}
+	}
+	for i := range list {
+		if list[i].OrganizationName == key {
 			return &list[i], true, nil
 		}
 	}

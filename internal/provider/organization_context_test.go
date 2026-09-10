@@ -239,8 +239,51 @@ const organizationReusedNameContextBody = `{"id":"33333333-3333-3333-3333-333333
 	"spending_cap":null,"spending_cap_reached_at":null,"planless_grace_period_ends_at":null,
 	"gateway_enabled":false,"ai_enabled":false}`
 
-// TestOrganizationReadRefusesNameReuse verifies that a name now belonging to a
-// different organization is refused instead of silently adopted.
+// TestOrganizationImportPrefersIDMatchOverUUIDShapedName verifies that an
+// import by UUID binds to the organization with that ID even when an
+// organization earlier in the list has that UUID as its name.
+func TestOrganizationImportPrefersIDMatchOverUUIDShapedName(t *testing.T) {
+	t.Parallel()
+	list := `[
+		{"id":"11111111-1111-1111-1111-111111111111","organization_name":"9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff",
+		 "subscription_plan":"non_stripe","has_admin_panel":false,"created_at":"2026-01-01T00:00:00Z",
+		 "updated_at":"2026-01-01T00:00:00Z","billing_email":null,"organization_display_name":null,
+		 "github_handle":null,"location":null,"avatar":null,"links":[],"description":null,
+		 "spending_cap":null,"spending_cap_reached_at":null,"planless_grace_period_ends_at":null,
+		 "gateway_enabled":false,"ai_enabled":false},
+		{"id":"9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff","organization_name":"acme",
+		 "subscription_plan":"non_stripe","has_admin_panel":false,"created_at":"2026-01-01T00:00:00Z",
+		 "updated_at":"2026-01-01T00:00:00Z","billing_email":null,"organization_display_name":null,
+		 "github_handle":null,"location":null,"avatar":null,"links":[],"description":null,
+		 "spending_cap":null,"spending_cap_reached_at":null,"planless_grace_period_ends_at":null,
+		 "gateway_enabled":false,"ai_enabled":false}
+	]`
+	c, err := logclient.NewAPIClient("https://example.invalid", "admin-key", &http.Client{
+		Transport: organizationTestTransport{listBody: list},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := &OrganizationResource{client: c}
+	var schemaResponse resource.SchemaResponse
+	r.Schema(t.Context(), resource.SchemaRequest{}, &schemaResponse)
+	response := resource.ImportStateResponse{State: tfsdk.State{
+		Schema: schemaResponse.Schema,
+		Raw:    tftypes.NewValue(schemaResponse.Schema.Type().TerraformType(t.Context()), nil),
+	}}
+	r.ImportState(t.Context(), resource.ImportStateRequest{ID: "9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff"}, &response)
+	if response.Diagnostics.HasError() {
+		t.Fatal(response.Diagnostics)
+	}
+	var model OrganizationModel
+	if diags := response.State.Get(t.Context(), &model); diags.HasError() {
+		t.Fatal(diags)
+	}
+	if model.ID.ValueString() != "9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff" || model.Name.ValueString() != "acme" {
+		t.Fatalf("imported id=%q name=%q, want the ID match (id=9f9b..., name=acme)",
+			model.ID.ValueString(), model.Name.ValueString())
+	}
+}
 func TestOrganizationReadRefusesNameReuse(t *testing.T) {
 	t.Parallel()
 	c, err := logclient.NewAPIClient("https://example.invalid", "admin-key", &http.Client{
