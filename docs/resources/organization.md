@@ -3,19 +3,20 @@
 page_title: "logfire_organization Resource - logfire"
 subcategory: ""
 description: |-
-  Manages a Logfire organization. This resource is only available for self-hosted deployments and requires an API key with a special organization scope.
+  Manages a Logfire organization. This resource is only available for self-hosted deployments and requires an API key created in the admin organization (the one with the admin panel) carrying the organization:admin scope. A key minted inside another organization cannot manage organizations regardless of its scopes.
 ---
 
 # logfire_organization (Resource)
 
-Manages a Logfire organization. This resource is only available for self-hosted deployments and requires an API key with a special organization scope.
+Manages a Logfire organization. This resource is only available for self-hosted deployments and requires an API key created in the admin organization (the one with the admin panel) carrying the `organization:admin` scope. A key minted inside another organization cannot manage organizations regardless of its scopes.
 
 ## Example Usage
 
 ```terraform
 resource "logfire_organization" "example" {
   # Organization CRUD is only available for self-hosted deployments and requires
-  # an API key with a special organization scope.
+  # an API key created in the admin organization (the one with the admin panel)
+  # carrying the `organization:admin` scope.
   name         = "terraform-example-org"
   display_name = "Terraform Example Org"
 
@@ -49,3 +50,20 @@ resource "logfire_organization" "example" {
 - `has_admin_panel` (Boolean) Whether the organization has access to the admin panel.
 - `id` (String) Organization UUID assigned by the backend.
 - `updated_at` (String) Timestamp when the organization was last updated.
+
+## Import
+
+Import is supported using the following syntax:
+
+The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
+
+```shell
+# Import an existing organization by name or UUID. The provider credential must be
+# an API key from the admin organization carrying the `organization:admin` scope.
+#
+# By name:
+terraform import 'logfire_organization.example' "terraform-example-org"
+
+# By UUID:
+terraform import 'logfire_organization.example' "9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff"
+```

@@ -57,7 +57,10 @@ func (r *OrganizationResource) Metadata(ctx context.Context, req resource.Metada
 
 func (r *OrganizationResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = rschema.Schema{
-		MarkdownDescription: "Manages a Logfire organization. This resource is only available for self-hosted deployments and requires an API key with a special organization scope.",
+		MarkdownDescription: "Manages a Logfire organization. This resource is only available for self-hosted deployments " +
+			"and requires an API key created in the admin organization (the one with the admin panel) " +
+			"carrying the `organization:admin` scope. A key minted inside another organization cannot " +
+			"manage organizations regardless of its scopes.",
 		Attributes: map[string]rschema.Attribute{
 			"id": rschema.StringAttribute{
 				Computed:            true,
