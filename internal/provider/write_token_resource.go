@@ -44,7 +44,7 @@ func (r *WriteTokenResource) Metadata(ctx context.Context, req resource.Metadata
 
 func (r *WriteTokenResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = rschema.Schema{
-		MarkdownDescription: "Manages a Logfire write token. Equivalent to logfire_api_key with scopes `[\"project:write_otlp\"]`.",
+		MarkdownDescription: "Manages a Logfire write token. Equivalent to logfire_api_key with scopes `[\"project:write_otlp\"]`. Import is not supported: the API returns the token value only at creation, so an imported token could never reproduce its secret in state. Recreate a token with Terraform to adopt it.",
 		Attributes: map[string]rschema.Attribute{
 			"id": rschema.StringAttribute{
 				Computed:            true,

@@ -113,6 +113,11 @@ look up by name or slug, prefer the name-based import IDs:
 | `logfire_project` | `organization/project-name` | `terraform import logfire_project.prod "acme/prod-logs"` |
 | `logfire_alert` | `project-name/alert-name` | `terraform import logfire_alert.errors "prod-logs/error-alert"` |
 | `logfire_dashboard` | `project-name/dashboard-slug` | `terraform import logfire_dashboard.overview "prod-logs/prod-overview"` |
+| `logfire_channel` | `channel-name` (label) | `terraform import logfire_channel.alerts "alerts-webhook"` |
+| `logfire_gateway_provider` | `provider-slug` | `terraform import logfire_gateway_provider.openai "openai"` |
+| `logfire_api_key` | API key UUID | `terraform import logfire_api_key.ci "9f9b2f9e-..."` |
+| `logfire_gateway_api_key` | API key UUID | `terraform import logfire_gateway_api_key.agents "9f9b2f9e-..."` |
+| `logfire_slo` | `project-name/slo-name` | `terraform import logfire_slo.availability "prod-logs/availability"` |
 
 UUID-based import IDs are also supported if you already have the backend IDs,
 but most users should not need them. The separators `/`, `,`, and `|` are
@@ -121,6 +126,10 @@ accepted for multi-part import IDs.
 Importing `logfire_organization` additionally requires the provider credential
 to be an API key from the admin organization (the one with the admin panel)
 carrying the `organization:admin` scope.
+
+`logfire_read_token` and `logfire_write_token` do not support import: the API
+returns the token value only at creation, so an imported token could never
+reproduce its secret in state. Recreate a token with Terraform to adopt it.
 
 ## Resources
 - `logfire_organization` — manage organizations (self-hosted only; requires an API key from the admin organization with the `organization:admin` scope) with default-on deletion protection.

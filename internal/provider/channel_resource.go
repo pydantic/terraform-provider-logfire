@@ -73,7 +73,7 @@ func (r *ChannelResource) Metadata(ctx context.Context, req resource.MetadataReq
 
 func (r *ChannelResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = rschema.Schema{
-		MarkdownDescription: "Manages a Logfire alert channel.",
+		MarkdownDescription: "Manages a Logfire alert channel. Import accepts the channel UUID or its name (label).",
 		Attributes: map[string]rschema.Attribute{
 			"id": rschema.StringAttribute{
 				Computed:            true,
@@ -719,28 +719,44 @@ func (r *ChannelResource) Delete(ctx context.Context, req resource.DeleteRequest
 	}
 }
 
+// ImportState imports a channel by its UUID, or by its label. Both forms
+// resolve through the organization's channel list: an ID match is precise,
+// and a label match covers the name form (including a label that happens to
+// be UUID-shaped, which must not be mistaken for an ID).
 func (r *ChannelResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	if r.client == nil {
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
 		return
 	}
 
-	if req.ID == "" {
+	rawID := strings.TrimSpace(req.ID)
+	if rawID == "" {
 		resp.Diagnostics.AddError(
 			"Missing import ID",
-			`Expected a non-empty ID. Use: terraform import logfire_channel.prod "<channel_id>"`,
+			`Expected a non-empty ID. Use either the channel UUID or the channel name (label). Example: terraform import logfire_channel.prod "alerts-webhook"`,
 		)
 		return
 	}
 
-	parts := strings.Split(req.ID, "/")
-	id := parts[len(parts)-1]
-	if id == "" {
-		resp.Diagnostics.AddError(
-			"Invalid import ID",
-			`Expected "<channel_id>".`,
-		)
+	channels, err := r.client.ListChannels(ctx)
+	if err != nil {
+		resp.Diagnostics.AddError("Import channel failed", err.Error())
 		return
 	}
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), id)...)
+	for i := range channels {
+		if channels[i].ID == rawID {
+			resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), channels[i].ID)...)
+			return
+		}
+	}
+	for i := range channels {
+		if channels[i].Label == rawID {
+			resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), channels[i].ID)...)
+			return
+		}
+	}
+	resp.Diagnostics.AddError(
+		"Import channel failed",
+		fmt.Sprintf("Channel %q not found in the credential's organization by ID or name. List channel IDs with the Logfire API (GET /api/v1/channels/).", rawID),
+	)
 }

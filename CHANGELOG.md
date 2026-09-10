@@ -13,6 +13,8 @@ FEATURES:
 - Add an experimental `logfire_slo` resource for managing Service Level Objectives. The backing Logfire API is not yet stable, so the resource schema and behavior may change in backwards-incompatible ways.
 - Add an optional `environments` attribute (set of strings) to the `logfire_alert` resource to scope the alert query to specific deployment environments. Omitting it (or setting it empty) keeps the current behavior of evaluating against all environments.
 - `logfire_gateway_provider` import now accepts the organization-unique slug in addition to the provider UUID, so an import does not require fetching the UUID from the provider list endpoint first.
+- `logfire_channel` import now accepts the channel name (label) in addition to the channel UUID, matching the name-based imports of projects and organizations.
+- Document import for `logfire_api_key` and `logfire_gateway_api_key` (UUID, with the list endpoint that exposes it), and state that `logfire_read_token` and `logfire_write_token` do not support import because the API never returns the token again after creation.
 
 DOCUMENTATION:
 - Name the `organization:admin` scope requirement on `logfire_organization` explicitly (created in the admin organization), replacing the vague "special organization scope" wording, and add import instructions by organization name or UUID.
