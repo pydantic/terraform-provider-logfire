@@ -3,12 +3,12 @@
 page_title: "logfire_read_token Resource - logfire"
 subcategory: ""
 description: |-
-  Manages a Logfire read token. Equivalent to logfire_api_key with scopes ["project:read_otlp"].
+  Manages a Logfire read token. Equivalent to logfire_api_key with scopes ["project:read_otlp"]. Import is not supported: the API returns the token value only at creation, so an imported token could never reproduce its secret in state. Recreate a token with Terraform to adopt it.
 ---
 
 # logfire_read_token (Resource)
 
-Manages a Logfire read token. Equivalent to logfire_api_key with scopes `["project:read_otlp"]`.
+Manages a Logfire read token. Equivalent to logfire_api_key with scopes `["project:read_otlp"]`. Import is not supported: the API returns the token value only at creation, so an imported token could never reproduce its secret in state. Recreate a token with Terraform to adopt it.
 
 ## Example Usage
 
