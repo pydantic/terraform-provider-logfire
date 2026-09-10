@@ -3,12 +3,12 @@
 page_title: "logfire_gateway_provider Resource - logfire"
 subcategory: ""
 description: |-
-  Manages an organization-owned AI Gateway provider. Requires Growth, Enterprise Cloud, or self-hosted and a token with organization:read and organization:write scopes. Built-in providers and custom upstream URLs are not supported.
+  Manages an organization-owned AI Gateway provider. Requires Growth, Enterprise Cloud, or self-hosted and a token with organization:read and organization:write scopes. Built-in providers and custom upstream URLs are not supported. Import accepts the provider UUID or its organization-unique slug.
 ---
 
 # logfire_gateway_provider (Resource)
 
-Manages an organization-owned AI Gateway provider. Requires Growth, Enterprise Cloud, or self-hosted and a token with organization:read and organization:write scopes. Built-in providers and custom upstream URLs are not supported.
+Manages an organization-owned AI Gateway provider. Requires Growth, Enterprise Cloud, or self-hosted and a token with organization:read and organization:write scopes. Built-in providers and custom upstream URLs are not supported. Import accepts the provider UUID or its organization-unique slug.
 
 ## Example Usage
 
@@ -107,7 +107,17 @@ import {
 Or use the command line:
 
 ```shell
-terraform import logfire_gateway_provider.openai 018f45c0-3cab-7b2f-a8f7-8a0b55a7ed11
+# Import an existing Gateway provider by its UUID, or by its organization-unique slug.
+#
+# The UUID comes from the provider list endpoint:
+#   curl -s -H "Authorization: Bearer $LOGFIRE_API_KEY" \
+#     "$LOGFIRE_BASE_URL/api/v1/gateway/providers/" | jq '.providers[] | {id, slug}'
+#
+# By slug:
+terraform import 'logfire_gateway_provider.openai' "openai"
+
+# By UUID:
+terraform import 'logfire_gateway_provider.openai' "018f45c0-3cab-7b2f-a8f7-8a0b55a7ed11"
 ```
 
 Import reads public configuration only. Set `api_key` in your configuration;

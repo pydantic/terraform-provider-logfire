@@ -26,7 +26,8 @@ func (r *GatewayProviderResource) Schema(
 		MarkdownDescription: "Manages an organization-owned AI Gateway provider. " +
 			"Requires Growth, Enterprise Cloud, or self-hosted and a token with " +
 			"organization:read and organization:write scopes. " +
-			"Built-in providers and custom upstream URLs are not supported.",
+			"Built-in providers and custom upstream URLs are not supported. " +
+			"Import accepts the provider UUID or its organization-unique slug.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:            true,

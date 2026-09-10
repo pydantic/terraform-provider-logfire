@@ -6,6 +6,8 @@ package provider_test
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"reflect"
 	"strings"
@@ -227,15 +229,58 @@ func TestGatewayProviderDeleteFailure(t *testing.T) {
 	}
 }
 
-func TestGatewayProviderImport(t *testing.T) {
+func TestGatewayProviderImportByUUID(t *testing.T) {
 	r, s := gatewayResource(t, nil)
 	response := resource.ImportStateResponse{State: tfsdk.State{Schema: s, Raw: gatewayValue(t, s, nil)}}
-	r.ImportState(t.Context(), resource.ImportStateRequest{ID: "provider-id"}, &response)
+	r.ImportState(t.Context(), resource.ImportStateRequest{ID: "018f45c0-3cab-7b2f-a8f7-8a0b55a7ed11"}, &response)
 	if response.Diagnostics.HasError() {
 		t.Fatal(response.Diagnostics)
 	}
-	want := gatewayValue(t, s, map[string]any{"id": "provider-id"})
+	want := gatewayValue(t, s, map[string]any{"id": "018f45c0-3cab-7b2f-a8f7-8a0b55a7ed11"})
 	if !response.State.Raw.Equal(want) {
 		t.Fatalf("imported state = %v", response.State.Raw)
+	}
+}
+
+type gatewayListTransport struct {
+	body string
+}
+
+func (t gatewayListTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Method != http.MethodGet || req.URL.Path != "/api/v1/gateway/providers/" {
+		return nil, fmt.Errorf("unexpected request: %s %s", req.Method, req.URL.Path)
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(t.body)),
+		Request:    req,
+	}, nil
+}
+
+func TestGatewayProviderImportBySlug(t *testing.T) {
+	list := `{"providers":[
+		{"id":"11111111-1111-1111-1111-111111111111","slug":"anthropic","provider":{"vendor":"anthropic"},"pricing":{"required":true},"created_at":"2026-01-01T00:00:00Z"},
+		{"id":"018f45c0-3cab-7b2f-a8f7-8a0b55a7ed11","slug":"openai","provider":{"vendor":"openai"},"pricing":{"required":true},"created_at":"2026-01-01T00:00:00Z"}
+	],"next_cursor":null}`
+	r, s := gatewayResource(t, gatewayListTransport{body: list})
+	response := resource.ImportStateResponse{State: tfsdk.State{Schema: s, Raw: gatewayValue(t, s, nil)}}
+	r.ImportState(t.Context(), resource.ImportStateRequest{ID: " openai "}, &response)
+	if response.Diagnostics.HasError() {
+		t.Fatal(response.Diagnostics)
+	}
+	want := gatewayValue(t, s, map[string]any{"id": "018f45c0-3cab-7b2f-a8f7-8a0b55a7ed11"})
+	if !response.State.Raw.Equal(want) {
+		t.Fatalf("imported state = %v", response.State.Raw)
+	}
+}
+
+func TestGatewayProviderImportBySlugNotFound(t *testing.T) {
+	list := `{"providers":[],"next_cursor":null}`
+	r, s := gatewayResource(t, gatewayListTransport{body: list})
+	response := resource.ImportStateResponse{State: tfsdk.State{Schema: s, Raw: gatewayValue(t, s, nil)}}
+	r.ImportState(t.Context(), resource.ImportStateRequest{ID: "missing-slug"}, &response)
+	if !response.Diagnostics.HasError() {
+		t.Fatal("expected an import error for an unknown slug")
 	}
 }
