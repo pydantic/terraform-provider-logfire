@@ -3,12 +3,12 @@
 page_title: "logfire_channel Resource - logfire"
 subcategory: ""
 description: |-
-  Manages a Logfire alert channel.
+  Manages a Logfire alert channel. Import accepts the channel UUID or its name (label).
 ---
 
 # logfire_channel (Resource)
 
-Manages a Logfire alert channel.
+Manages a Logfire alert channel. Import accepts the channel UUID or its name (label).
 
 ## Example Usage
 
@@ -103,3 +103,23 @@ Optional:
 - `routing_key` (String, Sensitive) PagerDuty Events API v2 integration routing key. Only for `pagerduty` channels; `pagerduty-integration` channels resolve the key from the installation instead.
 - `service_id` (String) Logfire's ID (a UUID) for the PagerDuty service incidents are opened on, as approved for the installation when connecting PagerDuty. This is not PagerDuty's own service ID. Required for `pagerduty-integration` channels.
 - `url` (String) Webhook URL endpoint.
+
+## Import
+
+Import is supported using the following syntax:
+
+The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
+
+```shell
+# Import an existing channel by its UUID, or by its name (label).
+#
+# The UUID comes from the channel list endpoint:
+#   curl -s -H "Authorization: Bearer $LOGFIRE_API_KEY" \
+#     "$LOGFIRE_BASE_URL/api/v1/channels/" | jq '.[] | {id, label}'
+#
+# By name:
+terraform import 'logfire_channel.example' "alerts-webhook"
+
+# By UUID:
+terraform import 'logfire_channel.example' "9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff"
+```

@@ -37,3 +37,19 @@ Manages a project-scoped AI Gateway API key (`project:gateway_proxy` scope). Do 
 - `id` (String) Gateway API key identifier. Use this identifier to import an existing key.
 - `project_name` (String) Name of the project the key proxies for.
 - `token` (String, Sensitive) The plaintext gateway API key. Only returned on creation; never returned again by the API.
+
+## Import
+
+Import is supported using the following syntax:
+
+The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
+
+```shell
+# Import an existing gateway API key by its UUID. Key names are not unique
+# across the organization, so the import is UUID-only. The UUID comes from the
+# API key list endpoint (the API never returns the plaintext token again, so an
+# import recovers the key without its token):
+#   curl -s -H "Authorization: Bearer $LOGFIRE_API_KEY" \
+#     "$LOGFIRE_BASE_URL/api/v1/api-keys/" | jq '.[] | {id, name}'
+terraform import 'logfire_gateway_api_key.example' "9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff"
+```

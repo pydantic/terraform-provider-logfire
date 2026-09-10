@@ -884,6 +884,16 @@ func (c *APIClient) CreateChannel(ctx context.Context, in ChannelCreate) (*Chann
 	return &out, nil
 }
 
+// ListChannels returns the organization's notification channels.
+func (c *APIClient) ListChannels(ctx context.Context) ([]ChannelRead, error) {
+	var out []ChannelRead
+	_, err := c.doJSON(ctx, http.MethodGet, c.channelsBase(), nil, &out, http.StatusOK)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *APIClient) GetChannel(ctx context.Context, id string) (*ChannelRead, int, error) {
 	var out ChannelRead
 	resp, err := c.doJSON(ctx, http.MethodGet, c.channelPath(id), nil, &out, http.StatusOK)
