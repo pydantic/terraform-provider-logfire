@@ -350,6 +350,10 @@ type APIClient struct {
 type APIError struct {
 	StatusCode int
 	Message    string
+	// BackendVersion is the instance's x-backend-version response header when
+	// the server provides one. Instances old enough to be missing API routes
+	// usually predate the header too, so it is often empty.
+	BackendVersion string
 }
 
 func (e *APIError) Error() string {
@@ -357,6 +361,17 @@ func (e *APIError) Error() string {
 		return fmt.Sprintf("API error (status %d): %s", e.StatusCode, e.Message)
 	}
 	return fmt.Sprintf("API error: status %d", e.StatusCode)
+}
+
+// backendVersionHeader is the response header carrying the instance version.
+const backendVersionHeader = "x-backend-version"
+
+func newAPIError(resp *http.Response, message string) *APIError {
+	return &APIError{
+		StatusCode:     resp.StatusCode,
+		Message:        message,
+		BackendVersion: resp.Header.Get(backendVersionHeader),
+	}
 }
 
 func isStatusExpected(statusCode int, expectedStatuses []int) bool {
@@ -493,10 +508,7 @@ func (c *APIClient) doJSONAuthorized(ctx context.Context, bearer, method, path s
 		if len(b) == maxErrorBodySize {
 			msg += "... (truncated)"
 		}
-		return resp, &APIError{
-			StatusCode: resp.StatusCode,
-			Message:    msg,
-		}
+		return resp, newAPIError(resp, msg)
 	}
 
 	// Decode response if requested
@@ -603,6 +615,17 @@ func (c *APIClient) ListOrganizations(ctx context.Context) ([]OrganizationRead, 
 	var out []OrganizationRead
 	_, err := c.doJSON(ctx, http.MethodGet, c.instanceOrganizationsBase(), nil, &out, http.StatusOK)
 	if err != nil {
+		// On the instance organization collection a 404 can only mean the
+		// route is missing: it has no resource-id path segment and no 404
+		// handler branch.
+		if IsNotFoundError(err) {
+			return nil, &EndpointUnavailableError{
+				Method:         http.MethodGet,
+				Path:           c.instanceOrganizationsBase(),
+				MinimumRelease: "v2026-06-03.01",
+				BackendVersion: BackendVersionFromError(err),
+			}
+		}
 		return nil, err
 	}
 	return out, nil

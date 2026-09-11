@@ -3,12 +3,12 @@
 page_title: "logfire_write_token Resource - logfire"
 subcategory: ""
 description: |-
-  Manages a Logfire write token. Equivalent to logfire_api_key with scopes ["project:write_otlp"]. Import is not supported: the API returns the token value only at creation, so an imported token could never reproduce its secret in state. Recreate a token with Terraform to adopt it.
+  Manages a Logfire write token. Equivalent to logfire_api_key with scopes ["project:write_otlp"]. Creating it requires the project:write_token scope on a credential that can reach the project. Import is not supported: the API returns the token value only at creation, so an imported token could never reproduce its secret in state. Recreate a token with Terraform to adopt it.
 ---
 
 # logfire_write_token (Resource)
 
-Manages a Logfire write token. Equivalent to logfire_api_key with scopes `["project:write_otlp"]`. Import is not supported: the API returns the token value only at creation, so an imported token could never reproduce its secret in state. Recreate a token with Terraform to adopt it.
+Manages a Logfire write token. Equivalent to logfire_api_key with scopes `["project:write_otlp"]`. Creating it requires the `project:write_token` scope on a credential that can reach the project. Import is not supported: the API returns the token value only at creation, so an imported token could never reproduce its secret in state. Recreate a token with Terraform to adopt it.
 
 ## Example Usage
 

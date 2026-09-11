@@ -247,10 +247,7 @@ func (c *APIClient) doFormJSON(ctx context.Context, path string, form url.Values
 		if len(b) == maxErrorBodySize {
 			msg += "... (truncated)"
 		}
-		return resp, &APIError{
-			StatusCode: resp.StatusCode,
-			Message:    msg,
-		}
+		return resp, newAPIError(resp, msg)
 	}
 
 	if out != nil {
