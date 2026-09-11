@@ -86,7 +86,9 @@ type GatewayProvidersPage struct {
 }
 
 // ListGatewayProviders returns every provider owned by the authenticated
-// organization, following the list endpoint's keyset pagination.
+// organization, following the list endpoint's keyset pagination. A 404 means
+// the instance predates the Gateway provider management API, so it maps to an
+// upgrade hint rather than a bare API error.
 func (c *APIClient) ListGatewayProviders(ctx context.Context) ([]GatewayProviderRead, error) {
 	var providers []GatewayProviderRead
 	cursor := ""
@@ -100,7 +102,7 @@ func (c *APIClient) ListGatewayProviders(ctx context.Context) ([]GatewayProvider
 			ctx, http.MethodGet, "/api/v1/gateway/providers/?"+query.Encode(), nil, &page, http.StatusOK,
 		)
 		if err != nil {
-			return nil, gatewayProviderError(err)
+			return nil, gatewayProvidersEndpointUnavailableError(gatewayProviderError(err))
 		}
 		providers = append(providers, page.Providers...)
 		if page.NextCursor == nil || *page.NextCursor == "" {
@@ -149,11 +151,30 @@ func (c *APIClient) DeleteGatewayProvider(ctx context.Context, id string) error 
 	return gatewayProviderError(err)
 }
 
+// gatewayProviderError strips upstream error bodies (which may echo
+// credentials) and maps a missing collection route to a version hint.
 func gatewayProviderError(err error) error {
 	var apiError *APIError
 	if errors.As(err, &apiError) {
 		// An upstream error body may echo credentials from the request.
-		return &APIError{StatusCode: apiError.StatusCode}
+		return &APIError{StatusCode: apiError.StatusCode, BackendVersion: apiError.BackendVersion}
 	}
 	return err
+}
+
+// gatewayProvidersEndpointUnavailableError translates a 404 from the provider
+// collection route into an actionable upgrade hint. On the public API that
+// route has no 404 of its own (unknown ids live under /{id}/), so a 404 here
+// means the instance predates the Gateway provider management API.
+func gatewayProvidersEndpointUnavailableError(err error) error {
+	if !IsNotFoundError(err) {
+		return err
+	}
+	return &EndpointUnavailableError{
+		Method:         http.MethodGet,
+		Path:           "/api/v1/gateway/providers/",
+		MinimumRelease: "v2026-08-12.01",
+		MinimumChart:   "logfire-0.13.40",
+		BackendVersion: BackendVersionFromError(err),
+	}
 }

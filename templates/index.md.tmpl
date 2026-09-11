@@ -39,4 +39,18 @@ The provider rejects these header names case-insensitively because they are mana
 - `User-Agent`
 - `X-Terraform-Provider-Version`
 
+## Self-hosted compatibility
+
+Self-hosted Logfire instances expose APIs as they are released, so a feature the provider calls may not exist on an older instance. The minimum Logfire release for each feature is listed below; when a call hits a missing API, the provider says which release it requires.
+
+| Feature | Minimum Logfire release | Minimum Helm chart |
+| --- | --- | --- |
+| Projects, alerts, dashboards, channels, write/read tokens | All supported releases | - |
+| `logfire_api_key`, `logfire_gateway_api_key` | v2026-06-09.01 | - |
+| `logfire_organization` create and list, organization import | v2026-06-03.01 | - |
+| `logfire_organization` read, update, delete (including setting `billing_email` at creation) | v2026-06-25.01 | - |
+| `logfire_gateway_provider` | v2026-08-12.01 | logfire-0.13.40 or newer |
+
+The instance version appears in the Logfire UI and in the `x-backend-version` response header on releases that provide it.
+
 {{ .SchemaMarkdown | trimspace }}
