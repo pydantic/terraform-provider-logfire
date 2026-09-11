@@ -59,7 +59,7 @@ Each resource states the scopes its calls need. The summary below is the single 
 
 | Resource | Scopes on the provider credential | Credential shape |
 | --- | --- | --- |
-| `logfire_project` | `organization:create_project` to create; `project:read` to read; `project:write` to update or delete | Organization-wide key in the project's organization |
+| `logfire_project` | `organization:create_project` to create; `project:read` to read; `project:write` to update or delete | An organization-wide key in the project's organization to create; an organization-wide or the project's own key to read and write |
 | `logfire_channel` | `organization:read_channel` / `organization:write_channel` | Organization-wide key |
 | `logfire_alert`, `logfire_slo` | `project:read_alert` / `project:write_alert` | A key that can reach the project (see below) |
 | `logfire_dashboard` | `project:read_dashboard` / `project:write_dashboard` | A key that can reach the project |
