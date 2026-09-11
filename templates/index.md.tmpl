@@ -53,4 +53,59 @@ Self-hosted Logfire instances expose APIs as they are released, so a feature the
 
 The instance version appears in the Logfire UI and in the `x-backend-version` response header on releases that provide it.
 
+## Required scopes
+
+Each resource states the scopes its calls need. The summary below is the single place to build a provider credential from; the authoritative per-route list is your instance's API documentation at `<base_url>/api/docs` (each operation shows its OAuth scopes).
+
+| Resource | Scopes on the provider credential | Credential shape |
+| --- | --- | --- |
+| `logfire_project` | `organization:create_project` to create; `project:read` to read; `project:write` to update or delete | Organization-wide key in the project's organization |
+| `logfire_channel` | `organization:read_channel` / `organization:write_channel` | Organization-wide key |
+| `logfire_alert`, `logfire_slo` | `project:read_alert` / `project:write_alert` | A key that can reach the project (see below) |
+| `logfire_dashboard` | `project:read_dashboard` / `project:write_dashboard` | A key that can reach the project |
+| `logfire_read_token` | `project:read_token` | A key that can reach the project |
+| `logfire_write_token` | `project:write_token` | A key that can reach the project |
+| `logfire_frontend_application`, `logfire_frontend_application_token` | `project:write_token` / `project:read_token` | A key that can reach the project |
+| `logfire_api_key` | `organization:create_api_key` to create; `organization:read_api_key` / `organization:write_api_key` to list, update, or delete; plus every scope the new key is granted | Organization-wide for non-project scopes; project-scoped for `project:read_otlp`, `project:write_otlp`, `project:gateway_proxy` |
+| `logfire_gateway_api_key` | `organization:create_api_key`, `organization:read_api_key`, `organization:write_api_key`, and `project:gateway_proxy` | Must be project-scoped to the project the keys belong to |
+| `logfire_gateway_provider` | `organization:read` / `organization:write` | Organization-wide key |
+| `logfire_organization` | `organization:admin` | A key created in the admin-panel organization (self-hosted only) |
+
+Two rules decide what a credential can do:
+
+- **A key can only delegate scopes it holds.** A provider credential creating `logfire_api_key` or `logfire_gateway_api_key` resources must itself carry every scope those keys receive.
+- **A key reaches a project when it is organization-wide in the project's organization, or project-scoped to that exact project.** A project-scoped key cannot read or manage any other project, even in the same organization.
+
+### Gateway keys need a project-scoped credential
+
+`project:gateway_proxy` can only exist on a project-scoped key, and such a key can only create API keys for its own project. Creating `logfire_gateway_api_key` therefore needs a second provider credential: an organization-wide key for the organization's resources, and a project-scoped key for each project whose gateway keys Terraform manages.
+
+Create the project-scoped key from the **organization-level** API keys page with the project selected; the project's own API keys page rejects organization-level scopes, and without `organization:create_api_key` the key cannot create anything. Grant it `organization:create_api_key`, `organization:read_api_key`, `organization:write_api_key`, and `project:gateway_proxy`.
+
+```terraform
+provider "logfire" {
+  alias   = "organization"
+  api_key = var.organization_api_key
+}
+
+provider "logfire" {
+  alias   = "project"
+  api_key = var.project_scoped_api_key
+}
+
+resource "logfire_gateway_api_key" "example" {
+  provider             = logfire.project
+  name                 = "example-gateway"
+  project_id           = "00000000-0000-0000-0000-000000000000"
+  spending_limit_daily = 25
+}
+```
+
+## Troubleshooting credentials
+
+- `403 This token is missing the required scope: X.` — the provider credential lacks a scope the call needs. Add `X` to the key and retry.
+- `403 You do not have permission to access this project` — the credential cannot reach the project it was given. The key is either project-scoped to a different project, created in a different organization than the project, or the project no longer exists in the key's organization. The API answers the same way for all three on purpose, so it cannot be used to probe.
+- `403 The ... scope is not granted to the calling credential and cannot be delegated` — the provider credential was asked to mint a key with a scope it does not hold. See "Gateway keys need a project-scoped credential" above; `project:read_otlp`, `project:write_otlp`, and `project:gateway_proxy` cannot be delegated from an organization-wide key.
+- `404 Not Found` from a self-hosted instance — the instance may predate the API being called. See "Self-hosted compatibility" above.
+
 {{ .SchemaMarkdown | trimspace }}
