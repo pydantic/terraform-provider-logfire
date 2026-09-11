@@ -117,6 +117,27 @@ func TestListOrganizationsMissingRouteHint(t *testing.T) {
 	}
 }
 
+func TestListAPIKeysMissingRouteHint(t *testing.T) {
+	t.Parallel()
+	c, err := NewAPIClient("https://example.invalid", "test-token", &http.Client{
+		Transport: versionedStubTransport{
+			status: http.StatusNotFound,
+			body:   `{"detail":"Not Found"}`,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.ListAPIKeys(context.Background())
+	var unavailable *EndpointUnavailableError
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("expected EndpointUnavailableError, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "v2026-06-09.01") {
+		t.Fatalf("error %q does not mention the API-keys floor", err)
+	}
+}
+
 func TestAPIErrorCapturesBackendVersion(t *testing.T) {
 	t.Parallel()
 	c, err := NewAPIClient("https://example.invalid", "test-token", &http.Client{

@@ -126,11 +126,21 @@ func (c *APIClient) CreateAPIKey(ctx context.Context, in APIKeyCreate) (*APIKeyC
 }
 
 // ListAPIKeys returns the organization's API keys visible to the calling
-// credential, including project-scoped keys.
+// credential, including project-scoped keys. A 404 means the instance predates
+// the unified API-keys API, so it maps to an upgrade hint rather than a bare
+// API error.
 func (c *APIClient) ListAPIKeys(ctx context.Context) ([]APIKeyRead, error) {
 	var out []APIKeyRead
 	_, err := c.doJSON(ctx, http.MethodGet, c.apiKeysBase(), nil, &out, http.StatusOK)
 	if err != nil {
+		if IsNotFoundError(err) {
+			return nil, &EndpointUnavailableError{
+				Method:         http.MethodGet,
+				Path:           c.apiKeysBase(),
+				MinimumRelease: "v2026-06-09.01",
+				BackendVersion: BackendVersionFromError(err),
+			}
+		}
 		return nil, err
 	}
 	return out, nil
