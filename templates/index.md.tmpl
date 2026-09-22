@@ -51,6 +51,7 @@ Self-hosted Logfire instances expose APIs as they are released, so a feature the
 | `logfire_organization` read, update, delete (including setting `billing_email` at creation) | v2026-06-25.01 | - |
 | `logfire_gateway_provider` | v2026-08-12.01 | logfire-0.13.40 or newer |
 | Delegating project-bound scopes (`project:gateway_proxy`, `project:read_otlp`, `project:write_otlp`) from an organization-wide key | v2026-09-14.01 | logfire-0.13.46 or newer |
+| `logfire_schedule`, and `alerts` on `logfire_slo` | The first release after v2026-09-22.02 (not released yet) | - |
 
 The instance version appears in the Logfire UI and in the `Logfire-Version` response header on releases that report a release tag; builds that report only an image identity are treated as unknown. Charts from logfire-0.13.45 report the release tag the chart was built from.
 
@@ -63,6 +64,7 @@ Each resource states the scopes its calls need. The summary below is the single 
 | `logfire_project` | `organization:create_project` to create; `project:read` to read; `project:write` to update or delete | An organization-wide key in the project's organization to create; an organization-wide or the project's own key to read and write |
 | `logfire_channel` | `organization:read_channel` / `organization:write_channel` | Organization-wide key |
 | `logfire_alert`, `logfire_slo` | `project:read_alert` / `project:write_alert` | A key that can reach the project (see below) |
+| `logfire_schedule` | `organization:read_channel` / `organization:write_channel` | Organization-wide key |
 | `logfire_dashboard` | `project:read_dashboard` / `project:write_dashboard` | A key that can reach the project |
 | `logfire_read_token` | `project:read_token` | A key that can reach the project |
 | `logfire_write_token` | `project:write_token` | A key that can reach the project |

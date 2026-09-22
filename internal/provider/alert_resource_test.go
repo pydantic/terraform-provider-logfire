@@ -56,7 +56,7 @@ func TestAccAlertResource(t *testing.T) {
 					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("watermark"), knownvalue.StringExact("10s")),
 					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("notify_when"), knownvalue.StringExact("has_matches")),
 					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("active"), knownvalue.Bool(true)),
-					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("channel_ids"), knownvalue.SetSizeExact(1)),
+					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("channel_assignments"), knownvalue.SetSizeExact(1)),
 					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("environments"), knownvalue.Null()),
 				},
 			},
@@ -128,7 +128,7 @@ func TestAccAlertResource(t *testing.T) {
 					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("watermark"), knownvalue.StringExact("10s")),
 					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("notify_when"), knownvalue.StringExact("has_matches_changed")),
 					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("active"), knownvalue.Bool(false)),
-					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("channel_ids"), knownvalue.SetSizeExact(2)),
+					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("channel_assignments"), knownvalue.SetSizeExact(2)),
 					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("environments"), knownvalue.SetExact([]knownvalue.Check{
 						knownvalue.StringExact("production"),
 						knownvalue.StringExact("staging"),
@@ -159,9 +159,9 @@ func TestAccAlertResource(t *testing.T) {
 }
 
 func testAccAlertResourceConfig(projectName, channelPrimaryName, channelSecondaryName, alertName string, description *string, query, timeWindow, frequency, notifyWhen string, active bool, includeSecondary bool, environments []string) string {
-	channelIDs := "logfire_channel.primary.id"
+	channelIDs := "{ channel_id = logfire_channel.primary.id }"
 	if includeSecondary {
-		channelIDs = "logfire_channel.primary.id, logfire_channel.secondary.id"
+		channelIDs = "{ channel_id = logfire_channel.primary.id }, { channel_id = logfire_channel.secondary.id }"
 	}
 
 	descLine := ""
@@ -211,7 +211,7 @@ resource "logfire_alert" "test" {
 %s  query       = %q
   time_window = %q
   frequency   = %q
-%s  channel_ids = [%s]
+%s  channel_assignments = [%s]
   notify_when = %q
   active      = %t
 }

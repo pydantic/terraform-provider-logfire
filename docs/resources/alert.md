@@ -27,6 +27,24 @@ resource "logfire_channel" "example" {
   }
 }
 
+resource "logfire_channel" "office" {
+  name = "office-hours-webhook"
+
+  config {
+    type   = "webhook"
+    format = "auto"
+    url    = "https://example.com/logfire-office-webhook"
+  }
+}
+
+resource "logfire_schedule" "office_hours" {
+  label    = "Office hours"
+  timezone = "Europe/London"
+  windows = [
+    { days = [1, 2, 3, 4, 5], start_time = "09:00", end_time = "18:00" },
+  ]
+}
+
 resource "logfire_alert" "example" {
   project_id   = logfire_project.example.id
   name         = "error-alert"
@@ -43,9 +61,14 @@ resource "logfire_alert" "example" {
   time_window  = "1h"
   frequency    = "15m"
   environments = ["production"]
-  channel_ids  = [logfire_channel.example.id]
-  notify_when  = "has_matches"
-  active       = true
+  channel_assignments = [
+    # Notify this channel at all times.
+    { channel_id = logfire_channel.example.id },
+    # Notify this channel only inside the schedule's windows.
+    { channel_id = logfire_channel.office.id, schedule_id = logfire_schedule.office_hours.id },
+  ]
+  notify_when = "has_matches"
+  active      = true
 }
 ```
 
@@ -54,7 +77,7 @@ resource "logfire_alert" "example" {
 
 ### Required
 
-- `channel_ids` (Set of String) Set of channel IDs to notify.
+- `channel_assignments` (Attributes Set) Channels to notify, each with an optional delivery schedule. Set it to `[]` to notify no channel. This is the same type as `alerts.<tier>.channel_assignments` on `logfire_slo`, so one value (for example a `locals` entry) can configure both. (see [below for nested schema](#nestedatt--channel_assignments))
 - `frequency` (String) Evaluation frequency. Allowed values: 1m, 2m, 5m, 10m, 15m, 30m, 1h, 6h, 12h, 24h.
 - `name` (String) Alert name (unique per project).
 - `notify_when` (String) Notification rule. Must match API enum.
@@ -72,6 +95,17 @@ resource "logfire_alert" "example" {
 
 - `id` (String) Alert ID.
 - `watermark` (String) Provider-managed watermark (lateness tolerance) sent to the API.
+
+<a id="nestedatt--channel_assignments"></a>
+### Nested Schema for `channel_assignments`
+
+Required:
+
+- `channel_id` (String) ID of the `logfire_channel` to notify.
+
+Optional:
+
+- `schedule_id` (String) ID of a `logfire_schedule`. The channel is notified only inside the schedule's windows. Omit it to notify the channel at all times.
 
 ## Import
 

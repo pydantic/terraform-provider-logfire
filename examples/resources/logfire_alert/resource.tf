@@ -12,6 +12,24 @@ resource "logfire_channel" "example" {
   }
 }
 
+resource "logfire_channel" "office" {
+  name = "office-hours-webhook"
+
+  config {
+    type   = "webhook"
+    format = "auto"
+    url    = "https://example.com/logfire-office-webhook"
+  }
+}
+
+resource "logfire_schedule" "office_hours" {
+  label    = "Office hours"
+  timezone = "Europe/London"
+  windows = [
+    { days = [1, 2, 3, 4, 5], start_time = "09:00", end_time = "18:00" },
+  ]
+}
+
 resource "logfire_alert" "example" {
   project_id   = logfire_project.example.id
   name         = "error-alert"
@@ -28,7 +46,12 @@ resource "logfire_alert" "example" {
   time_window  = "1h"
   frequency    = "15m"
   environments = ["production"]
-  channel_ids  = [logfire_channel.example.id]
-  notify_when  = "has_matches"
-  active       = true
+  channel_assignments = [
+    # Notify this channel at all times.
+    { channel_id = logfire_channel.example.id },
+    # Notify this channel only inside the schedule's windows.
+    { channel_id = logfire_channel.office.id, schedule_id = logfire_schedule.office_hours.id },
+  ]
+  notify_when = "has_matches"
+  active      = true
 }

@@ -29,6 +29,7 @@ var _ resource.Resource = &SloResource{}
 var _ resource.ResourceWithConfigure = &SloResource{}
 var _ resource.ResourceWithImportState = &SloResource{}
 var _ resource.ResourceWithValidateConfig = &SloResource{}
+var _ resource.ResourceWithModifyPlan = &SloResource{}
 
 func NewSloResource() resource.Resource { return &SloResource{} }
 
@@ -54,8 +55,8 @@ type SloModel struct {
 	TargetPercent     types.String `tfsdk:"target_percent"`
 	RollingWindow     types.String `tfsdk:"rolling_window"`
 	Environments      types.Set    `tfsdk:"environments"`
-	PageChannelIDs    types.Set    `tfsdk:"page_channel_ids"`
-	TicketChannelIDs  types.Set    `tfsdk:"ticket_channel_ids"`
+	// Alerts holds the SLO's tier alerts; see slo_alerts.go.
+	Alerts types.Object `tfsdk:"alerts"`
 }
 
 func (r *SloResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -186,20 +187,7 @@ func (r *SloResource) Schema(ctx context.Context, req resource.SchemaRequest, re
 				Optional:            true,
 				MarkdownDescription: "Deployment environments the SLO is scoped to. Omit to cover all environments.",
 			},
-			"page_channel_ids": rschema.SetAttribute{
-				ElementType: types.StringType,
-				Optional:    true,
-				MarkdownDescription: "Channel IDs seeded onto the SLO's page-severity burn-rate alerts when the SLO is created. " +
-					"Delivery is alert-owned after creation: changing this attribute later updates only the Terraform state, " +
-					"not the existing alerts (edit the alerts' channels instead).",
-			},
-			"ticket_channel_ids": rschema.SetAttribute{
-				ElementType: types.StringType,
-				Optional:    true,
-				MarkdownDescription: "Channel IDs seeded onto the SLO's ticket-severity burn-rate alert when the SLO is created. " +
-					"Delivery is alert-owned after creation: changing this attribute later updates only the Terraform state, " +
-					"not the existing alerts (edit the alerts' channels instead).",
-			},
+			"alerts": sloAlertsAttribute(),
 		},
 	}
 }
@@ -229,6 +217,36 @@ func (r *SloResource) ValidateConfig(ctx context.Context, req resource.ValidateC
 		return
 	}
 	resp.Diagnostics.Append(validateSloSliConfig(&m)...)
+}
+
+// ModifyPlan plans an update when a tier has no alert. Only an SLO created
+// before Logfire kept all three tier alerts has one, and any SLO update,
+// including one that changes no field, creates the missing alerts. Marking
+// the tier's `alert_id` unknown makes the plan show the update.
+func (r *SloResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
+		return
+	}
+	var state, plan SloModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	missing, diags := sloTiersWithoutAlert(ctx, state.Alerts)
+	resp.Diagnostics.Append(diags...)
+	planned, ok, diags := sloAlertsFromObject(ctx, plan.Alerts)
+	resp.Diagnostics.Append(diags...)
+	if !ok || resp.Diagnostics.HasError() {
+		// An unknown `alerts` already means an update.
+		return
+	}
+	for _, name := range missing {
+		if tier := *planned.tier(name); tier.IsNull() || tier.IsUnknown() {
+			continue
+		}
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("alerts").AtName(name).AtName("alert_id"), types.StringUnknown())...)
+	}
 }
 
 // validateSloSliConfig checks the SLI-mode field pairing on a config model.
@@ -397,20 +415,11 @@ func sloModelToCreate(ctx context.Context, m *SloModel) (logclient.SloCreate, di
 		}
 		in.Environments = envs
 	}
-	if !m.PageChannelIDs.IsNull() && !m.PageChannelIDs.IsUnknown() {
-		var ids []string
-		if diags := m.PageChannelIDs.ElementsAs(ctx, &ids, false); diags.HasError() {
-			return logclient.SloCreate{}, diags
-		}
-		in.PageChannelIDs = ids
+	alerts, diags := sloAlertsDelivery(ctx, m.Alerts, func(string, types.Set) bool { return true })
+	if diags.HasError() {
+		return logclient.SloCreate{}, diags
 	}
-	if !m.TicketChannelIDs.IsNull() && !m.TicketChannelIDs.IsUnknown() {
-		var ids []string
-		if diags := m.TicketChannelIDs.ElementsAs(ctx, &ids, false); diags.HasError() {
-			return logclient.SloCreate{}, diags
-		}
-		in.TicketChannelIDs = ids
-	}
+	in.Alerts = alerts
 	return in, nil
 }
 
@@ -517,6 +526,21 @@ func sloModelToUpdate(ctx context.Context, plan, state *SloModel) (logclient.Slo
 		}
 	}
 
+	// A tier is sent when its planned channels differ from state. A tier that
+	// is not configured is planned as its state value, or unknown, so it is
+	// never sent.
+	var tierDiags diag.Diagnostics
+	alerts, diags := sloAlertsDelivery(ctx, plan.Alerts, func(tier string, planned types.Set) bool {
+		current, d := sloStateTierAssignments(ctx, state.Alerts, tier)
+		tierDiags.Append(d...)
+		return !planned.Equal(current)
+	})
+	diags.Append(tierDiags...)
+	if diags.HasError() {
+		return logclient.SloUpdate{}, diags
+	}
+	payload.Alerts = alerts
+
 	return payload, nil
 }
 
@@ -589,15 +613,11 @@ func sloReadToModel(ctx context.Context, s *logclient.SloRead, m *SloModel) diag
 		m.Environments = set
 	}
 
-	// The API never returns the channel seeds (delivery is alert-owned after
-	// creation), so keep whatever the config/state carries. On fresh models
-	// (import) the zero value has no element type; pin it to a typed null.
-	if m.PageChannelIDs.ElementType(ctx) == nil {
-		m.PageChannelIDs = types.SetNull(types.StringType)
+	alerts, diags := sloAlertsToObject(ctx, s.Alerts, m.Alerts)
+	if diags.HasError() {
+		return diags
 	}
-	if m.TicketChannelIDs.ElementType(ctx) == nil {
-		m.TicketChannelIDs = types.SetNull(types.StringType)
-	}
+	m.Alerts = alerts
 	return nil
 }
 
@@ -640,6 +660,15 @@ func (r *SloResource) Create(ctx context.Context, req resource.CreateRequest, re
 	}
 	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
 		state.ProjectID = plan.ProjectID
+	}
+	// The SLO exists, so its state is saved even when its channels were not
+	// applied. With the error, Terraform marks it tainted and replaces it on
+	// the next apply.
+	if diags := sloDeliveryApplied(in.Alerts, out.Alerts); diags.HasError() {
+		resp.Diagnostics.Append(diags...)
+		if out.Alerts == nil {
+			state.Alerts = types.ObjectNull(sloAlertsAttrTypes)
+		}
 	}
 
 	tflog.Trace(ctx, "created slo", map[string]any{"id": state.ID.ValueString(), "project_id": projectID})
@@ -745,6 +774,14 @@ func (r *SloResource) Update(ctx context.Context, req resource.UpdateRequest, re
 	}
 	if newState.ProjectID.IsNull() || newState.ProjectID.IsUnknown() || newState.ProjectID.ValueString() == "" {
 		newState.ProjectID = state.ProjectID
+	}
+	// Without `alerts` in the response, keep the prior channels in state so
+	// the next plan sends the configured channels again.
+	if diags := sloDeliveryApplied(payload.Alerts, out.Alerts); diags.HasError() {
+		resp.Diagnostics.Append(diags...)
+		if out.Alerts == nil {
+			newState.Alerts = state.Alerts
+		}
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &newState)...)
 }

@@ -50,7 +50,9 @@ resource "logfire_alert" "production_alert_execution_failures" {
   SQL
   time_window = "1h"
   frequency   = "15m"
-  channel_ids = [logfire_channel.alerts_webhook.id]
+  channel_assignments = [
+    { channel_id = logfire_channel.alerts_webhook.id },
+  ]
   notify_when = "has_matches"
   active      = true
 }

@@ -20,14 +20,25 @@ resource "logfire_project" "example" {
   name = "example-project"
 }
 
-resource "logfire_channel" "oncall" {
-  name = "oncall-webhook"
+resource "logfire_channel" "alerts" {
+  name = "alerts-webhook"
 
   config {
     type   = "webhook"
     format = "auto"
-    url    = "https://hooks.example.com/oncall"
+    url    = "https://hooks.example.com/alerts"
   }
+}
+
+# An SLO has three burn-rate alerts: `fast` and `medium` (severity `page`)
+# and `slow` (severity `ticket`). The provider writes each configured tier's
+# channel assignments to its alert and reads them back, so a change made on
+# the Logfire alerts page shows as drift in the next plan. A tier that is not
+# configured keeps its channels.
+
+# 1. The same channels on every alert, through a local.
+locals {
+  everyone = [{ channel_id = logfire_channel.alerts.id }]
 }
 
 resource "logfire_slo" "example" {
@@ -41,15 +52,118 @@ resource "logfire_slo" "example" {
   rolling_window = "30d"
   environments   = ["prod"]
 
-  # Seed the generated burn-rate alerts' delivery channels (create-time only;
-  # delivery is alert-owned afterwards).
-  page_channel_ids   = [logfire_channel.oncall.id]
-  ticket_channel_ids = [logfire_channel.oncall.id]
+  alerts = {
+    fast   = { channel_assignments = local.everyone }
+    medium = { channel_assignments = local.everyone }
+    slow   = { channel_assignments = local.everyone }
+  }
+}
+
+# 2. Different channels per tier.
+resource "logfire_channel" "pagerduty" {
+  name = "pagerduty"
+
+  config {
+    type        = "pagerduty"
+    routing_key = var.pagerduty_routing_key
+  }
+}
+
+resource "logfire_channel" "incidents" {
+  name = "incidents-webhook"
+
+  config {
+    type   = "webhook"
+    format = "auto"
+    url    = "https://hooks.example.com/incidents"
+  }
+}
+
+resource "logfire_channel" "reliability" {
+  name = "reliability-webhook"
+
+  config {
+    type   = "webhook"
+    format = "auto"
+    url    = "https://hooks.example.com/reliability"
+  }
+}
+
+resource "logfire_slo" "checkout_errors" {
+  project_id     = logfire_project.example.id
+  scope_value    = "checkout"
+  name           = "checkout-errors"
+  total_query    = "parent_span_id IS NULL"
+  bad_query      = "otel_status_code = 'ERROR'"
+  target_percent = "99.9"
+  rolling_window = "30d"
+
+  alerts = {
+    fast = {
+      channel_assignments = [
+        { channel_id = logfire_channel.pagerduty.id },
+        { channel_id = logfire_channel.incidents.id },
+      ]
+    }
+    medium = { channel_assignments = [{ channel_id = logfire_channel.incidents.id }] }
+    slow   = { channel_assignments = [{ channel_id = logfire_channel.reliability.id }] }
+  }
+}
+
+# 3. Delivery schedules, shared with a normal alert. PagerDuty gets every
+# fast and medium burn. The incidents channel gets them only during office
+# hours, and the reliability channel gets slow burns during office hours. A
+# normal alert reuses the same configuration, because both resources use the
+# same assignment type.
+resource "logfire_schedule" "office_hours" {
+  label    = "Office hours"
+  timezone = "Europe/London"
+  windows = [
+    { days = [1, 2, 3, 4, 5], start_time = "09:00", end_time = "18:00" },
+  ]
+}
+
+locals {
+  oncall = [
+    { channel_id = logfire_channel.pagerduty.id },
+    { channel_id = logfire_channel.incidents.id, schedule_id = logfire_schedule.office_hours.id },
+  ]
+}
+
+resource "logfire_slo" "checkout" {
+  project_id     = logfire_project.example.id
+  scope_value    = "checkout"
+  name           = "checkout-availability"
+  total_query    = "parent_span_id IS NULL"
+  bad_query      = "otel_status_code = 'ERROR'"
+  target_percent = "99.9"
+  rolling_window = "30d"
+
+  alerts = {
+    fast   = { channel_assignments = local.oncall }
+    medium = { channel_assignments = local.oncall }
+    slow = {
+      channel_assignments = [
+        { channel_id = logfire_channel.reliability.id, schedule_id = logfire_schedule.office_hours.id },
+      ]
+    }
+  }
+}
+
+resource "logfire_alert" "payment_errors" {
+  project_id          = logfire_project.example.id
+  name                = "payment-errors"
+  query               = "select trace_id from records where span_name = 'payment failed'"
+  time_window         = "5m"
+  frequency           = "1m"
+  notify_when         = "has_matches"
+  channel_assignments = local.oncall
 }
 
 # A histogram-threshold metric SLI: "95% of queue-latency observations under
 # 60s". Uses `threshold` + `comparison` instead of `bad_query`, and requires
-# `source = "metrics"`.
+# `source = "metrics"`. It configures no tier, so the provider leaves the
+# channels of its alerts as they are.
 resource "logfire_slo" "queue_latency" {
   project_id         = logfire_project.example.id
   scope_value        = "ingest"
@@ -61,6 +175,11 @@ resource "logfire_slo" "queue_latency" {
   comparison         = "less_than"
   target_percent     = "95"
   rolling_window     = "30d"
+}
+
+variable "pagerduty_routing_key" {
+  type      = string
+  sensitive = true
 }
 ```
 
@@ -78,20 +197,104 @@ resource "logfire_slo" "queue_latency" {
 
 ### Optional
 
+- `alerts` (Attributes) The SLO's burn-rate alerts, one per tier: `fast` and `medium` (severity `page`) and `slow` (severity `ticket`). Each alert exists as long as the SLO does. Configure `channel_assignments` on the tiers whose delivery Terraform should manage. A tier that is not configured is not sent and not managed: the provider reports its current channels and never changes them. Setting `channel_assignments` needs the first Logfire release after v2026-09-22.02. An older release does not apply them, so the provider fails the apply with an error. `alerts` is null when the Logfire release does not return the SLO's alerts. (see [below for nested schema](#nestedatt--alerts))
 - `bad_query` (String) SQL boolean expression selecting the bad events counted by the SLO. Required for every mode except `metric_aggregation = "histogram_threshold"`, which uses `threshold` and `comparison` instead.
 - `comparison` (String) For `metric_aggregation = "histogram_threshold"`: the good side of the `threshold`. `less_than` (good is below the threshold, the latency case) or `greater_than`. Required for that mode, and must be omitted otherwise.
 - `description` (String) SLO description.
 - `environments` (Set of String) Deployment environments the SLO is scoped to. Omit to cover all environments.
 - `metric_aggregation` (String) How a `metrics` SLO aggregates its SLI: `additive` (sum of scalar values, for delta-count metrics), `gauge_fraction` (fraction of samples meeting the condition, for gauges), `counter_rate` (sum of per-series increases, for cumulative counters), or `histogram_threshold` (fraction of histogram observations past a threshold; uses `threshold` and `comparison` instead of `bad_query`, and requires `source = "metrics"`). Ignored when `source = "records"`. Defaults to `additive`.
-- `page_channel_ids` (Set of String) Channel IDs seeded onto the SLO's page-severity burn-rate alerts when the SLO is created. Delivery is alert-owned after creation: changing this attribute later updates only the Terraform state, not the existing alerts (edit the alerts' channels instead).
 - `scope_kind` (String) What the SLO is anchored to: a service (`service`) or an LLM provider (`provider`). Defaults to `service`. Changing it forces a new SLO.
 - `source` (String) Whether the SLO ratio is computed over span events (`records`) or metric values (`metrics`). Defaults to `records`.
 - `threshold` (String) For `metric_aggregation = "histogram_threshold"`: the cutoff in the metric's native unit, as a decimal string (e.g. `"60000"` on a `_ms` latency metric). Required for that mode, and must be omitted otherwise.
-- `ticket_channel_ids` (Set of String) Channel IDs seeded onto the SLO's ticket-severity burn-rate alert when the SLO is created. Delivery is alert-owned after creation: changing this attribute later updates only the Terraform state, not the existing alerts (edit the alerts' channels instead).
 
 ### Read-Only
 
 - `id` (String) SLO ID.
+
+<a id="nestedatt--alerts"></a>
+### Nested Schema for `alerts`
+
+Optional:
+
+- `fast` (Attributes) The `fast` burn-rate tier's alert (severity `page`). Omit it to leave that alert's channels as they are. (see [below for nested schema](#nestedatt--alerts--fast))
+- `medium` (Attributes) The `medium` burn-rate tier's alert (severity `page`). Omit it to leave that alert's channels as they are. (see [below for nested schema](#nestedatt--alerts--medium))
+- `slow` (Attributes) The `slow` burn-rate tier's alert (severity `ticket`). Omit it to leave that alert's channels as they are. (see [below for nested schema](#nestedatt--alerts--slow))
+
+<a id="nestedatt--alerts--fast"></a>
+### Nested Schema for `alerts.fast`
+
+Optional:
+
+- `channel_assignments` (Attributes Set) Channels of this tier's alert, each with an optional delivery schedule. The provider writes the value to the alert on create, and on update when it differs from what the alert has. It is read back from the alert, so a change made on the Logfire alerts page shows as drift. Set it to `[]` to remove every channel. It is the same type as `logfire_alert.channel_assignments`. (see [below for nested schema](#nestedatt--alerts--fast--channel_assignments))
+
+Read-Only:
+
+- `alert_id` (String) ID of the tier's alert. Null only for an SLO created before Logfire kept all three tier alerts, when the tier could not fire at the SLO's target. The provider then plans an update of the SLO, even when no attribute changed, and that update creates the missing alert.
+- `severity` (String) `page` for the `fast` and `medium` tiers, `ticket` for the `slow` tier.
+- `viable` (Boolean) False when the tier cannot fire at the SLO's `target_percent`. The alert keeps its channels but is not evaluated until a target change makes the tier viable.
+
+<a id="nestedatt--alerts--fast--channel_assignments"></a>
+### Nested Schema for `alerts.fast.channel_assignments`
+
+Required:
+
+- `channel_id` (String) ID of the `logfire_channel` to notify.
+
+Optional:
+
+- `schedule_id` (String) ID of a `logfire_schedule`. The channel is notified only inside the schedule's windows. Omit it to notify the channel at all times.
+
+
+
+<a id="nestedatt--alerts--medium"></a>
+### Nested Schema for `alerts.medium`
+
+Optional:
+
+- `channel_assignments` (Attributes Set) Channels of this tier's alert, each with an optional delivery schedule. The provider writes the value to the alert on create, and on update when it differs from what the alert has. It is read back from the alert, so a change made on the Logfire alerts page shows as drift. Set it to `[]` to remove every channel. It is the same type as `logfire_alert.channel_assignments`. (see [below for nested schema](#nestedatt--alerts--medium--channel_assignments))
+
+Read-Only:
+
+- `alert_id` (String) ID of the tier's alert. Null only for an SLO created before Logfire kept all three tier alerts, when the tier could not fire at the SLO's target. The provider then plans an update of the SLO, even when no attribute changed, and that update creates the missing alert.
+- `severity` (String) `page` for the `fast` and `medium` tiers, `ticket` for the `slow` tier.
+- `viable` (Boolean) False when the tier cannot fire at the SLO's `target_percent`. The alert keeps its channels but is not evaluated until a target change makes the tier viable.
+
+<a id="nestedatt--alerts--medium--channel_assignments"></a>
+### Nested Schema for `alerts.medium.channel_assignments`
+
+Required:
+
+- `channel_id` (String) ID of the `logfire_channel` to notify.
+
+Optional:
+
+- `schedule_id` (String) ID of a `logfire_schedule`. The channel is notified only inside the schedule's windows. Omit it to notify the channel at all times.
+
+
+
+<a id="nestedatt--alerts--slow"></a>
+### Nested Schema for `alerts.slow`
+
+Optional:
+
+- `channel_assignments` (Attributes Set) Channels of this tier's alert, each with an optional delivery schedule. The provider writes the value to the alert on create, and on update when it differs from what the alert has. It is read back from the alert, so a change made on the Logfire alerts page shows as drift. Set it to `[]` to remove every channel. It is the same type as `logfire_alert.channel_assignments`. (see [below for nested schema](#nestedatt--alerts--slow--channel_assignments))
+
+Read-Only:
+
+- `alert_id` (String) ID of the tier's alert. Null only for an SLO created before Logfire kept all three tier alerts, when the tier could not fire at the SLO's target. The provider then plans an update of the SLO, even when no attribute changed, and that update creates the missing alert.
+- `severity` (String) `page` for the `fast` and `medium` tiers, `ticket` for the `slow` tier.
+- `viable` (Boolean) False when the tier cannot fire at the SLO's `target_percent`. The alert keeps its channels but is not evaluated until a target change makes the tier viable.
+
+<a id="nestedatt--alerts--slow--channel_assignments"></a>
+### Nested Schema for `alerts.slow.channel_assignments`
+
+Required:
+
+- `channel_id` (String) ID of the `logfire_channel` to notify.
+
+Optional:
+
+- `schedule_id` (String) ID of a `logfire_schedule`. The channel is notified only inside the schedule's windows. Omit it to notify the channel at all times.
 
 ## Import
 

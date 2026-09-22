@@ -14,18 +14,15 @@ import (
 func environmentsBaseModel(t *testing.T) AlertModel {
 	t.Helper()
 
-	channelSet, diags := types.SetValueFrom(context.Background(), types.StringType, []string{"channel-1"})
-	if diags.HasError() {
-		t.Fatalf("failed to build channel set: %v", diags)
-	}
+	channelSet := testChannelAssignments(t, logclient.ChannelAssignment{ChannelID: "channel-1"})
 
 	return AlertModel{
-		Name:       types.StringValue("name"),
-		Query:      types.StringValue("select 1"),
-		TimeWindow: types.StringValue("5m"),
-		Frequency:  types.StringValue("5m"),
-		ChannelIDs: channelSet,
-		NotifyWhen: types.StringValue("has_matches"),
+		Name:               types.StringValue("name"),
+		Query:              types.StringValue("select 1"),
+		TimeWindow:         types.StringValue("5m"),
+		Frequency:          types.StringValue("5m"),
+		ChannelAssignments: channelSet,
+		NotifyWhen:         types.StringValue("has_matches"),
 	}
 }
 
@@ -87,7 +84,7 @@ func TestAlertReadToModel_Environments(t *testing.T) {
 			Frequency:    "PT5M",
 			Watermark:    "PT10S",
 			Environments: envs,
-			Channels:     []logclient.ChannelRead{},
+			Channels:     []logclient.AlertChannelRead{},
 			NotifyWhen:   "has_matches",
 			Active:       true,
 		}

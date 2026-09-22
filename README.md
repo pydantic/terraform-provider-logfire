@@ -56,7 +56,9 @@ resource "logfire_alert" "execution_errors" {
   SQL
   time_window  = "1h"
   frequency    = "15m"
-  channel_ids  = [logfire_channel.alerts.id]
+  channel_assignments = [
+    { channel_id = logfire_channel.alerts.id },
+  ]
   notify_when  = "has_matches"
   active       = true
 }

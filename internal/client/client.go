@@ -726,41 +726,59 @@ func (c *APIClient) ListProjects(ctx context.Context) ([]ProjectRead, error) {
 // ---- Alerts ----
 
 type AlertRead struct {
-	ID             string          `json:"id"`
-	OrganizationID string          `json:"organization_id"`
-	ProjectID      string          `json:"project_id"`
-	CreatedAt      string          `json:"created_at"`
-	UpdatedAt      *string         `json:"updated_at"`
-	CreatedByName  *string         `json:"created_by_name"`
-	UpdatedByName  *string         `json:"updated_by_name"`
-	Name           string          `json:"name"`
-	Description    *string         `json:"description"`
-	Query          string          `json:"query"`
-	TimeWindow     string          `json:"time_window"`
-	Frequency      string          `json:"frequency"`
-	Watermark      string          `json:"watermark"`
-	Environments   []string        `json:"environments"`
-	Channels       []ChannelRead   `json:"channels"`
-	NotifyWhen     string          `json:"notify_when"`
-	Active         bool            `json:"active"`
-	LastRun        *string         `json:"last_run,omitempty"`
-	HasMatches     *bool           `json:"has_matches,omitempty"`
-	HasErrors      *bool           `json:"has_errors,omitempty"`
-	Result         json.RawMessage `json:"result,omitempty"`
-	ResultLength   *int            `json:"result_length,omitempty"`
+	ID             string             `json:"id"`
+	OrganizationID string             `json:"organization_id"`
+	ProjectID      string             `json:"project_id"`
+	CreatedAt      string             `json:"created_at"`
+	UpdatedAt      *string            `json:"updated_at"`
+	CreatedByName  *string            `json:"created_by_name"`
+	UpdatedByName  *string            `json:"updated_by_name"`
+	Name           string             `json:"name"`
+	Description    *string            `json:"description"`
+	Query          string             `json:"query"`
+	TimeWindow     string             `json:"time_window"`
+	Frequency      string             `json:"frequency"`
+	Watermark      string             `json:"watermark"`
+	Environments   []string           `json:"environments"`
+	Channels       []AlertChannelRead `json:"channels"`
+	// ChannelAssignments is nil on a Logfire release that does not return
+	// it. A present empty list decodes to an empty, non-nil slice.
+	ChannelAssignments []ChannelAssignment `json:"channel_assignments"`
+	NotifyWhen         string              `json:"notify_when"`
+	Active             bool                `json:"active"`
+	LastRun            *string             `json:"last_run,omitempty"`
+	HasMatches         *bool               `json:"has_matches,omitempty"`
+	HasErrors          *bool               `json:"has_errors,omitempty"`
+	Result             json.RawMessage     `json:"result,omitempty"`
+	ResultLength       *int                `json:"result_length,omitempty"`
+}
+
+// ChannelAssignment is the API's `AlertChannelAssignment`: one channel an
+// alert notifies, optionally limited to the windows of a delivery schedule.
+// Normal alerts and SLO burn-rate alerts use the same type.
+type ChannelAssignment struct {
+	ChannelID  string  `json:"channel_id"`
+	ScheduleID *string `json:"schedule_id,omitempty"`
+}
+
+// AlertChannelRead is a channel as listed on an alert: the channel plus the
+// schedule of its assignment to that alert.
+type AlertChannelRead struct {
+	ChannelRead
+	ScheduleID *string `json:"schedule_id"`
 }
 
 type AlertCreate struct {
-	Name         string   `json:"name"`
-	Description  *string  `json:"description"`
-	Active       *bool    `json:"active,omitempty"`
-	Query        string   `json:"query"`
-	TimeWindow   string   `json:"time_window"`
-	Frequency    string   `json:"frequency"`
-	Watermark    string   `json:"watermark"`
-	Environments []string `json:"environments,omitempty"`
-	ChannelIDs   []string `json:"channel_ids"`
-	NotifyWhen   string   `json:"notify_when"`
+	Name               string              `json:"name"`
+	Description        *string             `json:"description"`
+	Active             *bool               `json:"active,omitempty"`
+	Query              string              `json:"query"`
+	TimeWindow         string              `json:"time_window"`
+	Frequency          string              `json:"frequency"`
+	Watermark          string              `json:"watermark"`
+	Environments       []string            `json:"environments,omitempty"`
+	ChannelAssignments []ChannelAssignment `json:"channel_assignments"`
+	NotifyWhen         string              `json:"notify_when"`
 }
 
 type AlertUpdate struct {
@@ -772,8 +790,9 @@ type AlertUpdate struct {
 	Active       *bool     `json:"active,omitempty"`
 	Query        *string   `json:"query,omitempty"`
 	Environments *[]string `json:"environments,omitempty"`
-	ChannelIDs   *[]string `json:"channel_ids,omitempty"`
-	NotifyWhen   *string   `json:"notify_when,omitempty"`
+	// ChannelAssignments replaces the alert's channels when set.
+	ChannelAssignments *[]ChannelAssignment `json:"channel_assignments,omitempty"`
+	NotifyWhen         *string              `json:"notify_when,omitempty"`
 }
 
 func (c *APIClient) alertsBase(projectID string) string {
@@ -1327,6 +1346,43 @@ type SloRead struct {
 	BudgetRemainingPercent *string  `json:"budget_remaining_percent"`
 	LastCheckedAt          *string  `json:"last_checked_at"`
 	PredicateVersion       int      `json:"predicate_version"`
+	// Alerts is the SLO's burn-rate alerts keyed by tier, with each alert's
+	// channels as stored on the alert. It is nil on a Logfire release that
+	// does not return it.
+	Alerts *SloTierAlerts `json:"alerts,omitempty"`
+}
+
+// SloTierAlerts holds an SLO's three burn-rate alerts. Every SLO has all
+// three keys.
+type SloTierAlerts struct {
+	Fast   SloTierAlert `json:"fast"`
+	Medium SloTierAlert `json:"medium"`
+	Slow   SloTierAlert `json:"slow"`
+}
+
+// Tier returns the alert of a tier name: "fast", "medium" or "slow".
+func (a *SloTierAlerts) Tier(name string) SloTierAlert {
+	switch name {
+	case "fast":
+		return a.Fast
+	case "medium":
+		return a.Medium
+	default:
+		return a.Slow
+	}
+}
+
+// SloTierAlert is one burn-rate tier's alert as listed on its SLO.
+type SloTierAlert struct {
+	// AlertID is nil only for an SLO created before every SLO kept all three
+	// tier alerts; the SLO's next update creates the alert.
+	AlertID *string `json:"alert_id"`
+	// Severity is "page" for the fast and medium tiers, "ticket" for slow.
+	Severity string `json:"severity"`
+	// Viable is false when the tier cannot fire at the SLO's target. The
+	// alert keeps its channels but is not evaluated.
+	Viable             bool                `json:"viable"`
+	ChannelAssignments []ChannelAssignment `json:"channel_assignments"`
 }
 
 type SloCreate struct {
@@ -1346,10 +1402,10 @@ type SloCreate struct {
 	TargetPercent        string   `json:"target_percent"`
 	RollingWindowSeconds int64    `json:"rolling_window_seconds"`
 	Environments         []string `json:"environments,omitempty"`
-	// Create-time seeds for the generated burn-rate alerts' notification
-	// channels. Delivery is alert-owned after creation and never read back.
-	PageChannelIDs   []string `json:"page_channel_ids,omitempty"`
-	TicketChannelIDs []string `json:"ticket_channel_ids,omitempty"`
+	// Alerts sets the channels of the named tier alerts. A tier that is left
+	// out starts with no channels. The create-only `page_channel_ids` /
+	// `ticket_channel_ids` shorthand is not used.
+	Alerts *SloAlertsDelivery `json:"alerts,omitempty"`
 }
 
 type SloUpdate struct {
@@ -1369,6 +1425,34 @@ type SloUpdate struct {
 	TargetPercent        *string   `json:"target_percent,omitempty"`
 	RollingWindowSeconds *int64    `json:"rolling_window_seconds,omitempty"`
 	Environments         *[]string `json:"environments,omitempty"`
+	// Alerts replaces the channels of each named tier alert. A tier that is
+	// left out, or an update without Alerts, keeps its channels.
+	Alerts *SloAlertsDelivery `json:"alerts,omitempty"`
+}
+
+// SloAlertsDelivery is the request's delivery per burn-rate tier alert. The
+// API rejects an unknown tier key.
+type SloAlertsDelivery struct {
+	Fast   *SloTierDelivery `json:"fast,omitempty"`
+	Medium *SloTierDelivery `json:"medium,omitempty"`
+	Slow   *SloTierDelivery `json:"slow,omitempty"`
+}
+
+// Tier returns the field for a tier name: "fast", "medium" or "slow".
+func (d *SloAlertsDelivery) Tier(name string) **SloTierDelivery {
+	switch name {
+	case "fast":
+		return &d.Fast
+	case "medium":
+		return &d.Medium
+	default:
+		return &d.Slow
+	}
+}
+
+// SloTierDelivery is one tier alert's delivery, in the alert API's shape.
+type SloTierDelivery struct {
+	ChannelAssignments []ChannelAssignment `json:"channel_assignments"`
 }
 
 func (c *APIClient) slosBase(projectID string) string {
@@ -1420,4 +1504,82 @@ func (c *APIClient) ListSlos(ctx context.Context, projectID string) ([]SloRead, 
 		return nil, err
 	}
 	return out, nil
+}
+
+// ---- Schedules ----
+
+// Schedules are organization-scoped. The API has no list route: a schedule is
+// addressed by its ID. Update is a partial PUT that changes only the fields it
+// names.
+
+// ScheduleWindow is a time window in which a schedule delivers. Days are ISO
+// weekday numbers (1 is Monday, 7 is Sunday) and times are 24-hour "HH:MM".
+type ScheduleWindow struct {
+	Days      []int64 `json:"days"`
+	StartTime string  `json:"start_time"`
+	EndTime   string  `json:"end_time"`
+}
+
+type ScheduleRead struct {
+	ID             string           `json:"id"`
+	OrganizationID string           `json:"organization_id"`
+	Label          string           `json:"label"`
+	Timezone       string           `json:"timezone"`
+	Windows        []ScheduleWindow `json:"windows"`
+	CreatedAt      string           `json:"created_at"`
+	UpdatedAt      *string          `json:"updated_at"`
+}
+
+type ScheduleCreate struct {
+	Label    string           `json:"label"`
+	Timezone string           `json:"timezone"`
+	Windows  []ScheduleWindow `json:"windows"`
+}
+
+type ScheduleUpdate struct {
+	Label    *string           `json:"label,omitempty"`
+	Timezone *string           `json:"timezone,omitempty"`
+	Windows  *[]ScheduleWindow `json:"windows,omitempty"`
+}
+
+func (c *APIClient) schedulesBase() string {
+	return "/api/v1/schedules/"
+}
+func (c *APIClient) schedulePath(id string) string {
+	return fmt.Sprintf("/api/v1/schedules/%s/", url.PathEscape(id))
+}
+
+func (c *APIClient) CreateSchedule(ctx context.Context, in ScheduleCreate) (*ScheduleRead, error) {
+	var out ScheduleRead
+	_, err := c.doJSON(ctx, http.MethodPost, c.schedulesBase(), in, &out, http.StatusCreated)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *APIClient) GetSchedule(ctx context.Context, id string) (*ScheduleRead, int, error) {
+	var out ScheduleRead
+	resp, err := c.doJSON(ctx, http.MethodGet, c.schedulePath(id), nil, &out, http.StatusOK)
+	if err != nil {
+		if resp != nil {
+			return nil, resp.StatusCode, err
+		}
+		return nil, 0, err
+	}
+	return &out, http.StatusOK, nil
+}
+
+func (c *APIClient) UpdateSchedule(ctx context.Context, id string, in ScheduleUpdate) (*ScheduleRead, error) {
+	var out ScheduleRead
+	_, err := c.doJSON(ctx, http.MethodPut, c.schedulePath(id), in, &out, http.StatusOK)
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *APIClient) DeleteSchedule(ctx context.Context, id string) error {
+	_, err := c.doJSON(ctx, http.MethodDelete, c.schedulePath(id), nil, nil, http.StatusNoContent)
+	return err
 }

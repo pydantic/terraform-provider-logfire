@@ -14,18 +14,15 @@ import (
 func TestAlertModelToCreate_DescriptionAndActive(t *testing.T) {
 	t.Parallel()
 
-	channelSet, diags := types.SetValueFrom(context.Background(), types.StringType, []string{"channel-1"})
-	if diags.HasError() {
-		t.Fatalf("failed to build channel set: %v", diags)
-	}
+	channelSet := testChannelAssignments(t, logclient.ChannelAssignment{ChannelID: "channel-1"})
 
 	base := AlertModel{
-		Name:       types.StringValue("name"),
-		Query:      types.StringValue("select 1"),
-		TimeWindow: types.StringValue("5m"),
-		Frequency:  types.StringValue("5m"),
-		ChannelIDs: channelSet,
-		NotifyWhen: types.StringValue("has_matches"),
+		Name:               types.StringValue("name"),
+		Query:              types.StringValue("select 1"),
+		TimeWindow:         types.StringValue("5m"),
+		Frequency:          types.StringValue("5m"),
+		ChannelAssignments: channelSet,
+		NotifyWhen:         types.StringValue("has_matches"),
 	}
 
 	t.Run("uses empty description string when null", func(t *testing.T) {
@@ -83,7 +80,7 @@ func TestAlertReadToModel_DescriptionAndActive(t *testing.T) {
 			TimeWindow:  "PT5M",
 			Frequency:   "PT5M",
 			Watermark:   "PT10S",
-			Channels:    []logclient.ChannelRead{},
+			Channels:    []logclient.AlertChannelRead{},
 			NotifyWhen:  "has_matches",
 			Active:      false,
 		}
@@ -115,7 +112,7 @@ func TestAlertReadToModel_DescriptionAndActive(t *testing.T) {
 			TimeWindow:  "PT5M",
 			Frequency:   "PT5M",
 			Watermark:   "PT10S",
-			Channels:    []logclient.ChannelRead{},
+			Channels:    []logclient.AlertChannelRead{},
 			NotifyWhen:  "has_matches",
 			Active:      false,
 		}
