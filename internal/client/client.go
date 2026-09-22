@@ -1549,9 +1549,12 @@ func (c *APIClient) schedulePath(id string) string {
 	return fmt.Sprintf("/api/v1/schedules/%s/", url.PathEscape(id))
 }
 
+// CreateSchedule is not retried automatically: schedules have no unique
+// field, so a retry after a create that reached the server would add a
+// second schedule.
 func (c *APIClient) CreateSchedule(ctx context.Context, in ScheduleCreate) (*ScheduleRead, error) {
 	var out ScheduleRead
-	_, err := c.doJSON(ctx, http.MethodPost, c.schedulesBase(), in, &out, http.StatusCreated)
+	_, err := c.doJSON(disableAutomaticRetries(ctx), http.MethodPost, c.schedulesBase(), in, &out, http.StatusCreated)
 	if err != nil {
 		return nil, err
 	}

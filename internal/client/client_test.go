@@ -127,3 +127,19 @@ func (rt *recordingTransport) RoundTrip(req *http.Request) (*http.Response, erro
 		Request:    req,
 	}, nil
 }
+
+func TestCreateScheduleIsNotAutomaticallyRetried(t *testing.T) {
+	t.Parallel()
+
+	probe := &frontendApplicationCreateRetryProbe{}
+	client, err := NewAPIClient("https://example.com", "test", &http.Client{Transport: &retryingTransport{next: probe, maxAttempts: 3}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CreateSchedule(context.Background(), ScheduleCreate{Label: "office hours", Timezone: "UTC"}); err == nil {
+		t.Fatal("expected the first 503 response to be returned")
+	}
+	if probe.attempts != 1 {
+		t.Fatalf("create request attempts = %d; want 1", probe.attempts)
+	}
+}
