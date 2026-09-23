@@ -183,33 +183,51 @@ func sloStateTierAssignments(ctx context.Context, state types.Object, tier strin
 
 // sloPlanAlerts completes the planned `alerts` from state on an update.
 // Terraform does not merge state into an Optional+Computed nested attribute
-// whose configuration is set, so a tier that is not configured, and the
-// computed fields of a configured tier, are planned unknown and every plan
-// would show an update. Each unknown value is taken from state when the update
-// cannot change it: an unconfigured tier keeps its channels, `alert_id` and
+// whose configuration is set, so an omitted tier, an omitted
+// `channel_assignments`, and the computed fields of a configured tier are
+// planned unknown and every plan would show an update. Configuration is needed
+// to distinguish those omitted values from expressions that are configured but
+// still unknown. Only omitted values are taken from state; configured unknowns
+// stay unknown so Terraform can resolve them during apply. `alert_id` and
 // `severity` do not change once the alert exists, and `viable` changes only
-// with `target_percent`. A tier whose alert is missing in state gets an
-// unknown `alert_id`, so the plan shows the update that creates the alert.
-func sloPlanAlerts(ctx context.Context, plan, state types.Object, targetChanged bool) (types.Object, diag.Diagnostics) {
+// with `target_percent`. A tier whose alert is missing in state gets an unknown
+// `alert_id`, so the plan shows the update that creates the alert.
+func sloPlanAlerts(ctx context.Context, config, plan, state types.Object, targetChanged bool) (types.Object, diag.Diagnostics) {
+	// The whole attribute may be a configured expression whose value is not
+	// known until another resource is applied. Replacing it with state would
+	// silently defer its channel change to a second apply.
+	if config.IsUnknown() {
+		return plan, nil
+	}
+
 	prior, ok, diags := sloAlertsFromObject(ctx, state)
 	if !ok {
 		// A Logfire release that does not return `alerts` leaves it null in
 		// state, and a read after the update leaves it null again.
-		if state.IsNull() && plan.IsUnknown() {
+		if config.IsNull() && state.IsNull() && plan.IsUnknown() {
 			return types.ObjectNull(sloAlertsAttrTypes), diags
 		}
 		return plan, diags
 	}
-	if plan.IsNull() {
-		return plan, diags
+
+	configured := sloAlertsModel{
+		Fast:   types.ObjectNull(sloTierAttrTypes),
+		Medium: types.ObjectNull(sloTierAttrTypes),
+		Slow:   types.ObjectNull(sloTierAttrTypes),
 	}
-	// Without `alerts` in the configuration, every tier is unconfigured.
+	if !config.IsNull() {
+		var d diag.Diagnostics
+		if configured, _, d = sloAlertsFromObject(ctx, config); d.HasError() {
+			return plan, append(diags, d...)
+		}
+	}
+
 	planned := sloAlertsModel{
 		Fast:   types.ObjectUnknown(sloTierAttrTypes),
 		Medium: types.ObjectUnknown(sloTierAttrTypes),
 		Slow:   types.ObjectUnknown(sloTierAttrTypes),
 	}
-	if !plan.IsUnknown() {
+	if !plan.IsNull() && !plan.IsUnknown() {
 		var d diag.Diagnostics
 		if planned, _, d = sloAlertsFromObject(ctx, plan); d.HasError() {
 			return plan, append(diags, d...)
@@ -219,18 +237,36 @@ func sloPlanAlerts(ctx context.Context, plan, state types.Object, targetChanged 
 		stateTier, ok, d := sloTierFromObject(ctx, *prior.tier(name))
 		diags.Append(d...)
 		planObj := planned.tier(name)
-		if !ok || planObj.IsNull() {
+		configObj := configured.tier(name)
+		if !ok || configObj.IsUnknown() {
 			continue
 		}
+
+		tierConfigured := !configObj.IsNull()
 		t := stateTier
-		if !planObj.IsUnknown() {
+		if tierConfigured {
+			// A configured tier can itself be an unknown expression. Preserve it
+			// rather than replacing the intended value with state.
+			if planObj.IsNull() || planObj.IsUnknown() {
+				continue
+			}
 			if t, _, d = sloTierFromObject(ctx, *planObj); d.HasError() {
 				return plan, append(diags, d...)
 			}
 		} else if targetChanged {
 			t.Viable = types.BoolUnknown()
 		}
-		if t.ChannelAssignments.IsUnknown() {
+
+		assignmentsConfigured := false
+		if tierConfigured {
+			configTier, _, d := sloTierFromObject(ctx, *configObj)
+			diags.Append(d...)
+			if d.HasError() {
+				return plan, diags
+			}
+			assignmentsConfigured = !configTier.ChannelAssignments.IsNull()
+		}
+		if t.ChannelAssignments.IsUnknown() && !assignmentsConfigured {
 			t.ChannelAssignments = stateTier.ChannelAssignments
 		}
 		if t.AlertID.IsUnknown() {

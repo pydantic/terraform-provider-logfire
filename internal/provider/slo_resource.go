@@ -224,7 +224,8 @@ func (r *SloResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanReq
 	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
 		return
 	}
-	var state, plan SloModel
+	var config, state, plan SloModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
@@ -232,7 +233,7 @@ func (r *SloResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanReq
 	}
 	targetChanged := plan.TargetPercent.IsUnknown() || state.TargetPercent.IsNull() ||
 		!decimalStringsEqual(plan.TargetPercent.ValueString(), state.TargetPercent.ValueString())
-	alerts, diags := sloPlanAlerts(ctx, plan.Alerts, state.Alerts, targetChanged)
+	alerts, diags := sloPlanAlerts(ctx, config.Alerts, plan.Alerts, state.Alerts, targetChanged)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return

@@ -244,6 +244,11 @@ func TestSloUnconfiguredTiersAreNotManaged(t *testing.T) {
     slow   = { channel_assignments = [{ channel_id = "reliability" }] }
   }
 `
+	fastWithoutAssignments := `
+  alerts = {
+    fast = {}
+  }
+`
 	resource.Test(t, resource.TestCase{
 		IsUnitTest:               true,
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
@@ -259,13 +264,118 @@ func TestSloUnconfiguredTiersAreNotManaged(t *testing.T) {
 				},
 			},
 			{
+				// A tier object without channel_assignments also leaves its
+				// current channels unmanaged.
+				Config: testSloDeliveryReleaseConfig(server.URL, fastWithoutAssignments),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+				},
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("alerts").AtMapKey("fast").AtMapKey("channel_assignments"), knownvalue.SetSizeExact(1)),
+				},
+			},
+			{
 				Config: testSloDeliveryReleaseConfig(server.URL, ""),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+				},
+			},
+			{
+				Config: testSloDeliveryReleaseConfig(server.URL, "  alerts = null\n"),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
 				},
 			},
 		},
 	})
+}
+
+// TestSloConfiguredUnknownAssignmentsAreNotTakenFromState checks an update
+// whose complete assignment set comes from another resource. It is unknown
+// during planning, but configured: ModifyPlan must preserve it so Terraform can
+// resolve and apply it, rather than substituting the old channels from state.
+func TestSloConfiguredUnknownAssignmentsAreNotTakenFromState(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		alerts     string
+		dependency string
+	}{
+		{
+			name: "assignment set",
+			alerts: `
+  alerts = {
+    fast = { channel_assignments = toset(terraform_data.assignments.output) }
+  }
+			`,
+			dependency: `
+resource "terraform_data" "assignments" {
+  input = [{ channel_id = "incidents" }]
+}
+			`,
+		},
+		{
+			name: "tier object",
+			alerts: `
+  alerts = {
+    fast = terraform_data.fast.output
+  }
+			`,
+			dependency: `
+resource "terraform_data" "fast" {
+  input = { channel_assignments = [{ channel_id = "incidents" }] }
+}
+			`,
+		},
+		{
+			name:   "alerts object",
+			alerts: "  alerts = terraform_data.alerts.output\n",
+			dependency: `
+resource "terraform_data" "alerts" {
+  input = {
+    fast = { channel_assignments = [{ channel_id = "incidents" }] }
+  }
+}
+			`,
+		},
+		{
+			name: "nested schedule ID",
+			alerts: `
+  alerts = {
+    fast = {
+      channel_assignments = [{
+        channel_id  = "incidents"
+        schedule_id = terraform_data.schedule.id
+      }]
+    }
+  }
+			`,
+			dependency: `
+resource "terraform_data" "schedule" {
+  input = "office-hours"
+}
+			`,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			server := fakeSloLogfire(t, "applies-alerts")
+			defer server.Close()
+			withUnknown := testSloDeliveryReleaseConfig(server.URL, tt.alerts) + tt.dependency
+			resource.Test(t, resource.TestCase{
+				IsUnitTest:               true,
+				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+				Steps: []resource.TestStep{
+					{Config: testSloDeliveryReleaseConfig(server.URL, testSloFastChannels)},
+					{Config: withUnknown},
+					{
+						Config: withUnknown,
+						ConfigPlanChecks: resource.ConfigPlanChecks{
+							PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+						},
+					},
+				},
+			})
+		})
+	}
 }
 
 func TestSloPlanAlerts(t *testing.T) {
@@ -287,6 +397,19 @@ func TestSloPlanAlerts(t *testing.T) {
 	if diags.HasError() {
 		t.Fatal(diags)
 	}
+	configFast, diags := types.ObjectValueFrom(ctx, sloTierAttrTypes, sloTierModel{
+		ChannelAssignments: testChannelAssignments(t, testPagerduty, testIncidents),
+		AlertID:            types.StringNull(), Severity: types.StringNull(), Viable: types.BoolNull(),
+	})
+	if diags.HasError() {
+		t.Fatal(diags)
+	}
+	config, diags := types.ObjectValue(sloAlertsAttrTypes, map[string]attr.Value{
+		"fast": configFast, "medium": types.ObjectNull(sloTierAttrTypes), "slow": types.ObjectNull(sloTierAttrTypes),
+	})
+	if diags.HasError() {
+		t.Fatal(diags)
+	}
 	plan, diags := types.ObjectValue(sloAlertsAttrTypes, map[string]attr.Value{
 		"fast": fast, "medium": types.ObjectUnknown(sloTierAttrTypes), "slow": types.ObjectUnknown(sloTierAttrTypes),
 	})
@@ -304,7 +427,7 @@ func TestSloPlanAlerts(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got, diags := sloPlanAlerts(ctx, plan, state.Alerts, tt.targetChanged)
+			got, diags := sloPlanAlerts(ctx, config, plan, state.Alerts, tt.targetChanged)
 			if diags.HasError() {
 				t.Fatal(diags)
 			}
