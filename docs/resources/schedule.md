@@ -53,8 +53,8 @@ resource "logfire_schedule" "out_of_hours" {
 Required:
 
 - `days` (List of Number) ISO weekday numbers: `1` is Monday and `7` is Sunday.
-- `end_time` (String) End of the window, as 24-hour `HH:MM` in `timezone`.
-- `start_time` (String) Start of the window, as 24-hour `HH:MM` in `timezone`.
+- `end_time` (String) End of the window, as 24-hour `HH:MM` or `HH:MM:SS` in `timezone`. A read keeps your spelling when it denotes the same time, and shows seconds only when they are not zero.
+- `start_time` (String) Start of the window, as 24-hour `HH:MM` or `HH:MM:SS` in `timezone`. A read keeps your spelling when it denotes the same time, and shows seconds only when they are not zero.
 
 ## Import
 

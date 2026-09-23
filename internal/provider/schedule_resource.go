@@ -55,7 +55,10 @@ var scheduleWindowObjectType = types.ObjectType{AttrTypes: map[string]attr.Type{
 	"end_time":   types.StringType,
 }}
 
-var scheduleTimeRe = regexp.MustCompile(`^([01][0-9]|2[0-3]):[0-5][0-9]$`)
+// scheduleTimeRe accepts the "HH:MM" and "HH:MM:SS" forms that the API
+// accepts. A read writes "HH:MM:SS" to state when the seconds are not zero,
+// so the configuration must be able to hold that value.
+var scheduleTimeRe = regexp.MustCompile(`^([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$`)
 
 func (r *ScheduleResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_schedule"
@@ -63,7 +66,7 @@ func (r *ScheduleResource) Metadata(ctx context.Context, req resource.MetadataRe
 
 func (r *ScheduleResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	timeValidators := []validator.String{
-		stringvalidator.RegexMatches(scheduleTimeRe, "must be a 24-hour time in HH:MM format"),
+		stringvalidator.RegexMatches(scheduleTimeRe, "must be a 24-hour time in HH:MM or HH:MM:SS format"),
 	}
 	resp.Schema = rschema.Schema{
 		MarkdownDescription: "Manages an organization-level Logfire delivery schedule. " +
@@ -107,14 +110,16 @@ func (r *ScheduleResource) Schema(ctx context.Context, req resource.SchemaReques
 							},
 						},
 						"start_time": rschema.StringAttribute{
-							Required:            true,
-							MarkdownDescription: "Start of the window, as 24-hour `HH:MM` in `timezone`.",
-							Validators:          timeValidators,
+							Required: true,
+							MarkdownDescription: "Start of the window, as 24-hour `HH:MM` or `HH:MM:SS` in `timezone`. " +
+								"A read keeps your spelling when it denotes the same time, and shows seconds only when they are not zero.",
+							Validators: timeValidators,
 						},
 						"end_time": rschema.StringAttribute{
-							Required:            true,
-							MarkdownDescription: "End of the window, as 24-hour `HH:MM` in `timezone`.",
-							Validators:          timeValidators,
+							Required: true,
+							MarkdownDescription: "End of the window, as 24-hour `HH:MM` or `HH:MM:SS` in `timezone`. " +
+								"A read keeps your spelling when it denotes the same time, and shows seconds only when they are not zero.",
+							Validators: timeValidators,
 						},
 					},
 				},
@@ -157,8 +162,7 @@ func scheduleWindowsToAPI(ctx context.Context, windows types.List) ([]logclient.
 	return out, nil
 }
 
-// parseScheduleTime accepts the "HH:MM" form the schema takes and the
-// "HH:MM:SS" form the API returns.
+// parseScheduleTime accepts the "HH:MM" and "HH:MM:SS" forms.
 func parseScheduleTime(s string) (time.Time, bool) {
 	for _, layout := range []string{"15:04", "15:04:05"} {
 		if t, err := time.Parse(layout, strings.TrimSpace(s)); err == nil {
