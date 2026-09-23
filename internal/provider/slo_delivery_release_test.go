@@ -87,6 +87,13 @@ func TestSloDeliveryApplied(t *testing.T) {
 //   - "applies-alerts": writes set the named tiers' channels.
 func fakeSloLogfire(t *testing.T, behaviour string) *httptest.Server {
 	t.Helper()
+	return fakeSloLogfireRecording(t, behaviour, nil)
+}
+
+// fakeSloLogfireRecording is fakeSloLogfire that also appends the body of
+// every SLO create request to creates, when it is not nil.
+func fakeSloLogfireRecording(t *testing.T, behaviour string, creates *[]map[string]any) *httptest.Server {
+	t.Helper()
 	var mu sync.Mutex
 	var slo map[string]any
 	channels := map[string]any{}
@@ -130,6 +137,15 @@ func fakeSloLogfire(t *testing.T, behaviour string) *httptest.Server {
 			}
 			if err := json.Unmarshal(raw, &delivery); err != nil {
 				t.Errorf("request alerts: %v", err)
+			}
+			if r.Method == http.MethodPost {
+				// A new SLO's alerts start with no channels.
+				for _, tier := range sloTiers {
+					channels[tier] = []any{}
+				}
+				if creates != nil {
+					*creates = append(*creates, in)
+				}
 			}
 			if behaviour == "applies-alerts" {
 				for tier, d := range delivery.Alerts {
@@ -443,5 +459,44 @@ func TestSloPlanAlerts(t *testing.T) {
 				t.Fatalf("medium: got %+v", medium)
 			}
 		})
+	}
+}
+
+// TestSloReplacementWithoutAlertsSendsNoChannels replaces an SLO whose tiers
+// have channels, with `alerts` removed from the configuration in the same
+// change. The new SLO must be created without the old SLO's channels.
+func TestSloReplacementWithoutAlertsSendsNoChannels(t *testing.T) {
+	var creates []map[string]any
+	server := fakeSloLogfireRecording(t, "applies-alerts", &creates)
+	defer server.Close()
+	every := `
+  alerts = {
+    fast   = { channel_assignments = [{ channel_id = "pagerduty" }] }
+    medium = { channel_assignments = [{ channel_id = "incidents" }] }
+    slow   = { channel_assignments = [{ channel_id = "reliability" }] }
+  }
+`
+	replaced := strings.Replace(testSloDeliveryReleaseConfig(server.URL, ""), `"payments-api"`, `"orders-api"`, 1)
+	resource.Test(t, resource.TestCase{
+		IsUnitTest:               true,
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: testSloDeliveryReleaseConfig(server.URL, every)},
+			{
+				Config: replaced,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction("logfire_slo.test", plancheck.ResourceActionDestroyBeforeCreate)},
+				},
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("alerts").AtMapKey("fast").AtMapKey("channel_assignments"), knownvalue.SetSizeExact(0)),
+				},
+			},
+		},
+	})
+	if len(creates) != 2 {
+		t.Fatalf("got %d create requests, want 2", len(creates))
+	}
+	if alerts, ok := creates[1]["alerts"]; ok {
+		t.Fatalf("the replacement create sent alerts %v, want none", alerts)
 	}
 }
