@@ -148,6 +148,58 @@ func TestListAPIKeysMissingRouteHint(t *testing.T) {
 	}
 }
 
+func TestCreateScheduleMissingRouteHint(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		// version is the Logfire-Version header value the stub returns.
+		version string
+		// reported is the release the message must quote, empty when the
+		// header carries no version meaning and nothing may be quoted.
+		reported string
+	}{
+		{name: "with reported release", version: "v2026-09-18.01", reported: "v2026-09-18.01"},
+		{name: "with build identity only", version: "e79656b9"},
+		{name: "without reported version"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c, err := NewAPIClient("https://example.invalid", "test-token", &http.Client{
+				Transport: versionedStubTransport{
+					status:  http.StatusNotFound,
+					body:    `{"detail":"Not Found"}`,
+					version: tc.version,
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = c.CreateSchedule(context.Background(), ScheduleCreate{Label: "example", Timezone: "UTC"})
+			var unavailable *EndpointUnavailableError
+			if !errors.As(err, &unavailable) {
+				t.Fatalf("expected EndpointUnavailableError, got %v", err)
+			}
+			message := err.Error()
+			for _, want := range []string{"v2026-09-23.01", "logfire-0.13.47", "/api/v1/schedules/"} {
+				if !strings.Contains(message, want) {
+					t.Fatalf("error %q does not mention %q", message, want)
+				}
+			}
+			if tc.reported != "" && !strings.Contains(message, tc.reported) {
+				t.Fatalf("error %q does not report instance version %q", message, tc.reported)
+			}
+			if tc.reported == "" {
+				if strings.Contains(message, "reports version") {
+					t.Fatalf("error %q must not claim a version when none was reported", message)
+				}
+				if tc.version != "" && strings.Contains(message, tc.version) {
+					t.Fatalf("error %q must not quote a build identity as a version", message)
+				}
+			}
+		})
+	}
+}
+
 func TestAPIErrorCapturesBackendVersion(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

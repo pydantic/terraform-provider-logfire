@@ -1556,9 +1556,26 @@ func (c *APIClient) CreateSchedule(ctx context.Context, in ScheduleCreate) (*Sch
 	var out ScheduleRead
 	_, err := c.doJSON(disableAutomaticRetries(ctx), http.MethodPost, c.schedulesBase(), in, &out, http.StatusCreated)
 	if err != nil {
-		return nil, err
+		return nil, schedulesEndpointUnavailableError(err)
 	}
 	return &out, nil
+}
+
+// schedulesEndpointUnavailableError translates a 404 from the schedule
+// collection route into an actionable upgrade hint. Schedules have no list
+// route and unknown ids live under /{id}/, so a 404 on a create means the
+// instance predates the schedules API rather than an unknown schedule.
+func schedulesEndpointUnavailableError(err error) error {
+	if !IsNotFoundError(err) {
+		return err
+	}
+	return &EndpointUnavailableError{
+		Method:         http.MethodPost,
+		Path:           "/api/v1/schedules/",
+		MinimumRelease: "v2026-09-23.01",
+		MinimumChart:   "logfire-0.13.47",
+		BackendVersion: BackendVersionFromError(err),
+	}
 }
 
 func (c *APIClient) GetSchedule(ctx context.Context, id string) (*ScheduleRead, int, error) {
