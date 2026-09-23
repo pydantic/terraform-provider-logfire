@@ -4,6 +4,7 @@
 package provider
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,8 +15,11 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
+	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/statecheck"
 	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
@@ -225,4 +229,96 @@ func TestSloDeliveryOnOlderLogfire(t *testing.T) {
 			}},
 		})
 	})
+}
+
+// TestSloUnconfiguredTiersAreNotManaged checks that a tier, or the whole
+// `alerts`, that is removed from the configuration plans no change and keeps
+// its channels.
+func TestSloUnconfiguredTiersAreNotManaged(t *testing.T) {
+	server := fakeSloLogfire(t, "applies-alerts")
+	defer server.Close()
+	every := `
+  alerts = {
+    fast   = { channel_assignments = [{ channel_id = "pagerduty" }] }
+    medium = { channel_assignments = [{ channel_id = "incidents" }] }
+    slow   = { channel_assignments = [{ channel_id = "reliability" }] }
+  }
+`
+	resource.Test(t, resource.TestCase{
+		IsUnitTest:               true,
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: testSloDeliveryReleaseConfig(server.URL, every)},
+			{
+				Config: testSloDeliveryReleaseConfig(server.URL, testSloFastChannels),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+				},
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("alerts").AtMapKey("slow").AtMapKey("channel_assignments"), knownvalue.SetSizeExact(1)),
+				},
+			},
+			{
+				Config: testSloDeliveryReleaseConfig(server.URL, ""),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+				},
+			},
+		},
+	})
+}
+
+func TestSloPlanAlerts(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	state := sloStateFrom(t, sloReadWithTiers(
+		[]logclient.ChannelAssignment{testPagerduty},
+		[]logclient.ChannelAssignment{testIncidents},
+		[]logclient.ChannelAssignment{testReliability},
+	))
+	stateMedium := sloTier(t, state, "medium")
+
+	// What Terraform plans for `alerts = { fast = { channel_assignments = ... } }`
+	// on an update: every computed value, and every other tier, unknown.
+	fast, diags := types.ObjectValueFrom(ctx, sloTierAttrTypes, sloTierModel{
+		ChannelAssignments: testChannelAssignments(t, testPagerduty, testIncidents),
+		AlertID:            types.StringUnknown(), Severity: types.StringUnknown(), Viable: types.BoolUnknown(),
+	})
+	if diags.HasError() {
+		t.Fatal(diags)
+	}
+	plan, diags := types.ObjectValue(sloAlertsAttrTypes, map[string]attr.Value{
+		"fast": fast, "medium": types.ObjectUnknown(sloTierAttrTypes), "slow": types.ObjectUnknown(sloTierAttrTypes),
+	})
+	if diags.HasError() {
+		t.Fatal(diags)
+	}
+
+	for _, tt := range []struct {
+		name          string
+		targetChanged bool
+		wantViable    types.Bool
+	}{
+		{"same target keeps viable", false, types.BoolValue(true)},
+		{"changed target leaves viable unknown", true, types.BoolUnknown()},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, diags := sloPlanAlerts(ctx, plan, state.Alerts, tt.targetChanged)
+			if diags.HasError() {
+				t.Fatal(diags)
+			}
+			m := state
+			m.Alerts = got
+			f := sloTier(t, m, "fast")
+			if !f.ChannelAssignments.Equal(testChannelAssignments(t, testPagerduty, testIncidents)) ||
+				f.AlertID.ValueString() != "alert-fast" || f.Severity.ValueString() != "page" || !f.Viable.Equal(tt.wantViable) {
+				t.Fatalf("fast: got %+v", f)
+			}
+			medium := sloTier(t, m, "medium")
+			if !medium.ChannelAssignments.Equal(stateMedium.ChannelAssignments) || !medium.AlertID.Equal(stateMedium.AlertID) || !medium.Viable.Equal(tt.wantViable) {
+				t.Fatalf("medium: got %+v", medium)
+			}
+		})
+	}
 }

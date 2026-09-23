@@ -350,8 +350,8 @@ func alertReadToModel(ctx context.Context, a *logclient.AlertRead, m *AlertModel
 		m.Environments = envSet
 	}
 
-	// Logfire v2026-09-22.02 and older return an alert's assignments only
-	// inside `channels`, so rebuild them from there when
+	// Logfire releases before v2026-09-23.01 return an alert's assignments
+	// only inside `channels`, so rebuild them from there when
 	// `channel_assignments` is absent.
 	assignments := a.ChannelAssignments
 	if assignments == nil {

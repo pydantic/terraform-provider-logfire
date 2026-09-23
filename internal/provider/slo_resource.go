@@ -219,10 +219,7 @@ func (r *SloResource) ValidateConfig(ctx context.Context, req resource.ValidateC
 	resp.Diagnostics.Append(validateSloSliConfig(&m)...)
 }
 
-// ModifyPlan plans an update when a tier has no alert. Only an SLO created
-// before Logfire kept all three tier alerts has one, and any SLO update,
-// including one that changes no field, creates the missing alerts. Marking
-// the tier's `alert_id` unknown makes the plan show the update.
+// ModifyPlan completes the planned `alerts` from state; see sloPlanAlerts.
 func (r *SloResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
 	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
 		return
@@ -233,20 +230,14 @@ func (r *SloResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanReq
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	missing, diags := sloTiersWithoutAlert(ctx, state.Alerts)
+	targetChanged := plan.TargetPercent.IsUnknown() || state.TargetPercent.IsNull() ||
+		!decimalStringsEqual(plan.TargetPercent.ValueString(), state.TargetPercent.ValueString())
+	alerts, diags := sloPlanAlerts(ctx, plan.Alerts, state.Alerts, targetChanged)
 	resp.Diagnostics.Append(diags...)
-	planned, ok, diags := sloAlertsFromObject(ctx, plan.Alerts)
-	resp.Diagnostics.Append(diags...)
-	if !ok || resp.Diagnostics.HasError() {
-		// An unknown `alerts` already means an update.
+	if resp.Diagnostics.HasError() {
 		return
 	}
-	for _, name := range missing {
-		if tier := *planned.tier(name); tier.IsNull() || tier.IsUnknown() {
-			continue
-		}
-		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("alerts").AtName(name).AtName("alert_id"), types.StringUnknown())...)
-	}
+	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("alerts"), alerts)...)
 }
 
 // validateSloSliConfig checks the SLI-mode field pairing on a config model.

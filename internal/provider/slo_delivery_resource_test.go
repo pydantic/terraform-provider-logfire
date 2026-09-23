@@ -5,7 +5,6 @@ package provider
 
 import (
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/acctest"
@@ -16,16 +15,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 )
 
-// requireSloDeliveryAcceptance skips until the Logfire instance under test
-// returns SLO tier alerts, writes SLO channel assignments through to them, and
-// serves `/api/v1/schedules/`.
-func requireSloDeliveryAcceptance(t *testing.T) {
-	t.Helper()
-	if os.Getenv("LOGFIRE_SLO_DELIVERY_ACC") == "" {
-		t.Skip("set LOGFIRE_SLO_DELIVERY_ACC=1 to test SLO channel assignments and schedules against a Logfire release that has them")
-	}
-}
-
 // TestAccSloDelivery covers the delivery configurations of the per-tier
 // design: the same channels on every tier through a local, different channels
 // per tier, a schedule shared between an SLO and a normal alert, and a
@@ -33,7 +22,6 @@ func requireSloDeliveryAcceptance(t *testing.T) {
 // channels of an existing SLO, which earlier provider releases accepted and
 // never sent.
 func TestAccSloDelivery(t *testing.T) {
-	requireSloDeliveryAcceptance(t)
 	t.Parallel()
 
 	suffix := acctest.RandStringFromCharSet(6, acctest.CharSetAlphaNum)

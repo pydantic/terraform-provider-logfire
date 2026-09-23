@@ -17,9 +17,9 @@ import (
 )
 
 // sloDeliveryRelease names the first Logfire release that applies per-tier
-// `alerts` on SLO writes. v2026-09-22.02 returns an SLO's tier alerts but
-// ignores `alerts` on SLO create and update.
-const sloDeliveryRelease = "the first Logfire release after v2026-09-22.02"
+// `alerts` on SLO writes and serves the schedules API. v2026-09-22.02 returns
+// an SLO's tier alerts but ignores `alerts` on SLO create and update.
+const sloDeliveryRelease = "Logfire v2026-09-23.01 or newer"
 
 // sloTiers are the SLO's burn-rate tiers, in the order the API documents them.
 var sloTiers = []string{"fast", "medium", "slow"}
@@ -181,21 +181,80 @@ func sloStateTierAssignments(ctx context.Context, state types.Object, tier strin
 	return t.ChannelAssignments, diags
 }
 
-// sloTiersWithoutAlert returns the tiers whose alert is missing in state.
-func sloTiersWithoutAlert(ctx context.Context, state types.Object) ([]string, diag.Diagnostics) {
-	alerts, ok, diags := sloAlertsFromObject(ctx, state)
+// sloPlanAlerts completes the planned `alerts` from state on an update.
+// Terraform does not merge state into an Optional+Computed nested attribute
+// whose configuration is set, so a tier that is not configured, and the
+// computed fields of a configured tier, are planned unknown and every plan
+// would show an update. Each unknown value is taken from state when the update
+// cannot change it: an unconfigured tier keeps its channels, `alert_id` and
+// `severity` do not change once the alert exists, and `viable` changes only
+// with `target_percent`. A tier whose alert is missing in state gets an
+// unknown `alert_id`, so the plan shows the update that creates the alert.
+func sloPlanAlerts(ctx context.Context, plan, state types.Object, targetChanged bool) (types.Object, diag.Diagnostics) {
+	prior, ok, diags := sloAlertsFromObject(ctx, state)
 	if !ok {
-		return nil, diags
+		// A Logfire release that does not return `alerts` leaves it null in
+		// state, and a read after the update leaves it null again.
+		if state.IsNull() && plan.IsUnknown() {
+			return types.ObjectNull(sloAlertsAttrTypes), diags
+		}
+		return plan, diags
 	}
-	var missing []string
-	for _, name := range sloTiers {
-		t, ok, d := sloTierFromObject(ctx, *alerts.tier(name))
-		diags.Append(d...)
-		if ok && t.AlertID.IsNull() {
-			missing = append(missing, name)
+	if plan.IsNull() {
+		return plan, diags
+	}
+	// Without `alerts` in the configuration, every tier is unconfigured.
+	planned := sloAlertsModel{
+		Fast:   types.ObjectUnknown(sloTierAttrTypes),
+		Medium: types.ObjectUnknown(sloTierAttrTypes),
+		Slow:   types.ObjectUnknown(sloTierAttrTypes),
+	}
+	if !plan.IsUnknown() {
+		var d diag.Diagnostics
+		if planned, _, d = sloAlertsFromObject(ctx, plan); d.HasError() {
+			return plan, append(diags, d...)
 		}
 	}
-	return missing, diags
+	for _, name := range sloTiers {
+		stateTier, ok, d := sloTierFromObject(ctx, *prior.tier(name))
+		diags.Append(d...)
+		planObj := planned.tier(name)
+		if !ok || planObj.IsNull() {
+			continue
+		}
+		t := stateTier
+		if !planObj.IsUnknown() {
+			if t, _, d = sloTierFromObject(ctx, *planObj); d.HasError() {
+				return plan, append(diags, d...)
+			}
+		} else if targetChanged {
+			t.Viable = types.BoolUnknown()
+		}
+		if t.ChannelAssignments.IsUnknown() {
+			t.ChannelAssignments = stateTier.ChannelAssignments
+		}
+		if t.AlertID.IsUnknown() {
+			t.AlertID = stateTier.AlertID
+		}
+		if t.Severity.IsUnknown() {
+			t.Severity = stateTier.Severity
+		}
+		if t.Viable.IsUnknown() && !targetChanged {
+			t.Viable = stateTier.Viable
+		}
+		if stateTier.AlertID.IsNull() {
+			t.AlertID = types.StringUnknown()
+			t.Viable = types.BoolUnknown()
+		}
+		obj, d := types.ObjectValueFrom(ctx, sloTierAttrTypes, t)
+		diags.Append(d...)
+		*planObj = obj
+	}
+	if diags.HasError() {
+		return plan, diags
+	}
+	out, d := types.ObjectValueFrom(ctx, sloAlertsAttrTypes, planned)
+	return out, append(diags, d...)
 }
 
 // sloAlertsToObject converts the API's per-tier alerts. A Logfire release that

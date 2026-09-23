@@ -3,12 +3,12 @@
 page_title: "logfire_schedule Resource - logfire"
 subcategory: ""
 description: |-
-  Manages an organization-level Logfire delivery schedule. A channel assignment with a schedule_id notifies its channel only inside the schedule's windows. Use it in channel_assignments on logfire_alert and in alerts.<tier>.channel_assignments on logfire_slo. Deleting a schedule makes the channel assignments that use it notify at all times. The provider credential needs organization:read_channel and organization:write_channel. The schedules API needs the first Logfire release after v2026-09-22.02.
+  Manages an organization-level Logfire delivery schedule. A channel assignment with a schedule_id notifies its channel only inside the schedule's windows. Use it in channel_assignments on logfire_alert and in alerts.<tier>.channel_assignments on logfire_slo. Deleting a schedule makes the channel assignments that use it notify at all times. The provider credential needs organization:read_channel and organization:write_channel. The schedules API needs Logfire v2026-09-23.01 or newer.
 ---
 
 # logfire_schedule (Resource)
 
-Manages an organization-level Logfire delivery schedule. A channel assignment with a `schedule_id` notifies its channel only inside the schedule's windows. Use it in `channel_assignments` on `logfire_alert` and in `alerts.<tier>.channel_assignments` on `logfire_slo`. Deleting a schedule makes the channel assignments that use it notify at all times. The provider credential needs `organization:read_channel` and `organization:write_channel`. The schedules API needs the first Logfire release after v2026-09-22.02.
+Manages an organization-level Logfire delivery schedule. A channel assignment with a `schedule_id` notifies its channel only inside the schedule's windows. Use it in `channel_assignments` on `logfire_alert` and in `alerts.<tier>.channel_assignments` on `logfire_slo`. Deleting a schedule makes the channel assignments that use it notify at all times. The provider credential needs `organization:read_channel` and `organization:write_channel`. The schedules API needs Logfire v2026-09-23.01 or newer.
 
 ## Example Usage
 
