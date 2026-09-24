@@ -1,5 +1,7 @@
 ## Unreleased
 
+## 0.2.0
+
 BREAKING CHANGES:
 
 These changes need Logfire v2026-09-23.01 or newer, which sets SLO channels per tier alert and serves the schedules API. Do not upgrade the provider before your Logfire instance has that release (self-hosted: Helm chart `logfire-0.13.47` or newer). On an older release, an SLO create or update that sets `alerts.<tier>.channel_assignments` fails with an error that names this release: the older release ignores `alerts` on SLO writes, so the SLO is saved but its alerts do not notify the configured channels. `logfire_alert.channel_assignments` also works on older releases.

@@ -28,5 +28,6 @@ TF_ACC=1 LOGFIRE_API_KEY="pylf_v2_..." make testacc
 
 ## Release
 
-Tag `main` with `vX.Y.Z`, push the tag, and verify the GitHub release plus the
-Terraform Registry version. Then update Pulumi and Crossplane from that release.
+Move the `Unreleased` changelog section under the new version. Tag `main` with
+`vX.Y.Z`, push the tag, and verify the GitHub release plus the Terraform
+Registry version. Then update Pulumi and Crossplane from that release.
