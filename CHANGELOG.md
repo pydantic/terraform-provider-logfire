@@ -1,5 +1,7 @@
 ## Unreleased
 
+## 0.2.1
+
 - `logfire_alert`: `time_window` and `frequency` accept any duration the API accepts, not only the previous preset list. Equivalent spellings such as `90m` for `1h30m` are kept as written, and the API's one-minute minimum is enforced at plan time.
 
 ## 0.2.0
