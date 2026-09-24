@@ -6,11 +6,9 @@ package provider
 import (
 	"testing"
 	"time"
-
-	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-func TestParseDurationStr(t *testing.T) {
+func TestParseDurationText(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -29,7 +27,7 @@ func TestParseDurationStr(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := parseDurationStr(types.StringValue(tc.input))
+			got, err := parseDurationText(tc.input)
 			if tc.hasErr {
 				if err == nil {
 					t.Fatalf("expected an error for %q", tc.input)
@@ -40,7 +38,7 @@ func TestParseDurationStr(t *testing.T) {
 				t.Fatalf("unexpected error for %q: %v", tc.input, err)
 			}
 			if got != tc.want {
-				t.Fatalf("parseDurationStr(%q) = %v, want %v", tc.input, got, tc.want)
+				t.Fatalf("parseDurationText(%q) = %v, want %v", tc.input, got, tc.want)
 			}
 		})
 	}

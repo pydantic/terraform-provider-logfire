@@ -19,8 +19,8 @@ func TestAlertModelToCreate_DescriptionAndActive(t *testing.T) {
 	base := AlertModel{
 		Name:               types.StringValue("name"),
 		Query:              types.StringValue("select 1"),
-		TimeWindow:         types.StringValue("5m"),
-		Frequency:          types.StringValue("5m"),
+		TimeWindow:         newAlertDurationValue("5m"),
+		Frequency:          newAlertDurationValue("5m"),
 		ChannelAssignments: channelSet,
 		NotifyWhen:         types.StringValue("has_matches"),
 	}

@@ -78,12 +78,12 @@ resource "logfire_alert" "example" {
 ### Required
 
 - `channel_assignments` (Attributes Set) Channels to notify, each with an optional delivery schedule. Set it to `[]` to notify no channel. This is the same type as `alerts.<tier>.channel_assignments` on `logfire_slo`, so one value (for example a `locals` entry) can configure both. (see [below for nested schema](#nestedatt--channel_assignments))
-- `frequency` (String) Evaluation frequency. Allowed values: 1m, 2m, 5m, 10m, 15m, 30m, 1h, 6h, 12h, 24h.
+- `frequency` (String) Evaluation frequency, as a duration from `1m` to `24h` (for example `5m`, `20m`, `1h`). Equivalent spellings are accepted and kept as written.
 - `name` (String) Alert name (unique per project).
 - `notify_when` (String) Notification rule. Must match API enum.
 - `project_id` (String) Project ID (UUID) used for alert API paths.
 - `query` (String) SQL / query string used by the alert.
-- `time_window` (String) Lookback window. Allowed values: 1m, 2m, 5m, 10m, 15m, 30m, 1h, 6h, 12h, 24h, 7d, 30d.
+- `time_window` (String) Lookback window, as a duration from `1m` to `30d` (for example `20m`, `1h30m`, `7d`). The API caps this relative to `frequency` - a longer window requires a less frequent evaluation - and reports that itself. Equivalent spellings are accepted and kept as written.
 
 ### Optional
 

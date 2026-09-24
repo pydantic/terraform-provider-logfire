@@ -344,7 +344,7 @@ func sloDurationCompact(d time.Duration) string {
 }
 
 func parseSloRollingWindow(s types.String) (time.Duration, error) {
-	d, err := parseDurationStr(s)
+	d, err := parseDurationText(s.ValueString())
 	if err != nil {
 		return 0, err
 	}
@@ -359,7 +359,7 @@ func windowMatches(s types.String, d time.Duration) bool {
 	if s.IsNull() || s.IsUnknown() {
 		return false
 	}
-	prev, err := parseDurationStr(s)
+	prev, err := parseDurationText(s.ValueString())
 	return err == nil && prev == d
 }
 
