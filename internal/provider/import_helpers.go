@@ -53,7 +53,12 @@ func findProjectByNameOrID(ctx context.Context, c *client.APIClient, key string)
 		return "", "", err
 	}
 	for _, project := range list {
-		if project.ID == key || project.ProjectName == key {
+		if project.ID == key {
+			return project.ID, project.ProjectName, nil
+		}
+	}
+	for _, project := range list {
+		if project.ProjectName == key {
 			return project.ID, project.ProjectName, nil
 		}
 	}

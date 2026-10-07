@@ -104,7 +104,7 @@ func (r *GatewayAPIKeyResource) Schema(ctx context.Context, req resource.SchemaR
 			},
 			"expires_at": rschema.StringAttribute{
 				Optional:            true,
-				MarkdownDescription: "Optional RFC3339 expiration timestamp (for example `2026-12-31T23:59:59Z`). If omitted, the key does not expire. Changing it replaces the key.",
+				MarkdownDescription: "Optional RFC3339 expiration timestamp (for example `2026-12-31T23:59:59Z`). If omitted or null, the key does not expire. Empty and whitespace-only values are invalid. Changing it replaces the key.",
 				Validators: []validator.String{
 					newOptionalRFC3339Validator(),
 				},

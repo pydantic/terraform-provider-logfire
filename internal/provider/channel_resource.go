@@ -158,7 +158,8 @@ func (r *ChannelResource) Schema(ctx context.Context, req resource.SchemaRequest
 					},
 					"include_agent_prompt": rschema.BoolAttribute{
 						Optional:            true,
-						MarkdownDescription: "Whether Slack issue notifications include the \"Ask your agent\" MCP prompt line. Defaults to `true` when omitted.",
+						Computed:            true,
+						MarkdownDescription: "Whether Slack issue notifications include the \"Ask your agent\" MCP prompt line. Defaults to `true` for new Slack channels. Omitting it on an existing channel retains the current setting; set it to `true` explicitly to re-enable the prompt.",
 					},
 				},
 			},
@@ -574,28 +575,36 @@ func (r *ChannelResource) Create(ctx context.Context, req resource.CreateRequest
 		return
 	}
 
-	if !plan.Active.IsNull() && !plan.Active.IsUnknown() {
-		desired := plan.Active.ValueBool()
-		if desired != out.Active {
-			payload := logclient.ChannelUpdate{Active: logclient.NullableFieldValue(desired)}
-			updated, uerr := r.client.UpdateChannel(ctx, out.ID, payload)
-			if uerr != nil {
-				resp.Diagnostics.AddError("Create channel failed", fmt.Sprintf("setting active flag: %v", uerr))
-				return
-			}
-			out = updated
-		}
-	}
-
 	var state ChannelModel
 	if diags := channelReadToModel(out, &state); diags.HasError() {
 		resp.Diagnostics.Append(diags...)
 		return
 	}
 	state.Config = reconcileChannelConfigMaskedSecrets(state.Config, plan.Config)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if !plan.Active.IsNull() && !plan.Active.IsUnknown() {
+		desired := plan.Active.ValueBool()
+		if desired != out.Active {
+			payload := logclient.ChannelUpdate{Active: logclient.NullableFieldValue(desired)}
+			updated, uerr := r.client.UpdateChannel(ctx, out.ID, payload)
+			if uerr != nil {
+				resp.Diagnostics.AddError("Create channel failed", fmt.Sprintf("setting active flag: %v. The created channel %q is saved in state and Terraform will mark it tainted. After fixing the error and verifying the saved channel, untaint this resource before applying again to update it without replacement.", uerr, state.ID.ValueString()))
+				return
+			}
+			if diags := channelReadToModel(updated, &state); diags.HasError() {
+				resp.Diagnostics.Append(diags...)
+				return
+			}
+			state.Config = reconcileChannelConfigMaskedSecrets(state.Config, plan.Config)
+			resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+		}
+	}
 
 	tflog.Trace(ctx, "created channel", map[string]any{"id": state.ID.ValueString()})
-	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
 func (r *ChannelResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {

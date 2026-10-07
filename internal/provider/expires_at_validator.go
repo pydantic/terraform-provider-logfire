@@ -15,11 +15,11 @@ import (
 var _ validator.String = optionalRFC3339Validator{}
 
 // optionalRFC3339Validator validates optional timestamp strings.
-// Null, unknown, and empty values are accepted to represent "no expiration".
+// Null and unknown values are accepted; null represents "no expiration".
 type optionalRFC3339Validator struct{}
 
 func (v optionalRFC3339Validator) Description(_ context.Context) string {
-	return "must be empty/null or a valid RFC3339 timestamp"
+	return "must be null or a valid RFC3339 timestamp"
 }
 
 func (v optionalRFC3339Validator) MarkdownDescription(ctx context.Context) string {
@@ -33,6 +33,8 @@ func (v optionalRFC3339Validator) ValidateString(_ context.Context, req validato
 
 	raw := strings.TrimSpace(req.ConfigValue.ValueString())
 	if raw == "" {
+		resp.Diagnostics.AddAttributeError(req.Path, "Invalid expires_at value",
+			"expires_at must be null or a valid RFC3339 timestamp. Omit expires_at or set it to null for no expiration.")
 		return
 	}
 
@@ -40,7 +42,7 @@ func (v optionalRFC3339Validator) ValidateString(_ context.Context, req validato
 		resp.Diagnostics.AddAttributeError(
 			req.Path,
 			"Invalid expires_at value",
-			fmt.Sprintf("expires_at must be empty/null or a valid RFC3339 timestamp: %v", err),
+			fmt.Sprintf("expires_at must be null or a valid RFC3339 timestamp: %v", err),
 		)
 	}
 }

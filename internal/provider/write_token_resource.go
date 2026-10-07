@@ -87,7 +87,7 @@ func (r *WriteTokenResource) Schema(ctx context.Context, req resource.SchemaRequ
 			},
 			"expires_at": rschema.StringAttribute{
 				Optional:            true,
-				MarkdownDescription: "Optional RFC3339 expiration timestamp for the token (for example `2026-12-31T23:59:59Z`). If omitted, the token does not expire.",
+				MarkdownDescription: "Optional RFC3339 expiration timestamp for the token (for example `2026-12-31T23:59:59Z`). If omitted or null, the token does not expire. Empty and whitespace-only values are invalid.",
 				Validators: []validator.String{
 					newOptionalRFC3339Validator(),
 				},
@@ -163,58 +163,46 @@ func (r *WriteTokenResource) Create(ctx context.Context, req resource.CreateRequ
 	}
 
 	var state WriteTokenModel
-	if out != nil {
-		if out.ID != "" {
-			state.ID = types.StringValue(out.ID)
-		} else {
-			state.ID = types.StringNull()
-		}
-		if out.ProjectID != "" {
-			state.ProjectID = types.StringValue(out.ProjectID)
-		} else {
-			state.ProjectID = types.StringValue(projectID)
-		}
-		if out.CreatedAt != "" {
-			state.CreatedAt = types.StringValue(out.CreatedAt)
-		} else {
-			state.CreatedAt = types.StringNull()
-		}
-		if out.ExpiresAt != nil {
-			state.ExpiresAt = types.StringValue(*out.ExpiresAt)
-		} else {
-			state.ExpiresAt = types.StringNull()
-		}
-		if out.ProjectName != "" {
-			state.ProjectName = types.StringValue(out.ProjectName)
-		} else {
-			state.ProjectName = types.StringNull()
-		}
-		if out.CreatedByName != nil {
-			state.CreatedByName = types.StringValue(*out.CreatedByName)
-		} else {
-			state.CreatedByName = types.StringNull()
-		}
-		state.TokenPrefix = types.StringValue(out.TokenPrefix)
-		if out.Description != nil {
-			state.Description = types.StringValue(*out.Description)
-		} else {
-			state.Description = types.StringNull()
-		}
-		if out.Token != nil {
-			state.Token = types.StringValue(*out.Token)
-		} else {
-			state.Token = types.StringNull()
-		}
+	if out.ID != "" {
+		state.ID = types.StringValue(out.ID)
 	} else {
 		state.ID = types.StringNull()
+	}
+	if out.ProjectID != "" {
+		state.ProjectID = types.StringValue(out.ProjectID)
+	} else {
 		state.ProjectID = types.StringValue(projectID)
+	}
+	if out.CreatedAt != "" {
+		state.CreatedAt = types.StringValue(out.CreatedAt)
+	} else {
 		state.CreatedAt = types.StringNull()
+	}
+	if out.ExpiresAt != nil {
+		state.ExpiresAt = types.StringValue(*out.ExpiresAt)
+	} else {
 		state.ExpiresAt = types.StringNull()
+	}
+	if out.ProjectName != "" {
+		state.ProjectName = types.StringValue(out.ProjectName)
+	} else {
 		state.ProjectName = types.StringNull()
+	}
+	if out.CreatedByName != nil {
+		state.CreatedByName = types.StringValue(*out.CreatedByName)
+	} else {
 		state.CreatedByName = types.StringNull()
-		state.TokenPrefix = types.StringNull()
-		state.Token = types.StringNull()
+	}
+	state.TokenPrefix = types.StringValue(out.TokenPrefix)
+	if out.Description != nil {
+		state.Description = types.StringValue(*out.Description)
+	} else {
 		state.Description = types.StringNull()
+	}
+	if out.Token != nil {
+		state.Token = types.StringValue(*out.Token)
+	} else {
+		state.Token = types.StringNull()
 	}
 
 	tflog.Trace(ctx, "created write token", map[string]any{"id": state.ID.ValueString(), "project_id": state.ProjectID.ValueString()})

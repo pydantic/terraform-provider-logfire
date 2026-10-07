@@ -32,7 +32,7 @@ resource "logfire_read_token" "example" {
 
 ### Optional
 
-- `expires_at` (String) Optional RFC3339 expiration timestamp for the token (for example `2026-12-31T23:59:59Z`). If omitted, the token does not expire.
+- `expires_at` (String) Optional RFC3339 expiration timestamp for the token (for example `2026-12-31T23:59:59Z`). If omitted or null, the token does not expire. Empty and whitespace-only values are invalid.
 
 ### Read-Only
 

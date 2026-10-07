@@ -261,8 +261,8 @@ func (r *DashboardResource) Update(ctx context.Context, req resource.UpdateReque
 		return
 	}
 
-	if state.ID.IsNull() || state.ID.IsUnknown() {
-		resp.Diagnostics.AddError("Missing ID", "Cannot update dashboard because the current state has no ID.")
+	if state.ID.IsNull() || state.ID.IsUnknown() || state.ID.ValueString() == "" {
+		resp.Diagnostics.AddError("Missing dashboard ID", "The dashboard state has no ID. Import the intended dashboard to restore its identity before updating or deleting it.")
 		return
 	}
 
@@ -272,12 +272,12 @@ func (r *DashboardResource) Update(ctx context.Context, req resource.UpdateReque
 	}
 
 	projectID := state.ProjectID.ValueString()
+	dashboardID := state.ID.ValueString()
 	projectName, err := r.projectNameForID(ctx, projectID)
 	if err != nil {
 		resp.Diagnostics.AddError("Resolve project name", err.Error())
 		return
 	}
-	dashboardID := state.ID.ValueString()
 
 	var planDefStr string
 	var planDefRaw json.RawMessage
@@ -364,8 +364,8 @@ func (r *DashboardResource) Delete(ctx context.Context, req resource.DeleteReque
 		return
 	}
 
-	if state.ID.IsNull() || state.ID.IsUnknown() {
-		resp.Diagnostics.AddError("Missing ID", "Cannot delete dashboard because the current state has no ID.")
+	if state.ID.IsNull() || state.ID.IsUnknown() || state.ID.ValueString() == "" {
+		resp.Diagnostics.AddError("Missing dashboard ID", "The dashboard state has no ID. Import the intended dashboard to restore its identity before updating or deleting it.")
 		return
 	}
 
@@ -433,35 +433,14 @@ func (r *DashboardResource) ImportState(ctx context.Context, req resource.Import
 		return
 	}
 
-	var (
-		summary     *logclient.DashboardSummary
-		slugMatches []*logclient.DashboardSummary
-	)
-	for i := range dashboards {
-		d := &dashboards[i]
-		if d.ID == dashboardKey {
-			summary = d
-			break
-		}
-		// If a slug was provided, prefer it; otherwise fall back to matching the key as slug.
-		slugCandidate := dashboardKey
-		if providedSlug != "" {
-			slugCandidate = providedSlug
-		}
-		if d.DashboardSlug == slugCandidate {
-			slugMatches = append(slugMatches, d)
-		}
-	}
+	summary, slugMatches := findDashboardSummaryByIDOrSlug(dashboards, dashboardKey, providedSlug)
 
 	if summary == nil {
-		if len(slugMatches) == 0 {
-			resp.Diagnostics.AddError("Import dashboard failed", fmt.Sprintf("dashboard %q not found in project %q", dashboardKey, projectName))
-			return
-		}
-		summary = slugMatches[0]
-		if len(slugMatches) > 1 {
-			resp.Diagnostics.AddWarning("Import dashboard", fmt.Sprintf("multiple dashboards with slug %q in project %q; imported the first match", slugMatches[0].DashboardSlug, projectName))
-		}
+		resp.Diagnostics.AddError("Import dashboard failed", fmt.Sprintf("dashboard %q not found in project %q", dashboardKey, projectName))
+		return
+	}
+	if len(slugMatches) > 1 {
+		resp.Diagnostics.AddWarning("Import dashboard", fmt.Sprintf("multiple dashboards with slug %q in project %q; imported the first match", slugMatches[0].DashboardSlug, projectName))
 	}
 
 	if providedSlug != "" && providedSlug != summary.DashboardSlug {
@@ -495,6 +474,28 @@ func (r *DashboardResource) ImportState(ctx context.Context, req resource.Import
 
 // --- Helpers ---
 
+func findDashboardSummaryByIDOrSlug(dashboards []logclient.DashboardSummary, dashboardKey, providedSlug string) (*logclient.DashboardSummary, []*logclient.DashboardSummary) {
+	for i := range dashboards {
+		if dashboards[i].ID == dashboardKey && dashboardKey != "" {
+			return &dashboards[i], nil
+		}
+	}
+	slug := dashboardKey
+	if providedSlug != "" {
+		slug = providedSlug
+	}
+	var matches []*logclient.DashboardSummary
+	for i := range dashboards {
+		if dashboards[i].DashboardSlug == slug {
+			matches = append(matches, &dashboards[i])
+		}
+	}
+	if len(matches) == 0 {
+		return nil, nil
+	}
+	return matches[0], matches
+}
+
 func (r *DashboardResource) projectNameForID(ctx context.Context, projectID string) (string, error) {
 	if r.client == nil {
 		return "", fmt.Errorf("provider is not configured")
@@ -517,16 +518,11 @@ func (r *DashboardResource) projectNameForID(ctx context.Context, projectID stri
 }
 
 func normalizeDefinitionString(raw string) (string, json.RawMessage, error) {
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-		return "", nil, fmt.Errorf("invalid JSON: %w", err)
-	}
-	scrubDefinitionMetadata(payload)
-	normalized, err := json.Marshal(payload)
+	normalized, err := normalizeDefinitionRaw([]byte(raw))
 	if err != nil {
-		return "", nil, fmt.Errorf("normalize JSON: %w", err)
+		return "", nil, err
 	}
-	return string(normalized), json.RawMessage(normalized), nil
+	return normalized, json.RawMessage(normalized), nil
 }
 
 func normalizeDefinitionRaw(raw json.RawMessage) (string, error) {
@@ -536,6 +532,9 @@ func normalizeDefinitionRaw(raw json.RawMessage) (string, error) {
 	var payload map[string]any
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return "", fmt.Errorf("invalid definition JSON: %w", err)
+	}
+	if payload == nil {
+		return "", fmt.Errorf("dashboard definition must be a JSON object")
 	}
 	scrubDefinitionMetadata(payload)
 	normalized, err := json.Marshal(payload)

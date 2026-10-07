@@ -8,9 +8,16 @@ released versions of this repo.
 ```bash
 make fmt
 make generate
-make lint
-make test
+make verify
 ```
+
+`make verify` checks Go formatting, builds every package, runs unit tests with
+the race detector, and runs the linters. It disables acceptance tests so the
+same checks run in CI without credentials. Install Terraform locally before
+running the CLI tests to avoid repeated downloads.
+
+`python3 scripts/check-partial-create.py` checks failed-create recovery with a
+local mock API and temporary Terraform state.
 
 `make generate` refreshes the Terraform Registry docs in `docs/`. Commit those
 docs whenever schema, examples, descriptions, or validators change.

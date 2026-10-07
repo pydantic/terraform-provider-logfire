@@ -150,7 +150,7 @@ func (r *SloResource) Schema(ctx context.Context, req resource.SchemaRequest, re
 			"bad_query": rschema.StringAttribute{
 				Optional: true,
 				MarkdownDescription: "SQL boolean expression selecting the bad events counted by the SLO. " +
-					"Required for every mode except `metric_aggregation = \"histogram_threshold\"`, which uses `threshold` and `comparison` instead.",
+					"Required for every mode except `metric_aggregation = \"histogram_threshold\"`, which uses `threshold` and `comparison` instead and requires `bad_query` to be omitted.",
 			},
 			"threshold": rschema.StringAttribute{
 				Optional: true,
@@ -257,6 +257,13 @@ func validateSloSliConfig(m *SloModel) diag.Diagnostics {
 	var diags diag.Diagnostics
 
 	if agg == "histogram_threshold" {
+		if !m.BadQuery.IsNull() && !m.BadQuery.IsUnknown() {
+			diags.Append(diag.NewAttributeErrorDiagnostic(
+				path.Root("bad_query"),
+				"bad_query is not valid for histogram_threshold",
+				"metric_aggregation = \"histogram_threshold\" uses threshold and comparison instead of bad_query. Omit bad_query for this mode.",
+			))
+		}
 		if !m.Source.IsUnknown() {
 			source := "records"
 			if !m.Source.IsNull() {

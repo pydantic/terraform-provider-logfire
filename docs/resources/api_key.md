@@ -23,7 +23,7 @@ Manages a Logfire API key. Write tokens (`project:write_otlp`), read tokens (`pr
 ### Optional
 
 - `description` (String) Free-form description. Can be updated in place; setting it to null clears it.
-- `expires_at` (String) Optional RFC3339 expiration timestamp (for example `2026-12-31T23:59:59Z`). If omitted, the key does not expire. Changing it replaces the key: expiry cannot be updated in place (an expired key cannot be re-enabled; create a new key instead).
+- `expires_at` (String) Optional RFC3339 expiration timestamp (for example `2026-12-31T23:59:59Z`). If omitted or null, the key does not expire. Empty and whitespace-only values are invalid. Changing it replaces the key: expiry cannot be updated in place (an expired key cannot be re-enabled; create a new key instead).
 - `gateway` (Attributes) Gateway per-scope settings for keys with the `project:gateway_proxy` scope. Updatable in place. Removing the block clears every cap the key carries. (see [below for nested schema](#nestedatt--gateway))
 - `project_id` (String) UUID of the project the key is scoped to. Omit for an org-wide key. Changing the project replaces the key. Scopes `project:read_otlp`, `project:write_otlp`, and `project:gateway_proxy` require a project.
 

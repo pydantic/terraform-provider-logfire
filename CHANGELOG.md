@@ -1,5 +1,17 @@
 ## Unreleased
 
+BREAKING CHANGES:
+- `expires_at` rejects empty and whitespace-only strings. Omit the attribute or use `null` for no expiration.
+- Histogram-threshold SLOs require `bad_query` to be omitted. Remove it when using `metric_aggregation = "histogram_threshold"`.
+
+BUG FIXES:
+- Create requests no longer retry automatically, including after rate limits or network errors, to avoid duplicate resources after an uncertain response. Check whether the resource was created before retrying or importing it.
+- Project and channel updates omit unchanged nullable fields instead of sending `null`.
+- Failed follow-up requests during channel and organization creation retain the created ID in state. Terraform marks the resource tainted; after verifying it and resolving the failure, untaint it before applying again to update it without replacement.
+- Dashboard updates and deletes reject missing IDs and require explicit import; empty-ID reads retain the observe-before-create behavior used by Crossplane. Dashboard definitions reject JSON `null` instead of panicking.
+- Project imports prefer an exact ID match over a matching project name.
+- Slack's `include_agent_prompt` uses the backend default on creation and retains the current setting when omitted afterward. Set it to `true` explicitly to re-enable the prompt.
+
 ## 0.2.1
 
 - `logfire_alert`: `time_window` and `frequency` accept any duration the API accepts, not only the previous preset list. Equivalent spellings such as `90m` for `1h30m` are kept as written, and the API's one-minute minimum is enforced at plan time.

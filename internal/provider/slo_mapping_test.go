@@ -520,6 +520,14 @@ func TestValidateSloSliConfig(t *testing.T) {
 			m.Comparison = types.StringNull()
 		}, true},
 		{"histogram without bad_query is fine", func(m *SloModel) { *m = histogram() }, false},
+		{"histogram with bad_query is rejected", func(m *SloModel) {
+			*m = histogram()
+			m.BadQuery = types.StringValue("duration > 1")
+		}, true},
+		{"histogram with unknown bad_query defers validation", func(m *SloModel) {
+			*m = histogram()
+			m.BadQuery = types.StringUnknown()
+		}, false},
 		{"unknown metric_aggregation defers validation", func(m *SloModel) {
 			m.MetricAggregation = types.StringUnknown()
 			m.BadQuery = types.StringNull()
