@@ -433,14 +433,35 @@ func (r *DashboardResource) ImportState(ctx context.Context, req resource.Import
 		return
 	}
 
-	summary, slugMatches := findDashboardSummaryByIDOrSlug(dashboards, dashboardKey, providedSlug)
+	var (
+		summary     *logclient.DashboardSummary
+		slugMatches []*logclient.DashboardSummary
+	)
+	for i := range dashboards {
+		d := &dashboards[i]
+		if d.ID == dashboardKey {
+			summary = d
+			break
+		}
+		// If a slug was provided, prefer it; otherwise fall back to matching the key as slug.
+		slugCandidate := dashboardKey
+		if providedSlug != "" {
+			slugCandidate = providedSlug
+		}
+		if d.DashboardSlug == slugCandidate {
+			slugMatches = append(slugMatches, d)
+		}
+	}
 
 	if summary == nil {
-		resp.Diagnostics.AddError("Import dashboard failed", fmt.Sprintf("dashboard %q not found in project %q", dashboardKey, projectName))
-		return
-	}
-	if len(slugMatches) > 1 {
-		resp.Diagnostics.AddWarning("Import dashboard", fmt.Sprintf("multiple dashboards with slug %q in project %q; imported the first match", slugMatches[0].DashboardSlug, projectName))
+		if len(slugMatches) == 0 {
+			resp.Diagnostics.AddError("Import dashboard failed", fmt.Sprintf("dashboard %q not found in project %q", dashboardKey, projectName))
+			return
+		}
+		summary = slugMatches[0]
+		if len(slugMatches) > 1 {
+			resp.Diagnostics.AddWarning("Import dashboard", fmt.Sprintf("multiple dashboards with slug %q in project %q; imported the first match", slugMatches[0].DashboardSlug, projectName))
+		}
 	}
 
 	if providedSlug != "" && providedSlug != summary.DashboardSlug {
@@ -473,28 +494,6 @@ func (r *DashboardResource) ImportState(ctx context.Context, req resource.Import
 }
 
 // --- Helpers ---
-
-func findDashboardSummaryByIDOrSlug(dashboards []logclient.DashboardSummary, dashboardKey, providedSlug string) (*logclient.DashboardSummary, []*logclient.DashboardSummary) {
-	for i := range dashboards {
-		if dashboards[i].ID == dashboardKey && dashboardKey != "" {
-			return &dashboards[i], nil
-		}
-	}
-	slug := dashboardKey
-	if providedSlug != "" {
-		slug = providedSlug
-	}
-	var matches []*logclient.DashboardSummary
-	for i := range dashboards {
-		if dashboards[i].DashboardSlug == slug {
-			matches = append(matches, &dashboards[i])
-		}
-	}
-	if len(matches) == 0 {
-		return nil, nil
-	}
-	return matches[0], matches
-}
 
 func (r *DashboardResource) projectNameForID(ctx context.Context, projectID string) (string, error) {
 	if r.client == nil {

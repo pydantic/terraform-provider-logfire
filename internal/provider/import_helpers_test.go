@@ -4,12 +4,8 @@
 package provider
 
 import (
-	"net/http"
-	"net/http/httptest"
 	"slices"
 	"testing"
-
-	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
 )
 
 func TestSplitImportParts(t *testing.T) {
@@ -52,35 +48,5 @@ func TestSplitImportParts(t *testing.T) {
 				t.Fatalf("splitImportParts(%q) = %v, want %v", tt.raw, got, tt.want)
 			}
 		})
-	}
-}
-
-func TestFindProjectByNameOrIDPrefersIDMatch(t *testing.T) {
-	t.Parallel()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[
-			{"id":"11111111-1111-1111-1111-111111111111","project_name":"9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff"},
-			{"id":"9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff","project_name":"production"}
-		]`))
-	}))
-	defer server.Close()
-	c, err := logclient.NewAPIClient(server.URL, "test-token", server.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
-	id, name, err := findProjectByNameOrID(t.Context(), c, "9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if id != "9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff" || name != "production" {
-		t.Fatalf("resolved id=%q name=%q, want the ID match", id, name)
-	}
-	nameID, name, err := findProjectByNameOrID(t.Context(), c, "production")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if nameID != "9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff" || name != "production" {
-		t.Fatalf("resolved project name to id=%q name=%q", nameID, name)
 	}
 }

@@ -85,6 +85,8 @@ jobs:
           terraform_version: ${{ matrix.terraform }}
           terraform_wrapper: false
       - run: go mod download
+      - name: Run Terraform CLI end-to-end tests with a local API
+        run: make test-e2e
       - name: Check if secrets are available
         id: check-secrets
         run: |

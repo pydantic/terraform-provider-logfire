@@ -20,9 +20,13 @@ test:
 
 verify:
 	bash scripts/verify.sh
+	$(MAKE) test-e2e
 	golangci-lint run
+
+test-e2e:
+	python3 scripts/check-e2e.py
 
 testacc:
 	TF_ACC=1 go test -v -cover -timeout 120m ./...
 
-.PHONY: fmt lint test testacc verify build install generate
+.PHONY: fmt lint test test-e2e testacc verify build install generate

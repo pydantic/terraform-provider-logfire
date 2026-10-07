@@ -682,7 +682,12 @@ func (r *ChannelResource) Update(ctx context.Context, req resource.UpdateRequest
 		}
 	}
 	if plan.Config != nil {
-		cfg, diags := channelConfigModelToAPI(plan.Config)
+		config := *plan.Config
+		if config.Type.ValueString() == "slack-integration" && config.IncludeAgentPrompt.IsUnknown() &&
+			state.Config != nil && state.Config.Type.ValueString() == "slack-integration" {
+			config.IncludeAgentPrompt = state.Config.IncludeAgentPrompt
+		}
+		cfg, diags := channelConfigModelToAPI(&config)
 		resp.Diagnostics.Append(diags...)
 		if resp.Diagnostics.HasError() {
 			return
