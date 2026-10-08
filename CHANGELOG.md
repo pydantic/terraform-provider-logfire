@@ -1,9 +1,5 @@
 ## Unreleased
 
-BREAKING CHANGES:
-- `expires_at` rejects empty and whitespace-only strings. Omit the attribute or use `null` for no expiration.
-- Histogram-threshold SLOs require `bad_query` to be omitted. Remove it when using `metric_aggregation = "histogram_threshold"`.
-
 BUG FIXES:
 - Create requests no longer retry automatically, including after rate limits or network errors, to avoid duplicate resources after an uncertain response. Check whether the resource was created before retrying or importing it.
 - Project and channel updates omit unchanged nullable fields instead of sending `null`.

@@ -24,7 +24,7 @@ Manages a project-scoped AI Gateway API key (`project:gateway_proxy` scope). Do 
 
 - `cache_enabled` (Boolean) Whether gateway responses are cached. Null inherits the project default. Can be updated in place; setting it to null restores the default.
 - `description` (String) Free-form description. Can be updated in place; setting it to null clears it.
-- `expires_at` (String) Optional RFC3339 expiration timestamp (for example `2026-12-31T23:59:59Z`). If omitted or null, the key does not expire. Empty and whitespace-only values are invalid. Changing it replaces the key.
+- `expires_at` (String) Optional RFC3339 expiration timestamp (for example `2026-12-31T23:59:59Z`). If omitted, the key does not expire. Changing it replaces the key.
 - `spending_limit_daily` (Number) Maximum gateway spend in whole US dollars per day. Null means no limit. Can be updated in place; setting it to null clears it.
 - `spending_limit_monthly` (Number) Maximum gateway spend in whole US dollars per month. Null means no limit. Can be updated in place; setting it to null clears it.
 - `spending_limit_total` (Number) Maximum gateway spend in whole US dollars per lifetime. Null means no limit. Can be updated in place; setting it to null clears it.

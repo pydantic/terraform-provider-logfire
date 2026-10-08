@@ -272,12 +272,12 @@ func (r *DashboardResource) Update(ctx context.Context, req resource.UpdateReque
 	}
 
 	projectID := state.ProjectID.ValueString()
-	dashboardID := state.ID.ValueString()
 	projectName, err := r.projectNameForID(ctx, projectID)
 	if err != nil {
 		resp.Diagnostics.AddError("Resolve project name", err.Error())
 		return
 	}
+	dashboardID := state.ID.ValueString()
 
 	var planDefStr string
 	var planDefRaw json.RawMessage
@@ -517,11 +517,19 @@ func (r *DashboardResource) projectNameForID(ctx context.Context, projectID stri
 }
 
 func normalizeDefinitionString(raw string) (string, json.RawMessage, error) {
-	normalized, err := normalizeDefinitionRaw([]byte(raw))
-	if err != nil {
-		return "", nil, err
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return "", nil, fmt.Errorf("invalid JSON: %w", err)
 	}
-	return normalized, json.RawMessage(normalized), nil
+	if payload == nil {
+		return "", nil, fmt.Errorf("dashboard definition must be a JSON object")
+	}
+	scrubDefinitionMetadata(payload)
+	normalized, err := json.Marshal(payload)
+	if err != nil {
+		return "", nil, fmt.Errorf("normalize JSON: %w", err)
+	}
+	return string(normalized), json.RawMessage(normalized), nil
 }
 
 func normalizeDefinitionRaw(raw json.RawMessage) (string, error) {

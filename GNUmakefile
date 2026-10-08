@@ -20,11 +20,10 @@ test:
 
 verify:
 	bash scripts/verify.sh
-	$(MAKE) test-e2e
 	golangci-lint run
 
 test-e2e:
-	python3 scripts/check-e2e.py
+	TF_ACC= go test -v -count=1 -timeout=5m -run '^TestLifecycle' ./internal/provider/
 
 testacc:
 	TF_ACC=1 go test -v -cover -timeout 120m ./...

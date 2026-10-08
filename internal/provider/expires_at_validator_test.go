@@ -22,8 +22,8 @@ func TestOptionalRFC3339Validator(t *testing.T) {
 	}{
 		{name: "null allowed", input: types.StringNull()},
 		{name: "unknown allowed", input: types.StringUnknown()},
-		{name: "empty rejected", input: types.StringValue(""), wantErr: true},
-		{name: "whitespace rejected", input: types.StringValue("   "), wantErr: true},
+		{name: "empty allowed", input: types.StringValue("")},
+		{name: "whitespace allowed", input: types.StringValue("   ")},
 		{name: "rfc3339 nano zulu", input: types.StringValue("2026-03-02T12:34:56.789Z")},
 		{name: "rfc3339 offset", input: types.StringValue("2026-03-02T12:34:56-07:00")},
 		{name: "invalid date", input: types.StringValue("2026-03-02"), wantErr: true},

@@ -11,19 +11,16 @@ make generate
 make verify
 ```
 
-`make verify` checks Go formatting, builds every package, runs the Go tests
-with the race detector, runs the Terraform CLI end-to-end tests, and runs the
-linters. It disables live acceptance tests so it needs no credentials. Install
-Terraform locally before running the CLI tests to avoid repeated downloads.
+`make verify` checks formatting, builds the provider, runs the Go tests with the
+race detector, and runs the linters. The Go suite includes Terraform CLI tests
+against local APIs, so it needs no Logfire credentials. Install Terraform
+locally or set `TF_ACC_TERRAFORM_PATH` to avoid repeated downloads.
 
-`make test-e2e` builds the provider and drives Terraform through create, update,
-import, refresh, no-change plans, and destroy. A local API injects lost responses,
-rate limits, and failed follow-up requests. The tests check saved state, retained
-settings, recovery, and invalid inputs. They need Python 3 and Terraform, use
-temporary state, and run in CI on Terraform 1.8 and 1.14.
-
-Prefer extending these lifecycle tests and the live acceptance tests for
-provider changes. Keep focused unit tests for behavior a CLI flow cannot reach.
+`make test-e2e` runs the lifecycle and failure tests with the existing Terraform
+test framework. These tests cover Slack settings, partial creation recovery,
+and create requests after lost responses or rate limits. CI runs them on
+Terraform 1.8 and 1.14. Extend these and the live acceptance tests for provider
+changes; keep unit tests for behavior a CLI flow cannot reach.
 
 `make generate` refreshes the Terraform Registry docs in `docs/`. Commit those
 docs whenever schema, examples, descriptions, or validators change.
