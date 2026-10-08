@@ -12,6 +12,16 @@ make lint
 make test
 ```
 
+The Go suite includes Terraform CLI tests against local APIs, so it needs no
+Logfire credentials. Install Terraform locally or set `TF_ACC_TERRAFORM_PATH`
+to avoid repeated downloads.
+
+`make test-e2e` runs the lifecycle and failure tests with the existing Terraform
+test framework. These tests cover Slack settings, partial creation recovery,
+and create requests after lost responses or rate limits. CI runs them on
+Terraform 1.8 and 1.14. Extend these and the live acceptance tests for provider
+changes; keep unit tests for behavior a CLI flow cannot reach.
+
 `make generate` refreshes the Terraform Registry docs in `docs/`. Commit those
 docs whenever schema, examples, descriptions, or validators change.
 

@@ -34,11 +34,11 @@ func TestAccChannelResource(t *testing.T) {
 
 		Steps: []resource.TestStep{
 			{
-				Config: testAccChannelResourceWebhookConfig(channelName, "auto", initialURL),
+				Config: testAccChannelResourceWebhookConfig(channelName, "auto", initialURL, false),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue("logfire_channel.test", tfjsonpath.New("id"), knownvalue.NotNull()),
 					statecheck.ExpectKnownValue("logfire_channel.test", tfjsonpath.New("name"), knownvalue.StringExact(channelName)),
-					statecheck.ExpectKnownValue("logfire_channel.test", tfjsonpath.New("active"), knownvalue.Bool(true)),
+					statecheck.ExpectKnownValue("logfire_channel.test", tfjsonpath.New("active"), knownvalue.Bool(false)),
 					statecheck.ExpectKnownValue("logfire_channel.test", tfjsonpath.New("config").AtMapKey("type"), knownvalue.StringExact("webhook")),
 					statecheck.ExpectKnownValue("logfire_channel.test", tfjsonpath.New("config").AtMapKey("format"), knownvalue.StringExact("auto")),
 					statecheck.ExpectKnownValue("logfire_channel.test", tfjsonpath.New("config").AtMapKey("url"), knownvalue.StringExact(initialURL)),
@@ -61,7 +61,7 @@ func TestAccChannelResource(t *testing.T) {
 				},
 			},
 			{
-				Config: testAccChannelResourceWebhookConfig(channelName, "auto", initialURL),
+				Config: testAccChannelResourceWebhookConfig(channelName, "auto", initialURL, false),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectEmptyPlan(),
@@ -69,9 +69,10 @@ func TestAccChannelResource(t *testing.T) {
 				},
 			},
 			{
-				Config: testAccChannelResourceWebhookConfig(updatedChannelName, "slack-blockkit", updatedURL),
+				Config: testAccChannelResourceWebhookConfig(updatedChannelName, "slack-blockkit", updatedURL, false),
 				ConfigStateChecks: []statecheck.StateCheck{
 					statecheck.ExpectKnownValue("logfire_channel.test", tfjsonpath.New("name"), knownvalue.StringExact(updatedChannelName)),
+					statecheck.ExpectKnownValue("logfire_channel.test", tfjsonpath.New("active"), knownvalue.Bool(false)),
 					statecheck.ExpectKnownValue("logfire_channel.test", tfjsonpath.New("config").AtMapKey("format"), knownvalue.StringExact("slack-blockkit")),
 					statecheck.ExpectKnownValue("logfire_channel.test", tfjsonpath.New("config").AtMapKey("url"), knownvalue.StringExact(updatedURL)),
 				},
@@ -96,11 +97,16 @@ func TestAccChannelResource(t *testing.T) {
 	})
 }
 
-func testAccChannelResourceWebhookConfig(channelName, format, url string) string {
+func testAccChannelResourceWebhookConfig(channelName, format, url string, active ...bool) string {
+	activeConfig := ""
+	if len(active) > 0 {
+		activeConfig = fmt.Sprintf("  active = %t\n", active[0])
+	}
 	return fmt.Sprintf(`%s
 
 resource "logfire_channel" "test" {
   name = %q
+%s
 
   config {
     type   = "webhook"
@@ -108,7 +114,7 @@ resource "logfire_channel" "test" {
     url    = %q
   }
 }
-`, testAccProviderConfig(), channelName, format, url)
+`, testAccProviderConfig(), channelName, activeConfig, format, url)
 }
 
 func testAccChannelResourceOpsgenieConfig(channelName, authKey string) string {

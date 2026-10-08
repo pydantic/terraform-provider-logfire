@@ -68,7 +68,20 @@ func TestAccProjectResource(t *testing.T) {
 				},
 			},
 
-			// UPDATE 1: clear description -> expect Null in state, and Update action
+			// Rename without changing description or visibility.
+			{
+				Config: testAccProjectResourceConfig(renamedName, stringPtr("This is a test project"), nil),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction("logfire_project.test", plancheck.ResourceActionUpdate)},
+				},
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("logfire_project.test", tfjsonpath.New("name"), knownvalue.StringExact(renamedName)),
+					statecheck.ExpectKnownValue("logfire_project.test", tfjsonpath.New("description"), knownvalue.StringExact("This is a test project")),
+					statecheck.ExpectKnownValue("logfire_project.test", tfjsonpath.New("visibility"), knownvalue.StringExact("public")),
+				},
+			},
+
+			// Clearing the description still works after a rename.
 			{
 				Config: testAccProjectResourceConfig(baseName, nil, nil),
 				ConfigStateChecks: []statecheck.StateCheck{

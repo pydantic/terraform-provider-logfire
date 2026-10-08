@@ -97,7 +97,7 @@ Optional:
 - `auth_key` (String, Sensitive) Opsgenie API key.
 - `channel_id` (String) Slack channel ID (for example `C0123456789`) the notifications are posted to. The Logfire Slack bot must already be a member of the channel.
 - `format` (String) Webhook payload format.
-- `include_agent_prompt` (Boolean) Whether Slack issue notifications include the "Ask your agent" MCP prompt line. Defaults to `true` when omitted.
+- `include_agent_prompt` (Boolean) Whether Slack issue notifications include the "Ask your agent" MCP prompt line. Defaults to `true` for new Slack channels. Omitting it on an existing channel retains the current setting; set it to `true` explicitly to re-enable the prompt.
 - `install_id` (String) ID of the organization's Slack App or PagerDuty App installation, created by connecting the platform in the Logfire UI (Organization Settings -> Connections). The installation must belong to the same organization, be active, and match the channel type.
 - `region` (String) PagerDuty account region (`us` or `eu`). When omitted, Logfire uses the US Events API endpoint. Only for `pagerduty` channels; a `pagerduty-integration` channel takes its region from the connected account.
 - `routing_key` (String, Sensitive) PagerDuty Events API v2 integration routing key. Only for `pagerduty` channels; `pagerduty-integration` channels resolve the key from the installation instead.

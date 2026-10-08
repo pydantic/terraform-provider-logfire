@@ -261,8 +261,8 @@ func (r *DashboardResource) Update(ctx context.Context, req resource.UpdateReque
 		return
 	}
 
-	if state.ID.IsNull() || state.ID.IsUnknown() {
-		resp.Diagnostics.AddError("Missing ID", "Cannot update dashboard because the current state has no ID.")
+	if state.ID.IsNull() || state.ID.IsUnknown() || state.ID.ValueString() == "" {
+		resp.Diagnostics.AddError("Missing dashboard ID", "The dashboard state has no ID. Import the intended dashboard to restore its identity before updating or deleting it.")
 		return
 	}
 
@@ -364,8 +364,8 @@ func (r *DashboardResource) Delete(ctx context.Context, req resource.DeleteReque
 		return
 	}
 
-	if state.ID.IsNull() || state.ID.IsUnknown() {
-		resp.Diagnostics.AddError("Missing ID", "Cannot delete dashboard because the current state has no ID.")
+	if state.ID.IsNull() || state.ID.IsUnknown() || state.ID.ValueString() == "" {
+		resp.Diagnostics.AddError("Missing dashboard ID", "The dashboard state has no ID. Import the intended dashboard to restore its identity before updating or deleting it.")
 		return
 	}
 
@@ -521,6 +521,9 @@ func normalizeDefinitionString(raw string) (string, json.RawMessage, error) {
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
 		return "", nil, fmt.Errorf("invalid JSON: %w", err)
 	}
+	if payload == nil {
+		return "", nil, fmt.Errorf("dashboard definition must be a JSON object")
+	}
 	scrubDefinitionMetadata(payload)
 	normalized, err := json.Marshal(payload)
 	if err != nil {
@@ -536,6 +539,9 @@ func normalizeDefinitionRaw(raw json.RawMessage) (string, error) {
 	var payload map[string]any
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return "", fmt.Errorf("invalid definition JSON: %w", err)
+	}
+	if payload == nil {
+		return "", fmt.Errorf("dashboard definition must be a JSON object")
 	}
 	scrubDefinitionMetadata(payload)
 	normalized, err := json.Marshal(payload)

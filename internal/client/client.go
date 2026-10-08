@@ -623,7 +623,7 @@ func (c *APIClient) instanceOrganizationsBase() string {
 
 func (c *APIClient) CreateOrganization(ctx context.Context, in OrganizationCreate) (*OrganizationRead, error) {
 	var out OrganizationRead
-	_, err := c.doJSON(ctx, http.MethodPost, c.instanceOrganizationsBase(), in, &out, http.StatusCreated, http.StatusOK)
+	_, err := c.doJSON(disableAutomaticRetries(ctx), http.MethodPost, c.instanceOrganizationsBase(), in, &out, http.StatusCreated, http.StatusOK)
 	if err != nil {
 		return nil, err
 	}
@@ -667,8 +667,8 @@ type ProjectCreate struct {
 
 type ProjectUpdate struct {
 	ProjectName *string               `json:"project_name,omitempty"`
-	Description NullableField[string] `json:"description,omitempty"`
-	Visibility  NullableField[string] `json:"visibility,omitempty"`
+	Description NullableField[string] `json:"description,omitzero"`
+	Visibility  NullableField[string] `json:"visibility,omitzero"`
 }
 
 func (c *APIClient) projectsBase() string {
@@ -681,7 +681,7 @@ func (c *APIClient) projectPath(id string) string {
 
 func (c *APIClient) CreateProject(ctx context.Context, in ProjectCreate) (*ProjectRead, error) {
 	var out ProjectRead
-	_, err := c.doJSON(ctx, http.MethodPost, c.projectsBase(), in, &out, http.StatusCreated, http.StatusOK)
+	_, err := c.doJSON(disableAutomaticRetries(ctx), http.MethodPost, c.projectsBase(), in, &out, http.StatusCreated, http.StatusOK)
 	if err != nil {
 		return nil, err
 	}
@@ -804,7 +804,7 @@ func (c *APIClient) alertPath(projectID, id string) string {
 
 func (c *APIClient) CreateAlert(ctx context.Context, projectID string, in AlertCreate) (*AlertRead, error) {
 	var out AlertRead
-	_, err := c.doJSON(ctx, http.MethodPost, c.alertsBase(projectID), in, &out, http.StatusCreated)
+	_, err := c.doJSON(disableAutomaticRetries(ctx), http.MethodPost, c.alertsBase(projectID), in, &out, http.StatusCreated)
 	if err != nil {
 		return nil, err
 	}
@@ -924,9 +924,9 @@ type ChannelCreate struct {
 }
 
 type ChannelUpdate struct {
-	Label  NullableField[string] `json:"label,omitempty"`
+	Label  NullableField[string] `json:"label,omitzero"`
 	Config *interface{}          `json:"config,omitempty"` // WebhookConfig, EmailConfig, OpsgenieConfig, PagerdutyConfig, PagerdutyIntegrationConfig, or SlackIntegrationConfig
-	Active NullableField[bool]   `json:"active,omitempty"`
+	Active NullableField[bool]   `json:"active,omitzero"`
 }
 
 func (c *APIClient) channelsBase() string {
@@ -938,7 +938,7 @@ func (c *APIClient) channelPath(id string) string {
 
 func (c *APIClient) CreateChannel(ctx context.Context, in ChannelCreate) (*ChannelRead, error) {
 	var out ChannelRead
-	_, err := c.doJSON(ctx, http.MethodPost, c.channelsBase(), in, &out, http.StatusCreated)
+	_, err := c.doJSON(disableAutomaticRetries(ctx), http.MethodPost, c.channelsBase(), in, &out, http.StatusCreated)
 	if err != nil {
 		return nil, err
 	}
@@ -1008,7 +1008,7 @@ func (c *APIClient) readTokenPath(projectID, tokenID string) string {
 
 func (c *APIClient) CreateReadToken(ctx context.Context, projectID string, in CreateReadTokenInput) (*ReadToken, error) {
 	var out ReadToken
-	_, err := c.doJSON(ctx, http.MethodPost, c.readTokensBase(projectID), in, &out, http.StatusCreated, http.StatusOK)
+	_, err := c.doJSON(disableAutomaticRetries(ctx), http.MethodPost, c.readTokensBase(projectID), in, &out, http.StatusCreated, http.StatusOK)
 	if err != nil {
 		return nil, err
 	}
@@ -1056,7 +1056,7 @@ func (c *APIClient) writeTokenPath(projectID, tokenID string) string {
 
 func (c *APIClient) CreateWriteToken(ctx context.Context, projectID string, in CreateWriteTokenInput) (*WriteToken, error) {
 	var out WriteToken
-	_, err := c.doJSON(ctx, http.MethodPost, c.writeTokensBase(projectID), in, &out, http.StatusCreated, http.StatusOK)
+	_, err := c.doJSON(disableAutomaticRetries(ctx), http.MethodPost, c.writeTokensBase(projectID), in, &out, http.StatusCreated, http.StatusOK)
 	if err != nil {
 		return nil, err
 	}
@@ -1275,7 +1275,7 @@ func (c *APIClient) dashboardPath(projectID, dashboardID string) string {
 
 func (c *APIClient) CreateDashboard(ctx context.Context, projectID string, in DashboardCreateRequest) (*Dashboard, error) {
 	var out Dashboard
-	_, err := c.doJSON(ctx, http.MethodPost, c.dashboardsBase(projectID), in, &out, http.StatusOK, http.StatusCreated)
+	_, err := c.doJSON(disableAutomaticRetries(ctx), http.MethodPost, c.dashboardsBase(projectID), in, &out, http.StatusOK, http.StatusCreated)
 	if err != nil {
 		return nil, err
 	}
@@ -1464,7 +1464,7 @@ func (c *APIClient) sloPath(projectID, id string) string {
 
 func (c *APIClient) CreateSlo(ctx context.Context, projectID string, in SloCreate) (*SloRead, error) {
 	var out SloRead
-	_, err := c.doJSON(ctx, http.MethodPost, c.slosBase(projectID), in, &out, http.StatusCreated)
+	_, err := c.doJSON(disableAutomaticRetries(ctx), http.MethodPost, c.slosBase(projectID), in, &out, http.StatusCreated)
 	if err != nil {
 		return nil, err
 	}

@@ -208,21 +208,21 @@ func (r *OrganizationResource) Create(ctx context.Context, req resource.CreateRe
 		resp.Diagnostics.AddError("Create organization failed", err.Error())
 		return
 	}
+	var state OrganizationModel
+	organizationReadToModel(out, &state)
+	state.DeletionProtection = normalizeDeletionProtection(plan.DeletionProtection)
 
 	if billingEmail := terraformStringPointer(plan.BillingEmail); billingEmail != nil {
 		updated, updateErr := r.client.UpdateOrganizationContext(ctx, out.OrganizationName, logclient.OrganizationUpdate{
 			BillingEmail: billingEmail,
 		})
 		if updateErr != nil {
-			resp.Diagnostics.AddError("Create organization failed", fmt.Sprintf("setting billing_email: %v", updateErr))
+			resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+			resp.Diagnostics.AddError("Create organization failed", fmt.Sprintf("setting billing_email: %v. The created organization %q is saved in state and Terraform will mark it tainted. After fixing the error and verifying the saved organization, untaint this resource before applying again to update it without replacement.", updateErr, state.ID.ValueString()))
 			return
 		}
-		out = updated
+		organizationReadToModel(updated, &state)
 	}
-
-	var state OrganizationModel
-	organizationReadToModel(out, &state)
-	state.DeletionProtection = normalizeDeletionProtection(plan.DeletionProtection)
 
 	tflog.Trace(ctx, "created organization", map[string]any{"id": state.ID.ValueString(), "name": state.Name.ValueString()})
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
