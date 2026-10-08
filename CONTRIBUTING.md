@@ -8,13 +8,13 @@ released versions of this repo.
 ```bash
 make fmt
 make generate
-make verify
+make lint
+make test
 ```
 
-`make verify` checks formatting, builds the provider, runs the Go tests with the
-race detector, and runs the linters. The Go suite includes Terraform CLI tests
-against local APIs, so it needs no Logfire credentials. Install Terraform
-locally or set `TF_ACC_TERRAFORM_PATH` to avoid repeated downloads.
+The Go suite includes Terraform CLI tests against local APIs, so it needs no
+Logfire credentials. Install Terraform locally or set `TF_ACC_TERRAFORM_PATH`
+to avoid repeated downloads.
 
 `make test-e2e` runs the lifecycle and failure tests with the existing Terraform
 test framework. These tests cover Slack settings, partial creation recovery,
