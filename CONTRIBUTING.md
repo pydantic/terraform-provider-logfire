@@ -55,3 +55,14 @@ deprecates it, and name the release that removes it.
 Move the `Unreleased` changelog section under the new version. Tag `main` with
 `vX.Y.Z`, push the tag, and verify the GitHub release plus the Terraform
 Registry version. Then update Pulumi and Crossplane from that release.
+
+## Documentation deployment
+
+After a stable provider release succeeds, `trigger-docs` requests a deployment in
+`pydantic/unified-docs`. The site resolves the latest stable provider tag and reads
+its generated resource docs, provider schema, and examples. Prereleases do not
+request a deployment.
+
+Configure the `DOCS_APP_ID` Actions variable and `DOCS_APP_PRIVATE_KEY` Actions
+secret in this repository. Use the docs GitHub App installed on `pydantic/unified-docs`,
+with permission to create repository dispatch events there.
