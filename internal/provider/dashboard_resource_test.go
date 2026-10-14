@@ -6,8 +6,11 @@ package provider
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-testing/compare"
 	"github.com/hashicorp/terraform-plugin-testing/helper/acctest"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
@@ -25,8 +28,15 @@ func TestAccDashboardResource(t *testing.T) {
 	dashboardName := fmt.Sprintf("Dashboard %s", dashboardSlug)
 	updatedDashboardSlug := fmt.Sprintf("%s-updated", dashboardSlug)
 	updatedDashboardName := fmt.Sprintf("%s Updated", dashboardName)
-	initialDefinition := testAccDashboardDefinition("placeholder text")
-	updatedDefinition := testAccDashboardDefinition("hello world")
+	initialDefinition := filepath.Join(t.TempDir(), "dashboard.json")
+	updatedDefinition := filepath.Join(t.TempDir(), "dashboard.json")
+	for filename, text := range map[string]string{initialDefinition: "placeholder text", updatedDefinition: "hello world"} {
+		if err := os.WriteFile(filename, []byte(testAccDashboardDefinition(text)), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sameID := statecheck.CompareValue(compare.ValuesSame())
+	replacementID := statecheck.CompareValue(compare.ValuesDiffer())
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
@@ -40,6 +50,8 @@ func TestAccDashboardResource(t *testing.T) {
 					initialDefinition,
 				),
 				ConfigStateChecks: []statecheck.StateCheck{
+					sameID.AddStateValue("logfire_dashboard.test", tfjsonpath.New("id")),
+					replacementID.AddStateValue("logfire_dashboard.test", tfjsonpath.New("id")),
 					statecheck.ExpectKnownValue("logfire_dashboard.test", tfjsonpath.New("id"), knownvalue.NotNull()),
 					statecheck.ExpectKnownValue("logfire_dashboard.test", tfjsonpath.New("project_id"), knownvalue.NotNull()),
 					statecheck.ExpectKnownValue("logfire_dashboard.test", tfjsonpath.New("name"), knownvalue.StringExact(dashboardName)),
@@ -50,6 +62,8 @@ func TestAccDashboardResource(t *testing.T) {
 				ResourceName:      "logfire_dashboard.test",
 				ImportState:       true,
 				ImportStateVerify: true,
+				// Import stores API JSON; the following plan verifies equivalence to the file.
+				ImportStateVerifyIgnore: []string{"definition"},
 				ImportStateIdFunc: func(s *terraform.State) (string, error) {
 					// Import by project name + dashboard slug
 					return fmt.Sprintf("%s/%s", projectName, dashboardSlug), nil
@@ -71,11 +85,46 @@ func TestAccDashboardResource(t *testing.T) {
 			{
 				Config: testAccDashboardResourceConfig(
 					projectName,
-					updatedDashboardSlug,
+					dashboardSlug,
+					updatedDashboardName,
+					initialDefinition,
+				),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction("logfire_dashboard.test", plancheck.ResourceActionUpdate)},
+				},
+				ConfigStateChecks: []statecheck.StateCheck{
+					sameID.AddStateValue("logfire_dashboard.test", tfjsonpath.New("id")),
+					statecheck.ExpectKnownValue("logfire_dashboard.test", tfjsonpath.New("name"), knownvalue.StringExact(updatedDashboardName)),
+				},
+			},
+			{
+				Config: testAccDashboardResourceConfig(
+					projectName,
+					dashboardSlug,
 					updatedDashboardName,
 					updatedDefinition,
 				),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction("logfire_dashboard.test", plancheck.ResourceActionUpdate)},
+				},
 				ConfigStateChecks: []statecheck.StateCheck{
+					sameID.AddStateValue("logfire_dashboard.test", tfjsonpath.New("id")),
+					statecheck.ExpectKnownValue("logfire_dashboard.test", tfjsonpath.New("slug"), knownvalue.StringExact(dashboardSlug)),
+				},
+			},
+			{
+				Config: testAccDashboardResourceConfig(projectName, dashboardSlug, updatedDashboardName, updatedDefinition),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+				},
+			},
+			{
+				Config: testAccDashboardResourceConfig(projectName, updatedDashboardSlug, updatedDashboardName, updatedDefinition),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction("logfire_dashboard.test", plancheck.ResourceActionReplace)},
+				},
+				ConfigStateChecks: []statecheck.StateCheck{
+					replacementID.AddStateValue("logfire_dashboard.test", tfjsonpath.New("id")),
 					statecheck.ExpectKnownValue("logfire_dashboard.test", tfjsonpath.New("name"), knownvalue.StringExact(updatedDashboardName)),
 					statecheck.ExpectKnownValue("logfire_dashboard.test", tfjsonpath.New("slug"), knownvalue.StringExact(updatedDashboardSlug)),
 				},
@@ -84,7 +133,7 @@ func TestAccDashboardResource(t *testing.T) {
 	})
 }
 
-func testAccDashboardResourceConfig(projectName, slug, name, definition string) string {
+func testAccDashboardResourceConfig(projectName, slug, name, definitionPath string) string {
 	return fmt.Sprintf(`%s
 
 resource "logfire_project" "test" {
@@ -95,9 +144,9 @@ resource "logfire_dashboard" "test" {
   project_id = logfire_project.test.id
   slug       = %q
   name       = %q
-  definition = %q
+  definition = file(%q)
 }
-`, testAccProviderConfig(), projectName, slug, name, definition)
+`, testAccProviderConfig(), projectName, slug, name, definitionPath)
 }
 
 func testAccDashboardDefinition(widgetText string) string {
@@ -155,7 +204,7 @@ func testAccDashboardDefinition(widgetText string) string {
 		},
 	}
 
-	raw, err := json.Marshal(payload)
+	raw, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		panic(fmt.Sprintf("failed to marshal dashboard definition: %v", err))
 	}
