@@ -6,7 +6,9 @@ and its feature map to select checks for the changed behavior before claiming
 completion. Save the commands, exit codes, and observable results outside the
 checkout. Report skipped checks and unmet prerequisites.
 
-Local Terraform CLI tests use temporary HTTP APIs. They do not prove compatibility
-with a running Logfire instance. Live acceptance tests create and delete resources.
-Use an explicitly selected disposable target and credentials authorized for it.
-Keep state, API keys, and token outputs out of commits and shared evidence.
+For API-backed changes, compare the affected behavior with platform's public
+`api.json` and run the existing local resource lifecycle tests. Record which
+platform revision the comparison covers. The provider has no automatic OpenAPI
+client generation or platform version pin. Live acceptance is an additional check
+when the change needs runtime API evidence. It is not required for every change.
+Use an authorized disposable target for it. Keep state and tokens private.

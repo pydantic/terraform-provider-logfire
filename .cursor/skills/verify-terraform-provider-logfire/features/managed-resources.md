@@ -1,7 +1,7 @@
 # Managed Logfire resources
 
 Terraform manages project settings, notification channels, dashboards, alerts,
-and SLOs through a real Logfire API.
+and SLOs. Verify the resource actions affected by the change.
 
 ## Sub-features
 
@@ -17,7 +17,15 @@ and `logfire_slo` resources. Their examples live under `examples/resources/`.
 
 ## Driving it with the Terraform test framework
 
-Preconditions: Doctor identifies the authorized disposable Logfire organization.
+Preconditions: Launch and the [API-contract review](api-contract.md) are complete.
+
+Run `TF_ACC= make test` for the existing client, mapping, validation, import, and
+protocol tests. Run `TF_ACC= make test-e2e` for the local Terraform CLI lifecycle.
+Compare the affected create, read, update, import, no-op, and delete expectations
+with the selected schema. Record any action that has no existing local coverage.
+
+Use live acceptance when the change needs runtime API evidence or the task
+requests it. Doctor then identifies the authorized disposable Logfire organization.
 `LOGFIRE_API_KEY`, `LOGFIRE_BASE_URL`, and `LOGFIRE_EXPECTED_ORG` select it explicitly.
 The credential has the documented scopes. SLOs are available in the selected instance.
 
@@ -29,12 +37,12 @@ TF_ACC=1 TMPDIR="$RUN_DIR/scratch" go test -v -count=1 -timeout=20m \
 
 Save each selected test result. Require the created values, updated values,
 supported import comparisons, and existing empty-plan assertions to pass.
-Record created IDs privately. After destroy, independently confirm those IDs are
-absent through the same public APIs that the provider uses.
+For a deletion change, retain the run-owned IDs before cleanup and independently
+confirm their absence through the API after destroy.
 
 ## Gotchas
 
 - The tests create real resources. Never use an unselected production organization.
-- Creating configuration does not prove alert delivery or dashboard query results.
+- Creating configuration does not prove alert delivery or dashboard query results. Those checks apply when the task changes that behavior.
 - A skipped SLO or missing API is incomplete coverage. Match the instance release to the feature under test.
 - A `CheckDestroy` comment does not establish that a test contains a remote deletion check.

@@ -19,6 +19,8 @@ The existing Terraform test framework runs these commands with private state.
 
 Preconditions: Complete Launch and Doctor. Use a supported Terraform executable.
 This recipe requires no Logfire credentials or running stack.
+For API-backed changes, compare the affected fixtures with the selected
+[platform API contract](api-contract.md) before relying on their responses.
 
 ```bash
 TF_ACC= TMPDIR="$RUN_DIR/scratch" make test-e2e
@@ -32,6 +34,7 @@ and one final deletion for channel and organization recovery.
 
 ## Gotchas
 
-- `TF_ACC=` deliberately excludes live acceptance. These results do not prove a real Logfire API contract.
+- `TF_ACC=` excludes live acceptance. The local HTTP APIs do not validate their responses against `api.json`.
+- The CLI suite covers the listed lifecycle and recovery paths. `make test` also covers client requests, mapping, validation, and provider protocol behavior.
 - `TF_ACC_TERRAFORM_PATH` selects the binary. The Terraform executable on `PATH` can be an older version.
 - This command already includes `-count=1`. A cached result is not a new verification run.

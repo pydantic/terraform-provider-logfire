@@ -17,7 +17,19 @@ Use `logfire_organization`. The example is
 
 ## Driving it with the Terraform test framework
 
-Preconditions: Doctor identifies an owned disposable self-hosted instance.
+Preconditions: Launch and the [API-contract review](api-contract.md) are complete.
+
+Run the existing credential-free organization request and resource checks:
+
+```bash
+TF_ACC= go test -v -count=1 -run 'Organization|TestLifecyclePartialCreateRecovery/organization' \
+  ./internal/client/ ./internal/provider/
+```
+
+Require the affected route, token exchange, identity, import, deletion, and
+recovery checks to pass. The live `TestAccOrganizationResource` case is skipped.
+Use live acceptance when runtime admin API behavior needs proof or the task
+requests it. Doctor then identifies an owned disposable self-hosted instance.
 The API key belongs to its admin-panel organization and holds `organization:admin`.
 The instance satisfies the documented organization read/update/delete release floor.
 
