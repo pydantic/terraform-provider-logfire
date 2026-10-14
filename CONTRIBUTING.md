@@ -30,6 +30,22 @@ docs whenever schema, examples, descriptions, or validators change.
 For API-backed changes, keep the API models, Terraform schema, docs, validators,
 and tests in sync.
 
+The API-key client tests validate serialized requests and successful response
+fixtures against recorded OpenAPI contracts. Run them without API credentials:
+
+```bash
+go test -v -count=1 ./internal/client/
+```
+
+CI runs these tests before the live acceptance matrix, including on forked PRs.
+The contracts cover the selected API-key operations, not every provider resource.
+They do not establish authorization or server-side effects. Keep the existing
+Terraform lifecycle and live acceptance tests.
+
+Read [the contract fixtures](internal/client/testdata/api-contracts/README.md)
+before refreshing a snapshot or enrolling another operation. Each snapshot
+records its source and hash. Refreshes are explicit; tests use committed files.
+
 Acceptance tests use real Logfire resources:
 
 ```bash

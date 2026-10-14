@@ -1,0 +1,40 @@
+{
+  "contracts": [
+    {
+      "name": "api-keys-floor-v2026-06-09.02",
+      "file": "api-keys-floor-v2026-06-09.02.json",
+      "source": {
+        "kind": "git",
+        "revision": "d29792067513c40f26f3478efa73dd6f46d03a06",
+        "schema_path": "src/services/logfire-backend/logfire_backend/tests/openapi/api.json",
+        "release": "v2026-06-09.02",
+        "sha256": "f2550b806a585b6084fa90c72e80eebe6934e9e135196600e024d4557c1bb604"
+      },
+      "sha256": "2b0ebcfd290681d8a66d30eebf6f6099cfe40dafabd2ff7c07016f4665357f4d"
+    },
+    {
+      "name": "self-hosted-v2026-10-07.02",
+      "file": "self-hosted-v2026-10-07.02.json",
+      "source": {
+        "kind": "git",
+        "revision": "92fe38707f76bf1a0117f5b1830c414edf48e285",
+        "schema_path": "src/services/logfire-backend/logfire_backend/tests/openapi/api.json",
+        "release": "v2026-10-07.02",
+        "chart_version": "0.14.1",
+        "sha256": "982d7038255dc9c9573df744c6b140be1d645e77632dcc9ddcb6b9f702854bc2"
+      },
+      "sha256": "d4d5cdfe2bb8430dc9cfdc70892ad75ceeabc606e17272aa8f7a7e5530ccf28a"
+    },
+    {
+      "name": "saas-us",
+      "file": "saas-us.json",
+      "source": {
+        "kind": "http",
+        "url": "https://logfire-us.pydantic.dev/api/openapi.json",
+        "captured_at": "2026-10-14T15:16:15.736588+00:00",
+        "sha256": "264569c8495001118ba707a4d3c5be16ef3b8f77da0f262b89ebd3c2b65267a0"
+      },
+      "sha256": "afeb060f22ca680ae85e2c33bd6ba1b013f6d0cc5b2e796d476c715a51062684"
+    }
+  ]
+}

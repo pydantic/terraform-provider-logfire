@@ -31,6 +31,8 @@ jobs:
           cache: true
       - run: go mod download
       - run: go build -v .
+      - name: Test client and recorded API contracts
+        run: go test -v -count=1 -timeout=2m ./internal/client/
       - name: Run linters
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:

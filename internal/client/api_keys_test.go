@@ -20,9 +20,13 @@ type apiKeyStubTransport struct {
 
 func (s apiKeyStubTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	s.check(req)
+	headers := make(http.Header)
+	if s.body != "" {
+		headers.Set("Content-Type", "application/json")
+	}
 	return &http.Response{
 		StatusCode: s.status,
-		Header:     make(http.Header),
+		Header:     headers,
 		Body:       io.NopCloser(strings.NewReader(s.body)),
 		Request:    req,
 	}, nil
@@ -30,7 +34,9 @@ func (s apiKeyStubTransport) RoundTrip(req *http.Request) (*http.Response, error
 
 func newAPIKeyTestClient(t *testing.T, transport http.RoundTripper) *APIClient {
 	t.Helper()
-	c, err := NewAPIClient("https://example.invalid", "test-token", &http.Client{Transport: transport})
+	c, err := NewAPIClient("https://example.invalid", "test-token", &http.Client{
+		Transport: apiContractTransport{next: transport, contracts: loadAPIContracts(t)},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,15 +52,23 @@ func decodeBody(t *testing.T, req *http.Request) map[string]any {
 	return body
 }
 
+const apiKeyReadResponse = `{"id":"11111111-1111-4111-8111-111111111111","organization_id":"22222222-2222-4222-8222-222222222222",
+ "name":"otel","description":null,"scopes":["project:write_otlp"],
+ "project_id":"33333333-3333-4333-8333-333333333333","project_name":"prod","all_projects":false,
+ "created_by":null,"created_by_name":null,"created_at":"2026-01-01T00:00:00Z","last_used_at":null,
+ "expires_at":null,"user_id":null,"active":true,"updated_at":null,"updated_by":null,"claims":{}}`
+
+const apiKeyCreateResponse = `{"api_key":` + apiKeyReadResponse + `,"token":"secret"}`
+
 const apiKeyListResponse = `[
-  {"id":"11111111-1111-1111-1111-111111111111","organization_id":"22222222-2222-2222-2222-222222222222",
+  {"id":"11111111-1111-4111-8111-111111111111","organization_id":"22222222-2222-4222-8222-222222222222",
    "name":"otel","description":null,"scopes":["project:read_otlp","project:write_otlp"],
-   "project_id":"33333333-3333-3333-3333-333333333333","project_name":"prod","all_projects":false,
+   "project_id":"33333333-3333-4333-8333-333333333333","project_name":"prod","all_projects":false,
    "created_by":null,"created_by_name":"Ada","created_at":"2026-01-01T00:00:00Z","last_used_at":null,
    "expires_at":null,"user_id":null,"active":true,"updated_at":null,"updated_by":null,"claims":{}},
-  {"id":"44444444-4444-4444-4444-444444444444","organization_id":"22222222-2222-2222-2222-222222222222",
+  {"id":"44444444-4444-4444-8444-444444444444","organization_id":"22222222-2222-4222-8222-222222222222",
    "name":"gateway","description":"llm","scopes":["project:gateway_proxy"],
-   "project_id":"33333333-3333-3333-3333-333333333333","project_name":"prod","all_projects":false,
+   "project_id":"33333333-3333-4333-8333-333333333333","project_name":"prod","all_projects":false,
    "created_by":null,"created_by_name":null,"created_at":"2026-01-02T00:00:00Z","last_used_at":null,
    "expires_at":null,"user_id":null,"active":true,"updated_at":null,"updated_by":null,
    "claims":{"project:gateway_proxy":{"spending_limit_daily":10,"spending_limit_weekly":null,
@@ -67,11 +81,7 @@ func TestCreateAPIKeyRequest(t *testing.T) {
 	cache := true
 	c := newAPIKeyTestClient(t, apiKeyStubTransport{
 		status: http.StatusCreated,
-		body: `{"api_key": {"id":"11111111-1111-1111-1111-111111111111","organization_id":"22222222-2222-2222-2222-222222222222",
-			"name":"otel","description":null,"scopes":["project:write_otlp"],"project_id":"33333333-3333-3333-3333-333333333333",
-			"project_name":"prod","all_projects":false,"created_by":null,"created_by_name":null,
-			"created_at":"2026-01-01T00:00:00Z","last_used_at":null,"expires_at":null,"user_id":null,
-			"active":true,"updated_at":null,"updated_by":null,"claims":{}}, "token":"secret"}`,
+		body:   apiKeyCreateResponse,
 		check: func(req *http.Request) {
 			if req.Method != http.MethodPost || req.URL.Path != "/api/v1/api-keys/" {
 				t.Fatalf("unexpected request: %s %s", req.Method, req.URL.Path)
@@ -83,7 +93,7 @@ func TestCreateAPIKeyRequest(t *testing.T) {
 			if scopes, ok := body["scopes"].([]any); !ok || len(scopes) != 1 || scopes[0] != "project:write_otlp" {
 				t.Fatalf("scopes = %v", body["scopes"])
 			}
-			if body["project_id"] != "33333333-3333-3333-3333-333333333333" {
+			if body["project_id"] != "33333333-3333-4333-8333-333333333333" {
 				t.Fatalf("project_id = %v", body["project_id"])
 			}
 			claims, ok := body["claims"].(map[string]any)
@@ -103,13 +113,13 @@ func TestCreateAPIKeyRequest(t *testing.T) {
 		Scopes:      []string{"project:write_otlp"},
 		Description: &description,
 		Claims:      &ScopeClaims{GatewayProxy: &GatewayProxyClaims{SpendingLimitDaily: &daily, CacheEnabled: &cache}},
-		ProjectID:   strPtr("33333333-3333-3333-3333-333333333333"),
+		ProjectID:   strPtr("33333333-3333-4333-8333-333333333333"),
 		ExpiresAt:   &expires,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Token != "secret" || out.APIKey.ID != "11111111-1111-1111-1111-111111111111" {
+	if out.Token != "secret" || out.APIKey.ID != "11111111-1111-4111-8111-111111111111" {
 		t.Fatalf("unexpected output: %+v", out)
 	}
 }
@@ -118,7 +128,10 @@ func TestCreateAPIKeyOmitsEmptyOptionals(t *testing.T) {
 	t.Parallel()
 	c := newAPIKeyTestClient(t, apiKeyStubTransport{
 		status: http.StatusCreated,
-		body:   `{"api_key": {"id":"id","organization_id":"org","name":"mgmt","scopes":["organization:read"],"all_projects":true,"active":true,"created_at":"2026-01-01T00:00:00Z","claims":{}}, "token":"secret"}`,
+		body: `{"api_key": {"id":"11111111-1111-4111-8111-111111111111","organization_id":"22222222-2222-4222-8222-222222222222",
+			"name":"mgmt","description":null,"scopes":["organization:read"],"project_id":null,"project_name":null,
+			"all_projects":true,"created_by":null,"created_by_name":null,"created_at":"2026-01-01T00:00:00Z",
+			"last_used_at":null,"expires_at":null,"user_id":null,"active":true,"updated_at":null,"updated_by":null,"claims":{}}, "token":"secret"}`,
 		check: func(req *http.Request) {
 			body := decodeBody(t, req)
 			for _, key := range []string{"description", "claims", "project_id", "expires_at"} {
@@ -144,7 +157,7 @@ func TestGetAPIKeyFromList(t *testing.T) {
 			}
 		},
 	})
-	found, err := c.GetAPIKey(context.Background(), "44444444-4444-4444-4444-444444444444")
+	found, err := c.GetAPIKey(context.Background(), "44444444-4444-4444-8444-444444444444")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,10 +173,9 @@ func TestUpdateAPIKeyRequest(t *testing.T) {
 	t.Parallel()
 	c := newAPIKeyTestClient(t, apiKeyStubTransport{
 		status: http.StatusOK,
-		body: `{"id":"11111111-1111-1111-1111-111111111111","organization_id":"org","name":"renamed",
-			"scopes":["project:write_otlp"],"all_projects":false,"active":true,"created_at":"2026-01-01T00:00:00Z","claims":{}}`,
+		body:   strings.Replace(apiKeyReadResponse, `"name":"otel"`, `"name":"renamed"`, 1),
 		check: func(req *http.Request) {
-			if req.Method != http.MethodPatch || req.URL.Path != "/api/v1/api-keys/11111111-1111-1111-1111-111111111111/" {
+			if req.Method != http.MethodPatch || req.URL.Path != "/api/v1/api-keys/11111111-1111-4111-8111-111111111111/" {
 				t.Fatalf("unexpected request: %s %s", req.Method, req.URL.Path)
 			}
 			body := decodeBody(t, req)
@@ -185,7 +197,7 @@ func TestUpdateAPIKeyRequest(t *testing.T) {
 	})
 	name := "renamed"
 	claims := map[string]any{"project:gateway_proxy": map[string]any{"spending_limit_daily": nil, "cache_enabled": false}}
-	out, err := c.UpdateAPIKey(context.Background(), "11111111-1111-1111-1111-111111111111", APIKeyUpdate{
+	out, err := c.UpdateAPIKey(context.Background(), "11111111-1111-4111-8111-111111111111", APIKeyUpdate{
 		Name:        NullableFieldValue(name),
 		Description: NullableFieldNull[string](),
 		Claims:      &claims,
@@ -204,12 +216,12 @@ func TestDeleteAPIKeyRequest(t *testing.T) {
 		status: http.StatusNoContent,
 		body:   ``,
 		check: func(req *http.Request) {
-			if req.Method != http.MethodDelete || req.URL.Path != "/api/v1/api-keys/11111111-1111-1111-1111-111111111111/" {
+			if req.Method != http.MethodDelete || req.URL.Path != "/api/v1/api-keys/11111111-1111-4111-8111-111111111111/" {
 				t.Fatalf("unexpected request: %s %s", req.Method, req.URL.Path)
 			}
 		},
 	})
-	if err := c.DeleteAPIKey(context.Background(), "11111111-1111-1111-1111-111111111111"); err != nil {
+	if err := c.DeleteAPIKey(context.Background(), "11111111-1111-4111-8111-111111111111"); err != nil {
 		t.Fatal(err)
 	}
 }

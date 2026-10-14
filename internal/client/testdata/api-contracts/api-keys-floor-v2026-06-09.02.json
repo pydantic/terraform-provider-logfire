@@ -1,0 +1,875 @@
+{
+  "components": {
+    "schemas": {
+      "APIKeyClaims": {
+        "properties": {
+          "project:gateway_proxy": {
+            "$ref": "#/components/schemas/GatewayKeySettings"
+          }
+        },
+        "title": "APIKeyClaims",
+        "type": "object"
+      },
+      "APIKeyCreate": {
+        "description": "Request body for creating an API key via the public API.\n\n`scopes` must be a subset of the caller's own scopes. Omitting `project_id` (or\npassing `null`) mints an org-wide key; giving a `project_id` scopes the key to that\nproject. `claims` carries optional per-scope settings (today only\n`project:gateway_proxy`). Whether the new key is personal or a service key is\nderived from the caller, not chosen here.",
+        "properties": {
+          "claims": {
+            "$ref": "#/components/schemas/ScopeClaims"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "name": {
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "scopes": {
+            "items": {
+              "$ref": "#/components/schemas/OAuthScopeId"
+            },
+            "minItems": 1,
+            "title": "Scopes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "scopes"
+        ],
+        "title": "APIKeyCreate",
+        "type": "object"
+      },
+      "APIKeyCreateOutput": {
+        "description": "The created key plus its plaintext token (returned only once, at creation).",
+        "properties": {
+          "api_key": {
+            "$ref": "#/components/schemas/APIKeyRead"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "api_key",
+          "token"
+        ],
+        "title": "APIKeyCreateOutput",
+        "type": "object"
+      },
+      "APIKeyRead": {
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "all_projects": {
+            "title": "All Projects",
+            "type": "boolean"
+          },
+          "claims": {
+            "$ref": "#/components/schemas/APIKeyClaims"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "created_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "organization_id": {
+            "format": "uuid",
+            "title": "Organization Id",
+            "type": "string"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "project_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Name"
+          },
+          "scopes": {
+            "items": {
+              "$ref": "#/components/schemas/OAuthScopeId"
+            },
+            "title": "Scopes",
+            "type": "array"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "updated_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated By"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
+          }
+        },
+        "required": [
+          "id",
+          "organization_id",
+          "name",
+          "description",
+          "scopes",
+          "project_id",
+          "project_name",
+          "all_projects",
+          "created_by",
+          "created_by_name",
+          "created_at",
+          "last_used_at",
+          "expires_at",
+          "user_id",
+          "active",
+          "updated_at",
+          "updated_by"
+        ],
+        "title": "APIKeyRead",
+        "type": "object"
+      },
+      "APIKeyUpdate": {
+        "description": "Partial update of an API key: display metadata and/or per-scope `claims`.",
+        "minProperties": 1,
+        "properties": {
+          "claims": {
+            "$ref": "#/components/schemas/ScopeClaims"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "name": {
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "title": "APIKeyUpdate",
+        "type": "object"
+      },
+      "GatewayKeySettings": {
+        "description": "AI Gateway spend caps and response caching for a `project:gateway_proxy` key.\n\nAll fields are optional: an omitted or `null` spending limit means no limit\nfor that window, and `cache_enabled=null` inherits the project default.",
+        "properties": {
+          "cache_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cache Enabled"
+          },
+          "spending_limit_daily": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spending Limit Daily"
+          },
+          "spending_limit_monthly": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spending Limit Monthly"
+          },
+          "spending_limit_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spending Limit Total"
+          },
+          "spending_limit_weekly": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spending Limit Weekly"
+          }
+        },
+        "title": "GatewayKeySettings",
+        "type": "object"
+      },
+      "GatewayProxyClaims": {
+        "additionalProperties": false,
+        "description": "Settings carried by the `project:gateway_proxy` scope.",
+        "properties": {
+          "cache_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cache Enabled"
+          },
+          "spending_limit_daily": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spending Limit Daily"
+          },
+          "spending_limit_monthly": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spending Limit Monthly"
+          },
+          "spending_limit_total": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spending Limit Total"
+          },
+          "spending_limit_weekly": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spending Limit Weekly"
+          }
+        },
+        "title": "GatewayProxyClaims",
+        "type": "object"
+      },
+      "HTTPExceptionError": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "HTTPExceptionError",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "OAuthScopeId": {
+        "enum": [
+          "instance:admin",
+          "instance:billing",
+          "organization:admin",
+          "organization:read",
+          "organization:create_project",
+          "organization:write",
+          "organization:scim",
+          "organization:read_invitation",
+          "organization:write_invitation",
+          "organization:read_channel",
+          "organization:write_channel",
+          "organization:create_api_key",
+          "organization:read_api_key",
+          "organization:write_api_key",
+          "organization:auditlog",
+          "organization:payment",
+          "organization:read_trust_policy",
+          "organization:write_trust_policy",
+          "project:read",
+          "project:write",
+          "project:write_token",
+          "project:read_token",
+          "project:read_dashboard",
+          "project:write_dashboard",
+          "project:read_alert",
+          "project:write_alert",
+          "project:read_datasets",
+          "project:write_datasets",
+          "project:read_variables",
+          "project:write_variables",
+          "project:read_external_variables",
+          "project:gateway_proxy",
+          "project:read_otlp",
+          "project:write_otlp"
+        ],
+        "type": "string"
+      },
+      "ScopeClaims": {
+        "additionalProperties": false,
+        "properties": {
+          "project:gateway_proxy": {
+            "$ref": "#/components/schemas/GatewayProxyClaims"
+          }
+        },
+        "title": "ScopeClaims",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "OAuth2AuthorizationCodeBearer": {
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "api/oauth/authorize",
+            "refreshUrl": "/api/oauth/token",
+            "scopes": {
+              "instance:admin": "Platform admin access to manage the whole self-hosted instance",
+              "instance:billing": "Read billing and usage data across the whole self-hosted instance",
+              "organization:admin": "Platform admin access to manage organizations across the instance (self-hosted only)",
+              "organization:auditlog": "Read audit logs for the organization",
+              "organization:create_api_key": "Create new API keys for the organization",
+              "organization:create_project": "Ability to create projects within the organization",
+              "organization:payment": "Read billing usage data for the organization",
+              "organization:read": "Read access to organizations",
+              "organization:read_api_key": "Read API keys across the organization",
+              "organization:read_channel": "Read notification channels across the organization",
+              "organization:read_invitation": "Read organization invitations",
+              "organization:read_trust_policy": "Read OIDC trust policies and their token exchange history",
+              "organization:scim": "SCIM access to organizations",
+              "organization:write": "Write access to organizations",
+              "organization:write_api_key": "Edit or revoke existing API keys across the organization",
+              "organization:write_channel": "Create or modify notification channels across the organization",
+              "organization:write_invitation": "Create organization invitations",
+              "organization:write_trust_policy": "Create, modify, or delete OIDC trust policies and revoke issued workload tokens",
+              "project:gateway_proxy": "Proxy AI model requests through the project AI Gateway",
+              "project:read": "Read access to projects",
+              "project:read_alert": "Read alerts within a project",
+              "project:read_dashboard": "Read dashboards within a project",
+              "project:read_datasets": "Read datasets within a project",
+              "project:read_external_variables": "Read external managed variables within a project via OFREP",
+              "project:read_otlp": "Query trace data submitted to the project via OTLP",
+              "project:read_token": "Create read tokens",
+              "project:read_variables": "Read managed variables within a project",
+              "project:write": "Write access to projects",
+              "project:write_alert": "Create or modify alerts within a project",
+              "project:write_dashboard": "Create or modify dashboards within a project",
+              "project:write_datasets": "Create or modify datasets within a project",
+              "project:write_otlp": "Send OTLP traces, logs, and metrics to the project",
+              "project:write_token": "Create write tokens",
+              "project:write_variables": "Create or modify managed variables within a project"
+            },
+            "tokenUrl": "/api/oauth/token"
+          }
+        },
+        "type": "oauth2"
+      }
+    }
+  },
+  "info": {
+    "description": "To be able to use the Logfire API, you need to either create an\n[OAuth App](https://logfire.pydantic.dev/-/redirect/default-org/settings/developer/oauth-apps) or a\n[Personal Access Token](https://logfire.pydantic.dev/-/redirect/default-org/settings/developer/pat).\n",
+    "summary": "Public API to access Logfire resources",
+    "termsOfService": "https://pydantic.dev/legal/terms-of-service",
+    "title": "Pydantic Logfire API",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/v1/api-keys/": {
+      "get": {
+        "description": "List the organization's API keys, including project-scoped keys.\n\nA non-personal (service) caller sees only service keys (`user_id IS NULL`). A\npersonal caller additionally sees its own personal keys; another user's personal\nkeys are always hidden, matching the ownership guard on update/delete.",
+        "operationId": "list_organization_api_keys_v1_api_keys__get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/APIKeyRead"
+                  },
+                  "title": "Response List Organization Api Keys V1 Api Keys  Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPExceptionError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2AuthorizationCodeBearer": [
+              "organization:read_api_key"
+            ]
+          }
+        ],
+        "summary": "List Organization Api Keys",
+        "tags": [
+          "API Keys"
+        ]
+      },
+      "post": {
+        "description": "Create an API key delegated from the calling credential.\n\nThe new key can never exceed the caller's own grant: its scopes, personal/service\nkind, and project scope are all constrained to the caller. Creation is audit-logged\nby the service layer.",
+        "operationId": "create_organization_api_key_v1_api_keys__post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/APIKeyCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIKeyCreateOutput"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "description": "Requested scopes or project scoping exceed the caller's own grant"
+          },
+          "404": {
+            "description": "Project not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPExceptionError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2AuthorizationCodeBearer": [
+              "organization:create_api_key"
+            ]
+          }
+        ],
+        "summary": "Create Organization Api Key",
+        "tags": [
+          "API Keys"
+        ]
+      }
+    },
+    "/v1/api-keys/{api_key_id}/": {
+      "delete": {
+        "description": "Revoke (soft-delete) an API key. The key stops authenticating immediately.",
+        "operationId": "revoke_organization_api_key_v1_api_keys__api_key_id___delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "api_key_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Api Key Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "API key not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPExceptionError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2AuthorizationCodeBearer": [
+              "organization:write_api_key"
+            ]
+          }
+        ],
+        "summary": "Revoke Organization Api Key",
+        "tags": [
+          "API Keys"
+        ]
+      },
+      "patch": {
+        "description": "Update an API key's title, description, and/or per-scope `claims`.\n\nAn empty body is rejected with 422.",
+        "operationId": "update_organization_api_key_v1_api_keys__api_key_id___patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "api_key_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Api Key Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/APIKeyUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIKeyRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "API key not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPExceptionError"
+                }
+              }
+            },
+            "description": "Rate limit exceeded",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2AuthorizationCodeBearer": [
+              "organization:write_api_key"
+            ]
+          }
+        ],
+        "summary": "Update Organization Api Key",
+        "tags": [
+          "API Keys"
+        ]
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "/api"
+    }
+  ]
+}
