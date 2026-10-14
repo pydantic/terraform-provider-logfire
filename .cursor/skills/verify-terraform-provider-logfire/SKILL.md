@@ -39,16 +39,16 @@ case $(uname -m) in
 esac
 terraform_archive="terraform_${terraform_version}_${terraform_os}_${terraform_arch}.zip"
 terraform_release="https://releases.hashicorp.com/terraform/$terraform_version"
-curl -fSs "$terraform_release/$terraform_archive" -o "$RUN_DIR/tools/$terraform_archive"
-curl -fSs "$terraform_release/terraform_${terraform_version}_SHA256SUMS" -o "$RUN_DIR/tools/SHA256SUMS"
+curl -fSs "$terraform_release/$terraform_archive" -o "$RUN_DIR/tools/$terraform_archive" &&
+curl -fSs "$terraform_release/terraform_${terraform_version}_SHA256SUMS" -o "$RUN_DIR/tools/SHA256SUMS" &&
 (
-  cd "$RUN_DIR/tools"
-  awk -v archive="$terraform_archive" '$2 == archive' SHA256SUMS > selected.sha256
-  test -s selected.sha256
-  shasum -a 256 -c selected.sha256
-  cp selected.sha256 "$RUN_DIR/evidence/terraform-archive.sha256"
+  cd "$RUN_DIR/tools" &&
+  awk -v archive="$terraform_archive" '$2 == archive' SHA256SUMS > selected.sha256 &&
+  test -s selected.sha256 &&
+  shasum -a 256 -c selected.sha256 &&
+  cp selected.sha256 "$RUN_DIR/evidence/terraform-archive.sha256" &&
   unzip -q "$terraform_archive"
-)
+) || exit 1
 export TF_ACC_TERRAFORM_PATH="$RUN_DIR/tools/terraform"
 "$TF_ACC_TERRAFORM_PATH" version -json > "$RUN_DIR/evidence/terraform-version.json"
 go version > "$RUN_DIR/evidence/go-version.txt"
