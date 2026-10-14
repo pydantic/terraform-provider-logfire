@@ -46,7 +46,7 @@ Self-hosted Logfire instances expose APIs as they are released, so a feature the
 | Feature | Minimum Logfire release | Minimum Helm chart |
 | --- | --- | --- |
 | Projects, alerts, dashboards, channels, write/read tokens | All supported releases | - |
-| `logfire_api_key`, `logfire_gateway_api_key` | v2026-06-09.01 | - |
+| `logfire_api_key`, `logfire_gateway_api_key` | v2026-06-09.02 | - |
 | `logfire_organization` create and list, organization import | v2026-06-03.01 | - |
 | `logfire_organization` read, update, delete (including setting `billing_email` at creation) | v2026-06-25.01 | - |
 | `logfire_gateway_provider` | v2026-08-12.01 | logfire-0.13.40 or newer |

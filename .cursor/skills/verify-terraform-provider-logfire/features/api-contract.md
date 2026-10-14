@@ -46,6 +46,6 @@ Terraform CLI lifecycle checks. Both test commands use existing tests.
 
 - The client models are handwritten. The provider has no API client generator or provider-wide platform version pin.
 - `make generate` uses the Go provider schema through `tfplugindocs`. It does not compare Go models with platform OpenAPI.
-- Do not assume every local HTTP fixture validates against OpenAPI. Identify the enrolled operations and recorded versions in the client tests. Compare uncovered operations separately.
+- The client tests do not validate against OpenAPI. Compare affected request and response fixtures with the selected schema. Local lifecycle tests provide separate behavior evidence.
 - Schema shape does not prove route availability, authorization, or applied fields. `TestSloDeliveryOnOlderLogfire` checks backends that accept but ignore `alerts`.
 - An untracked schema copy without a known source revision cannot establish release compatibility. Record the gap and continue the local checks.
