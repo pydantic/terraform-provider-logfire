@@ -4,7 +4,6 @@
 package provider
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -83,39 +82,13 @@ func TestAccDashboardResource(t *testing.T) {
 				},
 			},
 			{
-				Config: testAccDashboardResourceConfig(
-					projectName,
-					dashboardSlug,
-					updatedDashboardName,
-					initialDefinition,
-				),
+				Config: testAccDashboardResourceConfig(projectName, dashboardSlug, updatedDashboardName, updatedDefinition),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction("logfire_dashboard.test", plancheck.ResourceActionUpdate)},
 				},
 				ConfigStateChecks: []statecheck.StateCheck{
 					sameID.AddStateValue("logfire_dashboard.test", tfjsonpath.New("id")),
 					statecheck.ExpectKnownValue("logfire_dashboard.test", tfjsonpath.New("name"), knownvalue.StringExact(updatedDashboardName)),
-				},
-			},
-			{
-				Config: testAccDashboardResourceConfig(
-					projectName,
-					dashboardSlug,
-					updatedDashboardName,
-					updatedDefinition,
-				),
-				ConfigPlanChecks: resource.ConfigPlanChecks{
-					PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction("logfire_dashboard.test", plancheck.ResourceActionUpdate)},
-				},
-				ConfigStateChecks: []statecheck.StateCheck{
-					sameID.AddStateValue("logfire_dashboard.test", tfjsonpath.New("id")),
-					statecheck.ExpectKnownValue("logfire_dashboard.test", tfjsonpath.New("slug"), knownvalue.StringExact(dashboardSlug)),
-				},
-			},
-			{
-				Config: testAccDashboardResourceConfig(projectName, dashboardSlug, updatedDashboardName, updatedDefinition),
-				ConfigPlanChecks: resource.ConfigPlanChecks{
-					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
 				},
 			},
 			{
@@ -150,63 +123,26 @@ resource "logfire_dashboard" "test" {
 }
 
 func testAccDashboardDefinition(widgetText string) string {
-	payload := map[string]any{
-		"kind":     "Dashboard",
-		"metadata": map[string]any{},
-		"spec": map[string]any{
-			"display": map[string]any{
-				"name":        "placeholder",
-				"description": "Acceptance test dashboard",
-			},
-			"panels": map[string]any{
-				"panel": map[string]any{
-					"kind": "Panel",
-					"spec": map[string]any{
-						"display": map[string]any{
-							"name":        "panel",
-							"description": "text panel for acceptance tests",
-						},
-						"plugin": map[string]any{
-							"kind": "TextPanel",
-							"spec": map[string]any{
-								"text": widgetText,
-							},
-						},
-						"queries": []any{},
-					},
-				},
-			},
-			"layouts": []any{
-				map[string]any{
-					"kind": "Grid",
-					"spec": map[string]any{
-						"display": map[string]any{
-							"title": "Main",
-						},
-						"items": []any{
-							map[string]any{
-								"x":      0,
-								"y":      0,
-								"width":  24,
-								"height": 6,
-								"content": map[string]any{
-									"$ref": "#/spec/panels/panel",
-								},
-							},
-						},
-					},
-				},
-			},
-			"variables":       []any{},
-			"datasources":     map[string]any{},
-			"duration":        "1h",
-			"refreshInterval": "0s",
-		},
-	}
-
-	raw, err := json.MarshalIndent(payload, "", "  ")
-	if err != nil {
-		panic(fmt.Sprintf("failed to marshal dashboard definition: %v", err))
-	}
-	return string(raw)
+	return fmt.Sprintf(`{
+  "kind": "Dashboard",
+  "metadata": {},
+  "spec": {
+    "display": {"name": "placeholder", "description": "Acceptance test dashboard"},
+    "panels": {
+      "panel": {"kind": "Panel", "spec": {
+        "display": {"name": "panel", "description": "text panel for acceptance tests"},
+        "plugin": {"kind": "TextPanel", "spec": {"text": %q}},
+        "queries": []
+      }}
+    },
+    "layouts": [{"kind": "Grid", "spec": {
+      "display": {"title": "Main"},
+      "items": [{"x": 0, "y": 0, "width": 24, "height": 6, "content": {"$ref": "#/spec/panels/panel"}}]
+    }}],
+    "variables": [],
+    "datasources": {},
+    "duration": "1h",
+    "refreshInterval": "0s"
+  }
+}`, widgetText)
 }

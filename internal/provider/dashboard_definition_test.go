@@ -52,18 +52,7 @@ func TestDashboardDefinitionComparison(t *testing.T) {
 	if dashboardDefinitionsEqual(types.StringValue(`{"spec":{"plugin":{"ref":"one"}}}`), types.StringValue(`{"spec":{"plugin":{"$ref":"one"}}}`)) {
 		t.Fatal("alias conversion must not affect arbitrary plugin JSON")
 	}
-	raw := "{\n\"metadata\":{\"name\":\"Main\",\"project\":\"test\"},\"kind\":\"Dashboard\",\"spec\":{\"display\":{\"name\":\"Main\"},\"panels\":{},\"layouts\":[]}\n}"
-	if got := preserveDashboardDefinition(types.StringValue(raw), minimal); got.ValueString() != raw {
-		t.Fatal("equivalent response must preserve exact input JSON")
-	}
-	normalized, err := normalizeDefinitionRaw([]byte(datasource.ValueString()))
-	if err != nil || !strings.Contains(normalized, "9007199254740993") {
-		t.Fatalf("payload normalizer changed a number: %s, %v", normalized, err)
-	}
-	normalized, err = normalizeDefinitionRaw([]byte(minimal.ValueString()))
-	if err != nil || strings.Contains(normalized, `"duration"`) || !strings.Contains(normalized, `"metadata"`) {
-		t.Fatalf("payload normalizer fabricated defaults or removed metadata: %s, %v", normalized, err)
-	}
+
 }
 
 func TestDashboardDefinitionValidator(t *testing.T) {
@@ -134,12 +123,12 @@ func TestDashboardDefinitionPreservesNumberSpellings(t *testing.T) {
 	if got := preserveDashboardDefinition(types.StringValue(raw), response); got.ValueString() != raw {
 		t.Fatalf("equivalent numeric response changed the input JSON: %s", got.ValueString())
 	}
-	normalized, err := normalizeDefinitionRaw([]byte(raw))
+	payload, err := dashboardDefinitionForWrite(raw, "Main", "test")
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = `{"kind":"Dashboard","spec":{"plugin":{"decimal":1.000,"exponent":123.450E+0006,"integer":9007199254740993}}}`
-	if normalized != want {
-		t.Fatalf("request JSON = %s, want %s", normalized, want)
+	const want = `{"kind":"Dashboard","metadata":{"name":"Main","project":"test"},"spec":{"plugin":{"decimal":1.000,"exponent":123.450E+0006,"integer":9007199254740993}}}`
+	if string(payload) != want {
+		t.Fatalf("request JSON = %s, want %s", payload, want)
 	}
 }

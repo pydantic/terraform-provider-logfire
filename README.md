@@ -104,44 +104,11 @@ For Logfire SaaS, the provider infers the API endpoint from the region embedded 
 - `examples/main.tf` contains a SaaS-compatible end-to-end setup (project, channel, alert, dashboard, and read/write tokens).
 - `examples/self-hosted-organization/main.tf` contains the self-hosted-only `logfire_organization` example.
 
-## Manage a dashboard from a JSON file
+## Dashboards
 
-Copy the dashboard JSON from Logfire into `dashboard.json`. Use `file()` to read
-the export without removing metadata or adding API defaults:
-
-```hcl
-resource "logfire_dashboard" "overview" {
-  project_id = "<project-uuid>"
-  name       = "Production overview"
-  slug       = "production-overview"
-  definition = file("${path.module}/dashboard.json")
-}
-```
-
-Running `terraform apply` creates a dashboard. To manage the existing dashboard
-instead, set `project_id`, `name`, and `slug` to its current values, then import
-it before applying:
-
-```bash
-terraform import logfire_dashboard.overview "prod-logs/production-overview"
-terraform plan -detailed-exitcode
-```
-
-With a matching export and configuration, the first plan reports no changes
-and exits with code `0`. Import adopts the existing dashboard UUID. Copying its
-JSON alone does not adopt it.
-
-The provider ignores exported `metadata` when comparing definitions. It also
-treats JSON formatting, equivalent number spellings, and known API defaults as
-equal, while detecting changes to dashboard content. JSON number precision is
-preserved. The resource's `name` and `slug` control the dashboard name and URL.
-Changing `project_id` or `slug` replaces the dashboard.
-
-Saved panel positions from the Logfire UI can override coordinates in the
-definition. Terraform detects that drift, but the current API may retain the
-saved positions when Terraform updates the definition. Re-export the dashboard
-to adopt its current layout. See the [dashboard resource documentation](docs/resources/dashboard.md)
-for comparison rules and this API limitation.
+Save dashboard JSON copied from Logfire to `dashboard.json` and read it with
+`file()`, as in the quick start above. To adopt an existing dashboard, follow the
+[dashboard import instructions](docs/resources/dashboard.md#import) before applying.
 
 ## Importing existing resources
 Existing Logfire resources can be imported into Terraform state with
