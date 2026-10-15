@@ -55,6 +55,44 @@ func TestDashboardDefinitionComparison(t *testing.T) {
 
 }
 
+func TestDashboardDefinitionUIExportComparison(t *testing.T) {
+	api := types.StringValue(`{"kind":"Dashboard","metadata":{"name":"Main","project":"test"},"spec":{"display":{"name":"Main","description":null},"panels":{},"layouts":[{"kind":"Grid","spec":{"items":[]}}],"variables":[],"datasources":{},"duration":"1h","refreshInterval":"0s"}}`)
+	ui := `{"kind":"Dashboard","metadata":{"name":"Main","project":"test"},"spec":{"display":{"name":"Main","description":null},"panels":{},"layouts":[{"kind":"Grid","spec":{"display":{"title":"","collapse":{"open":true}},"items":[]}}],"variables":[],"annotations":[],"links":[],"datasources":{},"duration":"1h","refreshInterval":"0s"}}`
+	for _, tc := range []struct {
+		name, raw string
+		want      bool
+	}{
+		{"UI export defaults", ui, true},
+		{"empty Grid display", strings.Replace(ui, `"display":{"title":"","collapse":{"open":true}}`, `"display":{}`, 1), true},
+		{"omitted Grid title", strings.Replace(ui, `"title":"",`, "", 1), true},
+		{"omitted Grid collapse", strings.Replace(ui, `,"collapse":{"open":true}`, "", 1), true},
+		{"nonempty annotations", strings.Replace(ui, `"annotations":[]`, `"annotations":[{"kind":"Event","spec":{}}]`, 1), false},
+		{"nonempty links", strings.Replace(ui, `"links":[]`, `"links":[{"name":"Docs","url":"https://example.com"}]`, 1), false},
+		{"null annotations", strings.Replace(ui, `"annotations":[]`, `"annotations":null`, 1), false},
+		{"null links", strings.Replace(ui, `"links":[]`, `"links":null`, 1), false},
+		{"named Grid", strings.Replace(ui, `"title":""`, `"title":"Group"`, 1), false},
+		{"collapsed Grid", strings.Replace(ui, `"open":true`, `"open":false`, 1), false},
+		{"null Grid display", strings.Replace(ui, `"display":{"title":"","collapse":{"open":true}}`, `"display":null`, 1), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := dashboardDefinitionsEqual(api, types.StringValue(tc.raw)); got != tc.want {
+				t.Fatalf("comparison = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	for _, field := range []string{`"annotations":[]`, `"links":[]`, `"display":{"title":"","collapse":{"open":true}}`} {
+		if dashboardDefinitionsEqual(types.StringValue(`{"spec":{"plugin":{}}}`), types.StringValue(`{"spec":{"plugin":{`+field+`}}}`)) {
+			t.Fatalf("UI defaults must not normalize plugin field %s", field)
+		}
+	}
+	for _, raw := range []string{`{"kind":"Grid"}`, `{"kind":"Grid","spec":null}`, `{"kind":"Grid","spec":[]}`} {
+		definition := types.StringValue(`{"kind":"Dashboard","spec":{"layouts":[` + raw + `]}}`)
+		if !dashboardDefinitionsEqual(definition, definition) {
+			t.Fatalf("malformed Grid shape should remain comparable for API validation: %s", raw)
+		}
+	}
+}
+
 func TestDashboardDefinitionValidator(t *testing.T) {
 	for _, tc := range []struct {
 		raw       string

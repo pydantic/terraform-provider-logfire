@@ -96,6 +96,8 @@ func canonicalDashboardDefinition(raw string) (string, error) {
 	delete(payload, "metadata")
 	if spec, ok := payload["spec"].(map[string]any); ok {
 		setDashboardDefault(spec, "datasources", map[string]any{})
+		setDashboardDefault(spec, "annotations", []any{})
+		setDashboardDefault(spec, "links", []any{})
 		if spec["variables"] == nil {
 			spec["variables"] = []any{}
 		}
@@ -120,7 +122,18 @@ func canonicalDashboardDefinition(raw string) (string, error) {
 				if !ok || layout["kind"] != "Grid" {
 					continue
 				}
-				layoutSpec, _ := layout["spec"].(map[string]any)
+				layoutSpec, ok := layout["spec"].(map[string]any)
+				if !ok {
+					continue
+				}
+				setDashboardDefault(layoutSpec, "display", map[string]any{})
+				if display, ok := layoutSpec["display"].(map[string]any); ok {
+					setDashboardDefault(display, "title", "")
+					setDashboardDefault(display, "collapse", map[string]any{})
+					if collapse, ok := display["collapse"].(map[string]any); ok {
+						setDashboardDefault(collapse, "open", true)
+					}
+				}
 				items, _ := layoutSpec["items"].([]any)
 				for _, value := range items {
 					item, _ := value.(map[string]any)

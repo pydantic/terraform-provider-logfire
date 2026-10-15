@@ -25,8 +25,10 @@ const dashboardLifecycleFile = `{
   "spec": {
     "display": {"name": "Dashboard title"},
     "panels": {"text": {"kind": "Panel", "spec": {"display": {"name": "Text"}, "plugin": {"kind": "Markdown", "spec": {"text": "initial", "largeInteger": 9007199254740993, "number": 1e0, "fraction": 0.333333333333333333333333333333333333}}}}},
-    "layouts": [{"kind": "Grid", "spec": {"items": [{"x": 0, "y": 0, "width": 12, "height": 4, "content": {"ref": "#/spec/panels/text"}}]}}],
-    "variables": null
+    "layouts": [{"kind": "Grid", "spec": {"display": {"title": "", "collapse": {"open": true}}, "items": [{"x": 0, "y": 0, "width": 12, "height": 4, "content": {"ref": "#/spec/panels/text"}}]}}],
+    "variables": null,
+    "annotations": [],
+    "links": []
   }
 }`
 
@@ -115,7 +117,11 @@ func TestLifecycleDashboardJSONFile(t *testing.T) {
 	dir := t.TempDir()
 	initial, updated, authored := filepath.Join(dir, "initial.json"), filepath.Join(dir, "updated.json"), filepath.Join(dir, "authored.json")
 	withoutMetadata := strings.Replace(dashboardLifecycleFile, `  "metadata": {"name": "Copied", "project": "source", "version": 7, "layoutUpdatedAt": "old"},`+"\n", "", 1)
+	withoutMetadata = strings.Replace(withoutMetadata, `"display": {"title": "", "collapse": {"open": true}}, `, "", 1)
 	edited := strings.Replace(dashboardLifecycleFile, `"text": "initial"`, `"text": "edited"`, 1)
+	reexportedAPI := `{"kind":"Dashboard","metadata":{"name":"Renamed","project":"test","version":8},"spec":{"display":{"name":"Dashboard title","description":null},"panels":{"text":{"kind":"Panel","spec":{"display":{"name":"Text"},"plugin":{"kind":"Markdown","spec":{"text":"edited","largeInteger":9007199254740992,"number":1.0,"fraction":0.3333333333333333}}}},"extra":{"kind":"Panel","spec":{"display":{"name":"Added in UI"},"plugin":{"kind":"Markdown","spec":{"text":"added in UI"}}}}},"layouts":[{"kind":"Grid","spec":{"items":[{"x":8,"y":4,"width":16,"height":6,"content":{"$ref":"#/spec/panels/text"}},{"x":0,"y":0,"width":8,"height":4,"content":{"$ref":"#/spec/panels/extra"}}]}}],"variables":[],"datasources":{},"duration":"1h","refreshInterval":"0s"}}`
+	reexported := strings.Replace(reexportedAPI, `"layouts":[{"kind":"Grid","spec":{`, `"annotations":[],"links":[],"layouts":[{"kind":"Grid","spec":{"display":{"title":"","collapse":{"open":true}},`, 1)
+	editedExport := strings.Replace(reexported, `"text":"added in UI"`, `"text":"edited in Terraform"`, 1)
 	for path, definition := range map[string]string{initial: dashboardLifecycleFile, updated: edited, authored: withoutMetadata} {
 		if err := os.WriteFile(path, []byte(definition), 0600); err != nil {
 			t.Fatal(err)
@@ -193,6 +199,36 @@ removed {
 			},
 			{Config: config("Renamed", updated), ConfigPlanChecks: empty},
 			{
+				Config: config("Renamed", updated), ConfigPlanChecks: empty,
+				PreConfig: func() {
+					api.Lock()
+					defer api.Unlock()
+					api.definition = reexportedAPI
+					if err := os.WriteFile(updated, []byte(reexported), 0600); err != nil {
+						t.Fatal(err)
+					}
+				},
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr(address, "id", "dashboard-1"),
+					resource.TestCheckResourceAttr(address, "definition", reexportedAPI)),
+			},
+			{
+				Config: config("Renamed", updated), ConfigPlanChecks: empty,
+				Check: resource.TestCheckResourceAttr(address, "id", "dashboard-1"),
+			},
+			{
+				Config: config("Renamed", updated), ConfigPlanChecks: inPlace,
+				PreConfig: func() {
+					if err := os.WriteFile(updated, []byte(editedExport), 0600); err != nil {
+						t.Fatal(err)
+					}
+				},
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr(address, "id", "dashboard-1"),
+					resource.TestCheckResourceAttr(address, "definition", editedExport)),
+			},
+			{Config: config("Renamed", updated), ConfigPlanChecks: empty},
+			{
 				Config: config("Main", initial),
 				PreConfig: func() {
 					api.Lock()
@@ -209,15 +245,15 @@ removed {
 	if api.creates != 2 || api.id != "" {
 		t.Fatalf("lifecycle left creates=%d, remote ID=%q; want two creates and final deletion", api.creates, api.id)
 	}
-	if len(api.writes) != 5 || api.writes[1] != `{"name":"Renamed"}` || !strings.Contains(api.writes[0], `"largeInteger":9007199254740993`) || !strings.Contains(api.writes[0], `"fraction":0.333333333333333333333333333333333333`) {
+	if len(api.writes) != 6 || api.writes[1] != `{"name":"Renamed"}` || !strings.Contains(api.writes[0], `"largeInteger":9007199254740993`) || !strings.Contains(api.writes[0], `"fraction":0.333333333333333333333333333333333333`) {
 		t.Fatalf("unexpected dashboard writes: %v", api.writes)
 	}
-	for i, query := range []string{"", "", "replace_layout=true", "replace_layout=true", ""} {
+	for i, query := range []string{"", "", "replace_layout=true", "replace_layout=true", "replace_layout=true", ""} {
 		if api.queries[i] != query {
 			t.Fatalf("write %d query = %q, want %q", i, api.queries[i], query)
 		}
 	}
-	for _, i := range []int{0, 4} {
+	for _, i := range []int{0, 5} {
 		var payload struct {
 			Definition struct {
 				Metadata struct{ Name, Project string }

@@ -37,7 +37,7 @@ destination and identity.
 
 ## Definition comparison
 
-Comparison ignores JSON formatting, top-level `metadata`, known API defaults,
+Comparison ignores JSON formatting, top-level `metadata`, known defaults,
 and grid panel `ref` and `$ref` aliases. Integer literals compare exactly.
 Decimal and exponent literals compare at the API's float precision. Equivalent
 spellings such as `1` and `1.0` compare equal. Content and layout changes produce
