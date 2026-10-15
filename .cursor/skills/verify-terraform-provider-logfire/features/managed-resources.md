@@ -19,8 +19,7 @@ and `logfire_slo` resources. Their examples live under `examples/resources/`.
 
 Preconditions: Launch and the [API-contract review](api-contract.md) are complete.
 
-Run `TF_ACC= make test` for the existing client, mapping, validation, import, and
-protocol tests. Run `TF_ACC= make test-e2e` for the local Terraform CLI lifecycle.
+Use the [shared Drive checks](../SKILL.md#drive) for the existing tests.
 Compare the affected create, read, update, import, no-op, and delete expectations
 with the selected schema. Record any action that has no existing local coverage.
 

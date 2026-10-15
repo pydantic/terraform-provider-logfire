@@ -38,9 +38,8 @@ client uses `/api/v1/projects/`. Compare them with `internal/client/`, the affec
 provider resource, and existing request and lifecycle test fixtures. Record the methods, fields,
 scopes, and resource actions checked. `info.version` does not identify a platform release.
 
-Run `make generate`, `make lint`, and `TF_ACC= make test` as the main skill states.
-Review the generated documentation diff. Use `make test-e2e` for the focused
-Terraform CLI lifecycle checks. Both test commands use existing tests.
+Use the [shared Drive checks](../SKILL.md#drive). Review the generated
+documentation diff.
 
 ## Gotchas
 
