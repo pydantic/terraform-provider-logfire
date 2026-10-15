@@ -4,6 +4,7 @@
 package provider
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -25,7 +26,7 @@ func dashboardIdentityState(t *testing.T, r *DashboardResource, id types.String)
 	state := tfsdk.State{Schema: schema.Schema, Raw: tftypes.NewValue(schema.Schema.Type().TerraformType(t.Context()), nil)}
 	m := DashboardModel{
 		ID: id, ProjectID: types.StringValue("project-1"), Name: types.StringValue("Original"), Slug: types.StringValue("target"),
-		Definition: newDefinitionStringValue(`{"kind":"Dashboard","metadata":{},"spec":{}}`),
+		Definition: types.StringValue(`{"kind":"Dashboard","metadata":{},"spec":{}}`),
 	}
 	if diags := state.Set(t.Context(), &m); diags.HasError() {
 		t.Fatal(diags)
@@ -115,5 +116,47 @@ func TestDashboardLifecycleWithMissingID(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestDashboardLifecycleDoesNotAdoptReusedSlug(t *testing.T) {
+	t.Parallel()
+	for _, operation := range []string{"read", "update", "delete"} {
+		t.Run(operation, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				switch {
+				case req.Method == http.MethodGet && req.URL.Path == "/api/v1/projects/project-1/":
+					_, _ = w.Write([]byte(`{"project_name":"my-project"}`))
+				case req.URL.Path == "/api/v1/projects/project-1/dashboards/old-dashboard/":
+					w.WriteHeader(http.StatusNotFound)
+				case req.Method == http.MethodGet && req.URL.Path == "/api/v1/projects/project-1/dashboards/":
+					_ = json.NewEncoder(w).Encode([]logclient.DashboardSummary{{ID: "replacement", DashboardSlug: "target"}})
+				default:
+					t.Errorf("operation adopted another dashboard: %s %s", req.Method, req.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer server.Close()
+			client, err := logclient.NewAPIClient(server.URL, "test-token", server.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := &DashboardResource{client: client}
+			state := dashboardIdentityState(t, r, types.StringValue("old-dashboard"))
+			got, diags := runDashboardLifecycleOperation(t, r, state, operation)
+			if operation == "update" {
+				if !diags.HasError() {
+					t.Fatal("updating a deleted dashboard must fail")
+				}
+				return
+			}
+			if diags.HasError() {
+				t.Fatal(diags)
+			}
+			if operation == "read" && !got.Raw.IsNull() {
+				t.Fatal("read must remove the deleted dashboard from state")
+			}
+		})
 	}
 }

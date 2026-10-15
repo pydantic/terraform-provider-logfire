@@ -1,0 +1,269 @@
+// Copyright Pydantic, Inc. 2025, 2026
+// SPDX-License-Identifier: MPL-2.0
+
+package provider
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/plancheck"
+)
+
+const dashboardLifecycleFile = `{
+  "kind": "Dashboard",
+  "metadata": {"name": "Copied", "project": "source", "version": 7, "layoutUpdatedAt": "old"},
+  "spec": {
+    "display": {"name": "Dashboard title"},
+    "panels": {"text": {"kind": "Panel", "spec": {"display": {"name": "Text"}, "plugin": {"kind": "Markdown", "spec": {"text": "initial", "largeInteger": 9007199254740993, "number": 1e0, "fraction": 0.333333333333333333333333333333333333}}}}},
+    "layouts": [{"kind": "Grid", "spec": {"display": {"title": "", "collapse": {"open": true}}, "items": [{"x": 0, "y": 0, "width": 12, "height": 4, "content": {"ref": "#/spec/panels/text"}}]}}],
+    "variables": null,
+    "annotations": [],
+    "links": []
+  }
+}`
+
+// A literal API response includes the defaults, aliases, and rounded fractions
+// observed in platform. The fixture does not call the provider's normalizer.
+const dashboardLifecycleAPI = `{"kind":"Dashboard","metadata":{"name":"Main","project":"test","version":8,"layoutUpdatedAt":"new"},"spec":{"display":{"name":"Dashboard title","description":null},"panels":{"text":{"kind":"Panel","spec":{"display":{"name":"Text"},"plugin":{"kind":"Markdown","spec":{"text":"initial","largeInteger":9007199254740993,"number":1.0,"fraction":0.3333333333333333}}}}},"layouts":[{"kind":"Grid","spec":{"items":[{"x":0,"y":0,"width":12,"height":4,"content":{"$ref":"#/spec/panels/text"}}]}}],"variables":[],"datasources":{},"duration":"1h","refreshInterval":"0s"}}`
+
+type dashboardLifecycleAPIState struct {
+	sync.Mutex
+	id, name, definition string
+	creates              int
+	writes               []string
+	queries              []string
+	denyProjectRead      bool
+}
+
+func (a *dashboardLifecycleAPIState) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	a.Lock()
+	defer a.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	const base = "/api/v1/projects/project-1/dashboards/"
+	dashboard := func() any {
+		return map[string]any{"id": a.id, "project_id": "project-1", "dashboard_name": a.name, "dashboard_slug": "main", "definition": json.RawMessage(a.definition)}
+	}
+	switch {
+	case req.Method == http.MethodGet && req.URL.Path == "/api/v1/projects/":
+		_, _ = io.WriteString(w, `[{"id":"project-1","project_name":"test"}]`)
+	case req.Method == http.MethodGet && req.URL.Path == "/api/v1/projects/project-1/":
+		if a.denyProjectRead {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		_, _ = io.WriteString(w, `{"id":"project-1","project_name":"test"}`)
+	case req.Method == http.MethodGet && req.URL.Path == base:
+		summaries := []any{}
+		if a.id != "" {
+			summaries = append(summaries, dashboard())
+		}
+		_ = json.NewEncoder(w).Encode(summaries)
+	case req.Method == http.MethodPost && req.URL.Path == base,
+		req.Method == http.MethodPut && a.id != "" && req.URL.Path == base+a.id+"/":
+		body, err := io.ReadAll(req.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		var payload struct {
+			Name       *string         `json:"name"`
+			Definition json.RawMessage `json:"definition"`
+		}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		a.writes = append(a.writes, string(body))
+		a.queries = append(a.queries, req.URL.RawQuery)
+		if payload.Name != nil {
+			a.name = *payload.Name
+		}
+		if req.Method == http.MethodPost {
+			a.creates++
+			a.id, a.definition = fmt.Sprintf("dashboard-%d", a.creates), dashboardLifecycleAPI
+			w.WriteHeader(http.StatusCreated)
+		} else if payload.Definition != nil {
+			a.definition = string(payload.Definition)
+		}
+		_ = json.NewEncoder(w).Encode(dashboard())
+	case req.Method == http.MethodGet && a.id != "" && req.URL.Path == base+a.id+"/":
+		var definition map[string]json.RawMessage
+		_ = json.Unmarshal([]byte(a.definition), &definition)
+		definition["metadata"], _ = json.Marshal(map[string]any{"name": a.name, "project": "test", "version": 8})
+		_ = json.NewEncoder(w).Encode(map[string]any{"dashboard": definition})
+	case req.Method == http.MethodDelete && a.id != "" && req.URL.Path == base+a.id+"/":
+		a.id = ""
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		w.WriteHeader(http.StatusNotFound)
+	}
+}
+
+func TestLifecycleDashboardJSONFile(t *testing.T) {
+	t.Parallel()
+	api := &dashboardLifecycleAPIState{}
+	server := httptest.NewServer(api)
+	defer server.Close()
+	dir := t.TempDir()
+	initial, updated, authored := filepath.Join(dir, "initial.json"), filepath.Join(dir, "updated.json"), filepath.Join(dir, "authored.json")
+	withoutMetadata := strings.Replace(dashboardLifecycleFile, `  "metadata": {"name": "Copied", "project": "source", "version": 7, "layoutUpdatedAt": "old"},`+"\n", "", 1)
+	withoutMetadata = strings.Replace(withoutMetadata, `"display": {"title": "", "collapse": {"open": true}}, `, "", 1)
+	edited := strings.Replace(dashboardLifecycleFile, `"text": "initial"`, `"text": "edited"`, 1)
+	reexportedAPI := `{"kind":"Dashboard","metadata":{"name":"Renamed","project":"test","version":8},"spec":{"display":{"name":"Dashboard title","description":null},"panels":{"text":{"kind":"Panel","spec":{"display":{"name":"Text"},"plugin":{"kind":"Markdown","spec":{"text":"edited","largeInteger":9007199254740992,"number":1.0,"fraction":0.3333333333333333}}}},"extra":{"kind":"Panel","spec":{"display":{"name":"Added in UI"},"plugin":{"kind":"Markdown","spec":{"text":"added in UI"}}}}},"layouts":[{"kind":"Grid","spec":{"items":[{"x":8,"y":4,"width":16,"height":6,"content":{"$ref":"#/spec/panels/text"}},{"x":0,"y":0,"width":8,"height":4,"content":{"$ref":"#/spec/panels/extra"}}]}}],"variables":[],"datasources":{},"duration":"1h","refreshInterval":"0s"}}`
+	reexported := strings.Replace(reexportedAPI, `"layouts":[{"kind":"Grid","spec":{`, `"annotations":[],"links":[],"layouts":[{"kind":"Grid","spec":{"display":{"title":"","collapse":{"open":true}},`, 1)
+	editedExport := strings.Replace(reexported, `"text":"added in UI"`, `"text":"edited in Terraform"`, 1)
+	for path, definition := range map[string]string{initial: dashboardLifecycleFile, updated: edited, authored: withoutMetadata} {
+		if err := os.WriteFile(path, []byte(definition), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	config := func(name, path string) string {
+		return lifecycleConfig(server.URL, "dashboard", fmt.Sprintf("project_id = \"project-1\"\nname = %q\nslug = \"main\"\ndefinition = file(%q)", name, path))
+	}
+	const address = "logfire_dashboard.test"
+	inPlace := resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction(address, plancheck.ResourceActionUpdate)}}
+	empty := resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}}
+	resource.Test(t, resource.TestCase{
+		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: config("Main", authored),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr(address, "id", "dashboard-1"),
+					resource.TestCheckResourceAttr(address, "definition", withoutMetadata)),
+			},
+			{Config: config("Main", initial), ConfigPlanChecks: empty},
+			{
+				Config: fmt.Sprintf(`provider "logfire" {
+  base_url = %q
+  api_key = "test-token"
+}
+removed {
+  from = logfire_dashboard.test
+  lifecycle { destroy = false }
+}`, server.URL),
+			},
+			{
+				Config: config("Main", initial), ResourceName: address,
+				ImportState: true, ImportStateId: "test/main", ImportStatePersist: true,
+			},
+			{
+				Config: config("Main", initial), ConfigPlanChecks: empty,
+				Check: resource.TestCheckResourceAttr(address, "id", "dashboard-1"),
+			},
+			{
+				Config: config("Renamed", initial), ConfigPlanChecks: inPlace,
+				PreConfig: func() {
+					api.Lock()
+					defer api.Unlock()
+					api.denyProjectRead = true
+				},
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr(address, "id", "dashboard-1"),
+					resource.TestCheckResourceAttr(address, "name", "Renamed")),
+			},
+			{
+				Config: config("Renamed", updated), ConfigPlanChecks: inPlace,
+				PreConfig: func() {
+					api.Lock()
+					defer api.Unlock()
+					api.denyProjectRead = false
+				},
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr(address, "id", "dashboard-1"),
+					resource.TestCheckResourceAttr(address, "definition", edited)),
+			},
+			{Config: config("Renamed", updated), ConfigPlanChecks: empty},
+			{
+				Config: config("Renamed", updated), ConfigPlanChecks: inPlace,
+				PreConfig: func() {
+					api.Lock()
+					defer api.Unlock()
+					api.name = "External name"
+					api.definition = strings.Replace(api.definition, `"text":"edited"`, `"text":"external"`, 1)
+				},
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr(address, "id", "dashboard-1"),
+					resource.TestCheckResourceAttr(address, "name", "Renamed"),
+					resource.TestCheckResourceAttr(address, "definition", edited)),
+			},
+			{Config: config("Renamed", updated), ConfigPlanChecks: empty},
+			{
+				Config: config("Renamed", updated), ConfigPlanChecks: empty,
+				PreConfig: func() {
+					api.Lock()
+					defer api.Unlock()
+					api.definition = reexportedAPI
+					if err := os.WriteFile(updated, []byte(reexported), 0600); err != nil {
+						t.Fatal(err)
+					}
+				},
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr(address, "id", "dashboard-1"),
+					resource.TestCheckResourceAttr(address, "definition", reexportedAPI)),
+			},
+			{
+				Config: config("Renamed", updated), ConfigPlanChecks: empty,
+				Check: resource.TestCheckResourceAttr(address, "id", "dashboard-1"),
+			},
+			{
+				Config: config("Renamed", updated), ConfigPlanChecks: inPlace,
+				PreConfig: func() {
+					if err := os.WriteFile(updated, []byte(editedExport), 0600); err != nil {
+						t.Fatal(err)
+					}
+				},
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr(address, "id", "dashboard-1"),
+					resource.TestCheckResourceAttr(address, "definition", editedExport)),
+			},
+			{Config: config("Renamed", updated), ConfigPlanChecks: empty},
+			{
+				Config: config("Main", initial),
+				PreConfig: func() {
+					api.Lock()
+					defer api.Unlock()
+					api.id = ""
+				},
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction(address, plancheck.ResourceActionCreate)}},
+				Check:            resource.TestCheckResourceAttr(address, "id", "dashboard-2"),
+			},
+		},
+	})
+	api.Lock()
+	defer api.Unlock()
+	if api.creates != 2 || api.id != "" {
+		t.Fatalf("lifecycle left creates=%d, remote ID=%q; want two creates and final deletion", api.creates, api.id)
+	}
+	if len(api.writes) != 6 || api.writes[1] != `{"name":"Renamed"}` || !strings.Contains(api.writes[0], `"largeInteger":9007199254740993`) || !strings.Contains(api.writes[0], `"fraction":0.333333333333333333333333333333333333`) {
+		t.Fatalf("unexpected dashboard writes: %v", api.writes)
+	}
+	for i, query := range []string{"", "", "replace_layout=true", "replace_layout=true", "replace_layout=true", ""} {
+		if api.queries[i] != query {
+			t.Fatalf("write %d query = %q, want %q", i, api.queries[i], query)
+		}
+	}
+	for _, i := range []int{0, 5} {
+		var payload struct {
+			Definition struct {
+				Metadata struct{ Name, Project string }
+			}
+		}
+		if err := json.Unmarshal([]byte(api.writes[i]), &payload); err != nil {
+			t.Fatal(err)
+		}
+		if metadata := payload.Definition.Metadata; metadata.Name != "Main" || metadata.Project != "test" {
+			t.Fatalf("create %d metadata = %+v, want Main in test", i, metadata)
+		}
+	}
+}

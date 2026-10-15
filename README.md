@@ -67,7 +67,7 @@ resource "logfire_dashboard" "prod_overview" {
   project_id = logfire_project.prod.id
   name       = "production-overview"
   slug       = "production-overview"
-  # Export a dashboard JSON from Logfire; its metadata.name is replaced by the value above.
+  # Copy the dashboard JSON from Logfire into dashboard.json without editing it.
   definition = file("${path.module}/dashboard.json")
 }
 
@@ -103,6 +103,12 @@ For Logfire SaaS, the provider infers the API endpoint from the region embedded 
 ## Examples
 - `examples/main.tf` contains a SaaS-compatible end-to-end setup (project, channel, alert, dashboard, and read/write tokens).
 - `examples/self-hosted-organization/main.tf` contains the self-hosted-only `logfire_organization` example.
+
+## Dashboards
+
+Save dashboard JSON copied from Logfire to `dashboard.json` and read it with
+`file()`, as in the quick start above. To adopt an existing dashboard, follow the
+[dashboard import instructions](docs/resources/dashboard.md#import) before applying.
 
 ## Importing existing resources
 Existing Logfire resources can be imported into Terraform state with

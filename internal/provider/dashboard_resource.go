@@ -32,11 +32,11 @@ type DashboardResource struct {
 }
 
 type DashboardModel struct {
-	ID         types.String          `tfsdk:"id"`
-	ProjectID  types.String          `tfsdk:"project_id"`
-	Name       types.String          `tfsdk:"name"`
-	Slug       types.String          `tfsdk:"slug"`
-	Definition definitionStringValue `tfsdk:"definition"`
+	ID         types.String `tfsdk:"id"`
+	ProjectID  types.String `tfsdk:"project_id"`
+	Name       types.String `tfsdk:"name"`
+	Slug       types.String `tfsdk:"slug"`
+	Definition types.String `tfsdk:"definition"`
 }
 
 func (r *DashboardResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -84,7 +84,8 @@ func (r *DashboardResource) Schema(ctx context.Context, req resource.SchemaReque
 			"definition": rschema.StringAttribute{
 				Required:            true,
 				MarkdownDescription: "Dashboard definition JSON payload.",
-				CustomType:          definitionStringType{},
+				PlanModifiers:       []planmodifier.String{dashboardDefinitionPlanModifier{}},
+				Validators:          []validator.String{dashboardDefinitionValidator{}},
 			},
 		},
 	}
@@ -126,35 +127,16 @@ func (r *DashboardResource) Create(ctx context.Context, req resource.CreateReque
 		return
 	}
 
-	_, defRaw, err := normalizeDefinitionString(plan.Definition.ValueString())
+	defRaw, err := dashboardDefinitionForWrite(plan.Definition.ValueString(), plan.Name.ValueString(), projectName)
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid dashboard definition", err.Error())
-		return
-	}
-
-	var defPayload map[string]any
-	if err := json.Unmarshal(defRaw, &defPayload); err != nil {
-		resp.Diagnostics.AddError("Failed to unmarshal definition", err.Error())
-		return
-	}
-	meta, ok := defPayload["metadata"].(map[string]any)
-	if !ok || meta == nil {
-		meta = map[string]any{}
-	}
-	meta["name"] = plan.Name.ValueString()
-	meta["project"] = projectName
-	defPayload["metadata"] = meta
-
-	finalDefRaw, err := json.Marshal(defPayload)
-	if err != nil {
-		resp.Diagnostics.AddError("Failed to marshal definition", err.Error())
 		return
 	}
 
 	payload := logclient.DashboardCreateRequest{
 		Name:       plan.Name.ValueString(),
 		Slug:       plan.Slug.ValueString(),
-		Definition: finalDefRaw,
+		Definition: defRaw,
 	}
 
 	out, err := r.client.CreateDashboard(ctx, projectID, payload)
@@ -168,6 +150,7 @@ func (r *DashboardResource) Create(ctx context.Context, req resource.CreateReque
 		resp.Diagnostics.AddError("Decode dashboard response", err.Error())
 		return
 	}
+	state.Definition = preserveDashboardDefinition(plan.Definition, state.Definition)
 	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
 		state.ProjectID = types.StringValue(projectID)
 	}
@@ -218,26 +201,16 @@ func (r *DashboardResource) Read(ctx context.Context, req resource.ReadRequest, 
 		return
 	}
 
-	metaName := ""
-	var raw map[string]any
-	if err := json.Unmarshal(detail.Dashboard, &raw); err == nil {
-		if meta, ok := raw["metadata"].(map[string]any); ok {
-			if n, ok := meta["name"].(string); ok && n != "" {
-				metaName = n
-			}
-		}
-	}
-
-	defStr, err := normalizeDefinitionRaw(detail.Dashboard)
+	definition, err := decodeDefinitionObject(detail.Dashboard)
 	if err != nil {
 		resp.Diagnostics.AddError("Decode dashboard definition", err.Error())
 		return
 	}
-
-	state.Definition = newDefinitionStringValue(defStr)
-	state.ProjectID = types.StringValue(projectID)
-	if metaName != "" {
-		state.Name = types.StringValue(metaName)
+	state.Definition = preserveDashboardDefinition(state.Definition, types.StringValue(string(detail.Dashboard)))
+	if metadata, ok := definition["metadata"].(map[string]any); ok {
+		if name, ok := metadata["name"].(string); ok && name != "" {
+			state.Name = types.StringValue(name)
+		}
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -272,62 +245,30 @@ func (r *DashboardResource) Update(ctx context.Context, req resource.UpdateReque
 	}
 
 	projectID := state.ProjectID.ValueString()
-	projectName, err := r.projectNameForID(ctx, projectID)
-	if err != nil {
-		resp.Diagnostics.AddError("Resolve project name", err.Error())
-		return
-	}
 	dashboardID := state.ID.ValueString()
 
-	var planDefStr string
-	var planDefRaw json.RawMessage
-	if !plan.Definition.IsNull() && !plan.Definition.IsUnknown() {
-		var err error
-		planDefStr, planDefRaw, err = normalizeDefinitionString(plan.Definition.ValueString())
+	payload := logclient.DashboardUpdateRequest{}
+	if !plan.Name.Equal(state.Name) {
+		name := plan.Name.ValueString()
+		payload.Name = &name
+	}
+	if !dashboardDefinitionsEqual(plan.Definition, state.Definition) {
+		projectName, err := r.projectNameForID(ctx, projectID)
+		if err != nil {
+			resp.Diagnostics.AddError("Resolve project name", err.Error())
+			return
+		}
+		definition, err := dashboardDefinitionForWrite(plan.Definition.ValueString(), plan.Name.ValueString(), projectName)
 		if err != nil {
 			resp.Diagnostics.AddError("Invalid dashboard definition", err.Error())
 			return
 		}
-
-		var defPayload map[string]any
-		if err := json.Unmarshal(planDefRaw, &defPayload); err != nil {
-			resp.Diagnostics.AddError("Failed to unmarshal definition", err.Error())
-			return
-		}
-		meta, ok := defPayload["metadata"].(map[string]any)
-		if !ok || meta == nil {
-			meta = map[string]any{}
-		}
-		meta["name"] = plan.Name.ValueString()
-		meta["project"] = projectName
-		defPayload["metadata"] = meta
-		planDefRaw, err = json.Marshal(defPayload)
-		if err != nil {
-			resp.Diagnostics.AddError("Failed to marshal definition", err.Error())
-			return
-		}
-	}
-
-	payload := logclient.DashboardUpdateRequest{}
-	if !plan.Name.IsNull() && !plan.Name.IsUnknown() {
-		newName := plan.Name.ValueString()
-		if state.Name.IsNull() || state.Name.IsUnknown() || newName != state.Name.ValueString() {
-			payload.Name = &newName
-		}
-	}
-	if len(planDefRaw) > 0 {
-		current := state.Definition.ValueString()
-		if state.Definition.IsNull() || state.Definition.IsUnknown() || planDefStr != current {
-			defCopy := planDefRaw
-			payload.Definition = &defCopy
-		}
+		payload.Definition = &definition
+		payload.ReplaceLayout = true
 	}
 
 	if payload.Name == nil && payload.Definition == nil {
-		// No remote changes needed; ensure state reflects canonical definition if provided.
-		if planDefStr != "" {
-			state.Definition = newDefinitionStringValue(planDefStr)
-		}
+		state.Definition = plan.Definition
 		state.Name = plan.Name
 		resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 		return
@@ -345,6 +286,7 @@ func (r *DashboardResource) Update(ctx context.Context, req resource.UpdateReque
 		resp.Diagnostics.AddError("Decode dashboard response", err.Error())
 		return
 	}
+	newState.Definition = preserveDashboardDefinition(plan.Definition, newState.Definition)
 	if newState.ProjectID.IsNull() || newState.ProjectID.IsUnknown() || newState.ProjectID.ValueString() == "" {
 		newState.ProjectID = types.StringValue(projectID)
 	}
@@ -516,57 +458,23 @@ func (r *DashboardResource) projectNameForID(ctx context.Context, projectID stri
 	return project.ProjectName, nil
 }
 
-func normalizeDefinitionString(raw string) (string, json.RawMessage, error) {
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-		return "", nil, fmt.Errorf("invalid JSON: %w", err)
-	}
-	if payload == nil {
-		return "", nil, fmt.Errorf("dashboard definition must be a JSON object")
-	}
-	scrubDefinitionMetadata(payload)
-	normalized, err := json.Marshal(payload)
+func dashboardDefinitionForWrite(raw, name, projectName string) (json.RawMessage, error) {
+	payload, err := decodeDefinitionObject([]byte(raw))
 	if err != nil {
-		return "", nil, fmt.Errorf("normalize JSON: %w", err)
+		return nil, err
 	}
-	return string(normalized), json.RawMessage(normalized), nil
-}
-
-func normalizeDefinitionRaw(raw json.RawMessage) (string, error) {
-	if raw == nil {
-		return "", fmt.Errorf("definition is empty")
+	metadata, ok := payload["metadata"].(map[string]any)
+	if !ok || metadata == nil {
+		metadata = map[string]any{}
 	}
-	var payload map[string]any
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return "", fmt.Errorf("invalid definition JSON: %w", err)
-	}
-	if payload == nil {
-		return "", fmt.Errorf("dashboard definition must be a JSON object")
-	}
-	scrubDefinitionMetadata(payload)
-	normalized, err := json.Marshal(payload)
-	if err != nil {
-		return "", fmt.Errorf("normalize JSON: %w", err)
-	}
-	return string(normalized), nil
-}
-
-func scrubDefinitionMetadata(payload map[string]any) {
-	if metaVal, ok := payload["metadata"]; ok {
-		if meta, ok := metaVal.(map[string]any); ok {
-			delete(meta, "name")
-			delete(meta, "project")
-			delete(meta, "createdAt")
-			delete(meta, "updatedAt")
-			delete(meta, "version")
-			payload["metadata"] = meta
-		}
-	}
+	metadata["name"] = name
+	metadata["project"] = projectName
+	payload["metadata"] = metadata
+	return json.Marshal(payload)
 }
 
 func dashboardReadToModel(d *logclient.Dashboard, m *DashboardModel) error {
-	defStr, err := normalizeDefinitionRaw(d.Definition)
-	if err != nil {
+	if _, err := decodeDefinitionObject(d.Definition); err != nil {
 		return err
 	}
 	m.ID = types.StringValue(d.ID)
@@ -577,6 +485,6 @@ func dashboardReadToModel(d *logclient.Dashboard, m *DashboardModel) error {
 	}
 	m.Name = types.StringValue(d.DashboardName)
 	m.Slug = types.StringValue(d.DashboardSlug)
-	m.Definition = newDefinitionStringValue(defStr)
+	m.Definition = types.StringValue(string(d.Definition))
 	return nil
 }

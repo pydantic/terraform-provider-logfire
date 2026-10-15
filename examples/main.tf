@@ -61,7 +61,7 @@ resource "logfire_dashboard" "production_overview" {
   project_id = logfire_project.production.id
   name       = "production-overview"
   slug       = "production-overview"
-  # Export a dashboard JSON from Logfire; its metadata.name is replaced by the value above.
+  # Copy the dashboard JSON from Logfire into example.json without editing it.
   definition = file("${path.module}/example.json")
 }
 
