@@ -19,8 +19,9 @@ to avoid repeated downloads.
 `make test-e2e` runs the lifecycle and failure tests with the existing Terraform
 test framework. These tests cover Slack settings, partial creation recovery,
 and create requests after lost responses or rate limits. CI runs them on
-Terraform 1.8 and 1.14. Extend these and the live acceptance tests for provider
-changes; keep unit tests for behavior a CLI flow cannot reach.
+Terraform 1.8 and 1.14. Reuse existing lifecycle and acceptance tests. Extend them
+when the changed behavior lacks coverage. Use unit tests for behavior a CLI flow
+cannot reach.
 
 `make generate` refreshes the Terraform Registry docs in `docs/`. Commit those
 docs whenever schema, examples, descriptions, or validators change.
