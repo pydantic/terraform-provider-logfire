@@ -17,9 +17,15 @@ description: |-
 {{ tffile . }}
 {{- end }}
 
-Copy dashboard JSON from Logfire into `dashboard.json` without editing it.
-Applying this configuration creates a dashboard. To adopt an existing dashboard,
-import it before applying.
+Use `file()` to read a dashboard definition written by hand or copied from Logfire.
+Exported metadata can remain unchanged; `project_id`, `name`, and `slug` select the
+destination and identity.
+
+| Starting point | Terraform workflow |
+| --- | --- |
+| Defined in IaC | Apply the definition to create a dashboard. |
+| Existing UI dashboard | Export its JSON, match its attributes, and import before applying to retain its UUID. |
+| Copy of a UI dashboard | Apply its exported JSON with the destination project, name, and an available slug to create a new UUID. The source dashboard remains unchanged. |
 
 ## Definition comparison
 
@@ -32,10 +38,9 @@ The resource's `name` and `slug` control the dashboard name and URL. Changing
 `name` or `definition` updates the dashboard. Changing `project_id` or `slug`
 replaces it.
 
-Saved panel positions from the Logfire UI can override the file's coordinates.
-The current API can retain these overrides after a definition update, so applying
-a layout change may fail with an inconsistent result. Re-export the dashboard
-to adopt its current layout.
+Definition updates explicitly request the file's layout, including panel visibility.
+Name-only updates preserve saved UI positions. Older instances that lack layout
+replacement support can retain UI overrides; re-export to adopt their current layout.
 
 {{ .SchemaMarkdown | trimspace }}
 

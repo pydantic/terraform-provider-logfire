@@ -264,6 +264,7 @@ func (r *DashboardResource) Update(ctx context.Context, req resource.UpdateReque
 			return
 		}
 		payload.Definition = &definition
+		payload.ReplaceLayout = true
 	}
 
 	if payload.Name == nil && payload.Definition == nil {

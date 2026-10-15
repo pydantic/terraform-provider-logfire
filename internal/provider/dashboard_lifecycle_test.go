@@ -39,6 +39,7 @@ type dashboardLifecycleAPIState struct {
 	id, name, definition string
 	creates              int
 	writes               []string
+	queries              []string
 	denyProjectRead      bool
 }
 
@@ -81,6 +82,7 @@ func (a *dashboardLifecycleAPIState) ServeHTTP(w http.ResponseWriter, req *http.
 			return
 		}
 		a.writes = append(a.writes, string(body))
+		a.queries = append(a.queries, req.URL.RawQuery)
 		if payload.Name != nil {
 			a.name = *payload.Name
 		}
@@ -110,9 +112,11 @@ func TestLifecycleDashboardJSONFile(t *testing.T) {
 	api := &dashboardLifecycleAPIState{}
 	server := httptest.NewServer(api)
 	defer server.Close()
-	initial, updated := filepath.Join(t.TempDir(), "initial.json"), filepath.Join(t.TempDir(), "updated.json")
+	dir := t.TempDir()
+	initial, updated, authored := filepath.Join(dir, "initial.json"), filepath.Join(dir, "updated.json"), filepath.Join(dir, "authored.json")
+	withoutMetadata := strings.Replace(dashboardLifecycleFile, `  "metadata": {"name": "Copied", "project": "source", "version": 7, "layoutUpdatedAt": "old"},`+"\n", "", 1)
 	edited := strings.Replace(dashboardLifecycleFile, `"text": "initial"`, `"text": "edited"`, 1)
-	for path, definition := range map[string]string{initial: dashboardLifecycleFile, updated: edited} {
+	for path, definition := range map[string]string{initial: dashboardLifecycleFile, updated: edited, authored: withoutMetadata} {
 		if err := os.WriteFile(path, []byte(definition), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -127,10 +131,10 @@ func TestLifecycleDashboardJSONFile(t *testing.T) {
 		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: config("Main", initial),
+				Config: config("Main", authored),
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckResourceAttr(address, "id", "dashboard-1"),
-					resource.TestCheckResourceAttr(address, "definition", dashboardLifecycleFile)),
+					resource.TestCheckResourceAttr(address, "definition", withoutMetadata)),
 			},
 			{Config: config("Main", initial), ConfigPlanChecks: empty},
 			{
@@ -207,5 +211,23 @@ removed {
 	}
 	if len(api.writes) != 5 || api.writes[1] != `{"name":"Renamed"}` || !strings.Contains(api.writes[0], `"largeInteger":9007199254740993`) {
 		t.Fatalf("unexpected dashboard writes: %v", api.writes)
+	}
+	for i, query := range []string{"", "", "replace_layout=true", "replace_layout=true", ""} {
+		if api.queries[i] != query {
+			t.Fatalf("write %d query = %q, want %q", i, api.queries[i], query)
+		}
+	}
+	for _, i := range []int{0, 4} {
+		var payload struct {
+			Definition struct {
+				Metadata struct{ Name, Project string }
+			}
+		}
+		if err := json.Unmarshal([]byte(api.writes[i]), &payload); err != nil {
+			t.Fatal(err)
+		}
+		if metadata := payload.Definition.Metadata; metadata.Name != "Main" || metadata.Project != "test" {
+			t.Fatalf("create %d metadata = %+v, want Main in test", i, metadata)
+		}
 	}
 }
