@@ -9,7 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math/big"
+	"strconv"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -150,26 +150,22 @@ func canonicalDashboardNumbers(value any) any {
 			value[index] = canonicalDashboardNumbers(child)
 		}
 	case json.Number:
-		mantissa := string(value)
-		var exponent big.Int
-		if index := strings.IndexAny(mantissa, "eE"); index >= 0 {
-			// The JSON decoder has already validated the exponent's decimal syntax.
-			exponent.SetString(mantissa[index+1:], 10)
-			mantissa = mantissa[:index]
+		if !strings.ContainsAny(string(value), ".eE") {
+			if value == "-0" {
+				return json.Number("0")
+			}
+			return value
 		}
-		negative := strings.HasPrefix(mantissa, "-")
-		integer, fraction, _ := strings.Cut(strings.TrimPrefix(mantissa, "-"), ".")
-		coefficient := strings.TrimLeft(integer+fraction, "0")
-		if coefficient == "" {
+		// Platform parses decimal and exponent tokens as Python floats while
+		// preserving integer tokens. Compare at the precision it stores.
+		number, err := value.Float64()
+		if err != nil {
+			return value
+		}
+		if number == 0 {
 			return json.Number("0")
 		}
-		digits := strings.TrimRight(coefficient, "0")
-		exponent.Add(&exponent, big.NewInt(int64(len(coefficient)-len(digits)-len(fraction))))
-		if negative {
-			digits = "-" + digits
-		}
-		// Keep the exponent symbolic so large exponents allocate only their digits.
-		return json.Number(digits + "e" + exponent.String())
+		return json.Number(strconv.FormatFloat(number, 'f', -1, 64))
 	}
 	return value
 }

@@ -24,15 +24,15 @@ const dashboardLifecycleFile = `{
   "metadata": {"name": "Copied", "project": "source", "version": 7, "layoutUpdatedAt": "old"},
   "spec": {
     "display": {"name": "Dashboard title"},
-    "panels": {"text": {"kind": "Panel", "spec": {"display": {"name": "Text"}, "plugin": {"kind": "Markdown", "spec": {"text": "initial", "largeInteger": 9007199254740993, "number": 1e0}}}}},
+    "panels": {"text": {"kind": "Panel", "spec": {"display": {"name": "Text"}, "plugin": {"kind": "Markdown", "spec": {"text": "initial", "largeInteger": 9007199254740993, "number": 1e0, "fraction": 0.333333333333333333333333333333333333}}}}},
     "layouts": [{"kind": "Grid", "spec": {"items": [{"x": 0, "y": 0, "width": 12, "height": 4, "content": {"ref": "#/spec/panels/text"}}]}}],
     "variables": null
   }
 }`
 
-// A literal API response includes the defaults, aliases, and numeric spellings
+// A literal API response includes the defaults, aliases, and rounded fractions
 // observed in platform. The fixture does not call the provider's normalizer.
-const dashboardLifecycleAPI = `{"kind":"Dashboard","metadata":{"name":"Main","project":"test","version":8,"layoutUpdatedAt":"new"},"spec":{"display":{"name":"Dashboard title","description":null},"panels":{"text":{"kind":"Panel","spec":{"display":{"name":"Text"},"plugin":{"kind":"Markdown","spec":{"text":"initial","largeInteger":9007199254740993,"number":1.0}}}}},"layouts":[{"kind":"Grid","spec":{"items":[{"x":0,"y":0,"width":12,"height":4,"content":{"$ref":"#/spec/panels/text"}}]}}],"variables":[],"datasources":{},"duration":"1h","refreshInterval":"0s"}}`
+const dashboardLifecycleAPI = `{"kind":"Dashboard","metadata":{"name":"Main","project":"test","version":8,"layoutUpdatedAt":"new"},"spec":{"display":{"name":"Dashboard title","description":null},"panels":{"text":{"kind":"Panel","spec":{"display":{"name":"Text"},"plugin":{"kind":"Markdown","spec":{"text":"initial","largeInteger":9007199254740993,"number":1.0,"fraction":0.3333333333333333}}}}},"layouts":[{"kind":"Grid","spec":{"items":[{"x":0,"y":0,"width":12,"height":4,"content":{"$ref":"#/spec/panels/text"}}]}}],"variables":[],"datasources":{},"duration":"1h","refreshInterval":"0s"}}`
 
 type dashboardLifecycleAPIState struct {
 	sync.Mutex
@@ -209,7 +209,7 @@ removed {
 	if api.creates != 2 || api.id != "" {
 		t.Fatalf("lifecycle left creates=%d, remote ID=%q; want two creates and final deletion", api.creates, api.id)
 	}
-	if len(api.writes) != 5 || api.writes[1] != `{"name":"Renamed"}` || !strings.Contains(api.writes[0], `"largeInteger":9007199254740993`) {
+	if len(api.writes) != 5 || api.writes[1] != `{"name":"Renamed"}` || !strings.Contains(api.writes[0], `"largeInteger":9007199254740993`) || !strings.Contains(api.writes[0], `"fraction":0.333333333333333333333333333333333333`) {
 		t.Fatalf("unexpected dashboard writes: %v", api.writes)
 	}
 	for i, query := range []string{"", "", "replace_layout=true", "replace_layout=true", ""} {

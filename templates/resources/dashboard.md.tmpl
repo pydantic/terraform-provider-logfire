@@ -30,8 +30,9 @@ destination and identity.
 ## Definition comparison
 
 Comparison ignores JSON formatting, top-level `metadata`, known API defaults,
-and grid panel `ref` and `$ref` aliases. Equal number spellings such as `1` and
-`1.0` compare equal without losing precision. Content and layout changes produce
+and grid panel `ref` and `$ref` aliases. Integer literals compare exactly.
+Decimal and exponent literals compare at the API's float precision. Equivalent
+spellings such as `1` and `1.0` compare equal. Content and layout changes produce
 a plan.
 
 The resource's `name` and `slug` control the dashboard name and URL. Changing
@@ -39,8 +40,9 @@ The resource's `name` and `slug` control the dashboard name and URL. Changing
 replaces it.
 
 Definition updates explicitly request the file's layout, including panel visibility.
-Name-only updates preserve saved UI positions. Older instances that lack layout
-replacement support can retain UI overrides; re-export to adopt their current layout.
+Name-only updates preserve saved UI positions. On older instances without layout
+replacement support, saved UI overrides can cause an inconsistent result error
+when applying a layout change. Re-export the dashboard to adopt its current layout.
 
 {{ .SchemaMarkdown | trimspace }}
 

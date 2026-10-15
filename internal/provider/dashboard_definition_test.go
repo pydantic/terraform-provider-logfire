@@ -74,7 +74,6 @@ func TestDashboardDefinitionValidator(t *testing.T) {
 }
 
 func TestDashboardDefinitionNumericComparison(t *testing.T) {
-	hugeExponent := strings.Repeat("9", 4096)
 	for _, tc := range []struct {
 		name     string
 		previous string
@@ -87,20 +86,20 @@ func TestDashboardDefinitionNumericComparison(t *testing.T) {
 		{"leading exponent zeroes", `0.0012`, `12e-0004`, true},
 		{"negative value", `-1200.00`, `-12e2`, true},
 		{"negative zero", `-0.00e-5`, `0`, true},
-		{"zero with huge exponent", `-0e` + hugeExponent, `0.000`, true},
+		{"negative integer zero", `-0`, `0`, true},
 		{"different integer signs", `-12`, `12`, false},
-		{"large integer decimal", `9007199254740993`, `9007199254740993.0`, true},
+		{"large integer decimal loses API precision", `9007199254740993`, `9007199254740993.0`, false},
 		{"distinct large integers", `9007199254740993`, `9007199254740992`, false},
 		{"high precision fraction", `0.123456789012345678901234567890`, `12345678901234567890123456789e-29`, true},
-		{"distinct high precision fractions", `0.123456789012345678901234567890`, `0.123456789012345678901234567891`, false},
-		{"huge positive exponent", `1e` + hugeExponent, `10e` + hugeExponent[:len(hugeExponent)-1] + `8`, true},
-		{"huge negative exponent", `100e-` + hugeExponent, `1e-` + hugeExponent[:len(hugeExponent)-1] + `7`, true},
-		{"distinct huge exponents", `1e` + hugeExponent, `1e` + hugeExponent[:len(hugeExponent)-1] + `8`, false},
-		{"distinct values beyond float range", `1e10000`, `2e10000`, false},
-		{"small value remains nonzero", `1e-10000`, `0`, false},
+		{"rounded API fraction", `0.123456789012345678901234567890`, `0.12345678901234568`, true},
+		{"third from Terraform arithmetic", `0.333333333333333333333333333333333333`, `0.3333333333333333`, true},
+		{"fractions below API precision", `0.123456789012345678901234567890`, `0.123456789012345678901234567891`, true},
+		{"distinct representable fractions", `0.12345678901234568`, `0.12345678901234569`, false},
+		{"rounded decimal matches stored integer", `9007199254740992`, `9007199254740993.0`, true},
+		{"large integer exponent loses API precision", `9007199254740993`, `9007199254740993e0`, false},
 		{"string remains a string", `"1"`, `1`, false},
 		{"numeric string spelling remains meaningful", `"1.0"`, `"1e0"`, false},
-		{"nested plugin numbers and arrays", `{"plugin":{"values":[1,0.01,{"number":9007199254740993}],"query":"select 1.0"}}`, `{"plugin":{"values":[1.0,1e-2,{"number":9007199254740993e0}],"query":"select 1.0"}}`, true},
+		{"nested plugin numbers and arrays", `{"plugin":{"values":[1,0.01,{"number":9007199254740993}],"query":"select 1.0"}}`, `{"plugin":{"values":[1.0,1e-2,{"number":9007199254740993}],"query":"select 1.0"}}`, true},
 		{"nested number change", `{"plugin":{"values":[1,0.01,{"number":9007199254740993}]}}`, `{"plugin":{"values":[1.0,1e-2,{"number":9007199254740992}]}}`, false},
 		{"array order remains meaningful", `[1,2]`, `[2.0,1.0]`, false},
 	} {
@@ -118,8 +117,8 @@ func TestDashboardDefinitionNumericComparison(t *testing.T) {
 }
 
 func TestDashboardDefinitionPreservesNumberSpellings(t *testing.T) {
-	raw := "{\n\"kind\":\"Dashboard\",\"spec\":{\"plugin\":{\"decimal\":1.000,\"integer\":9007199254740993,\"exponent\":123.450E+0006}}\n}"
-	response := types.StringValue(`{"kind":"Dashboard","spec":{"plugin":{"decimal":1e0,"integer":9007199254740993.0,"exponent":123450000}}}`)
+	raw := "{\n\"kind\":\"Dashboard\",\"spec\":{\"plugin\":{\"decimal\":1.000,\"integer\":9007199254740993,\"exponent\":123.450E+0006,\"fraction\":0.123456789012345678901234567890}}\n}"
+	response := types.StringValue(`{"kind":"Dashboard","spec":{"plugin":{"decimal":1e0,"integer":9007199254740993,"exponent":123450000,"fraction":0.12345678901234568}}}`)
 	if got := preserveDashboardDefinition(types.StringValue(raw), response); got.ValueString() != raw {
 		t.Fatalf("equivalent numeric response changed the input JSON: %s", got.ValueString())
 	}
@@ -127,7 +126,7 @@ func TestDashboardDefinitionPreservesNumberSpellings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = `{"kind":"Dashboard","metadata":{"name":"Main","project":"test"},"spec":{"plugin":{"decimal":1.000,"exponent":123.450E+0006,"integer":9007199254740993}}}`
+	const want = `{"kind":"Dashboard","metadata":{"name":"Main","project":"test"},"spec":{"plugin":{"decimal":1.000,"exponent":123.450E+0006,"fraction":0.123456789012345678901234567890,"integer":9007199254740993}}}`
 	if string(payload) != want {
 		t.Fatalf("request JSON = %s, want %s", payload, want)
 	}
