@@ -281,7 +281,7 @@ func TestLifecycleDashboardNullDefinition(t *testing.T) {
 		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{{
 			Config:      lifecycleConfig("https://example.invalid", "dashboard", "project_id = \"project-1\"\nname = \"test\"\nslug = \"test\"\ndefinition = \"null\""),
-			ExpectError: regexp.MustCompile("invalid dashboard definition"),
+			ExpectError: regexp.MustCompile("dashboard definition must be a JSON object"),
 		}},
 	})
 }

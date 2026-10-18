@@ -1235,8 +1235,9 @@ type DashboardCreateRequest struct {
 }
 
 type DashboardUpdateRequest struct {
-	Name       *string          `json:"name,omitempty"`
-	Definition *json.RawMessage `json:"definition,omitempty"`
+	Name          *string          `json:"name,omitempty"`
+	Definition    *json.RawMessage `json:"definition,omitempty"`
+	ReplaceLayout bool             `json:"-"`
 }
 
 type DashboardSummary struct {
@@ -1295,8 +1296,12 @@ func (c *APIClient) GetDashboard(ctx context.Context, projectID, dashboardID str
 }
 
 func (c *APIClient) UpdateDashboard(ctx context.Context, projectID, dashboardID string, in DashboardUpdateRequest) (*Dashboard, error) {
+	path := c.dashboardPath(projectID, dashboardID)
+	if in.ReplaceLayout {
+		path += "?replace_layout=true"
+	}
 	var out Dashboard
-	_, err := c.doJSON(ctx, http.MethodPut, c.dashboardPath(projectID, dashboardID), in, &out, http.StatusOK)
+	_, err := c.doJSON(ctx, http.MethodPut, path, in, &out, http.StatusOK)
 	if err != nil {
 		return nil, err
 	}
