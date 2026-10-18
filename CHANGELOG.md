@@ -1,6 +1,10 @@
 ## Unreleased
 
+## 0.2.2
+
 BUG FIXES:
+- Dashboard definitions accept copied UI JSON and remain stable across import and repeated apply. Equivalent metadata, defaults, references, and numeric representations no longer cause false drift. Integer values retain their precision.
+- Dashboard definition updates request layout replacement so the file controls panel positions and visibility. Name-only updates preserve UI placements. Older Logfire APIs can retain layout overrides and cause layout apply errors; see the dashboard resource documentation.
 - Create requests no longer retry automatically, including after rate limits or network errors, to avoid duplicate resources after an uncertain response. Check whether the resource was created before retrying or importing it.
 - Project and channel updates omit unchanged nullable fields instead of sending `null`.
 - Failed follow-up requests during channel and organization creation retain the created ID in state. Terraform marks the resource tainted; after verifying it and resolving the failure, untaint it before applying again to update it without replacement.
