@@ -25,6 +25,8 @@ jobs:
         with:
           go-version-file: 'go.mod'
           cache: true
+      - name: Verify Go toolchain
+        run: test "$(go env GOVERSION)" = go1.27.3
       - name: Import GPG key
         uses: crazy-max/ghaction-import-gpg@2dc316deee8e90f13e1a351ab510b4d5bc0c82cd # v7.0.0
         id: import_gpg
