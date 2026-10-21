@@ -2,6 +2,8 @@ module github.com/pydantic/terraform-provider-logfire
 
 go 1.25.8
 
+toolchain go1.27.3
+
 require (
 	github.com/hashicorp/terraform-plugin-framework v1.19.0
 	github.com/hashicorp/terraform-plugin-framework-validators v0.19.0
