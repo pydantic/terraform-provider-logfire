@@ -1,5 +1,10 @@
 ## Unreleased
 
+## 0.2.3
+
+SECURITY:
+- Build releases with Go 1.27.3 so the provider rejects the compromised eMudhra intermediate certificates (CVE-2026-111943). Upgrade to replace a binary built with Go 1.25.8.
+
 ## 0.2.2
 
 BUG FIXES:
