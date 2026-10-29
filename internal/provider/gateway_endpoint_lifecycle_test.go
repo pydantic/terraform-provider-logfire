@@ -165,12 +165,12 @@ func TestLifecycleGatewayEndpointValidation(t *testing.T) {
 	openAI := fmt.Sprintf("provider_id = %q", endpointOpenAI)
 	steps := []resource.TestStep{}
 	for providers, message := range map[string]string{
-		"":                                   "at least 1 elements",
-		"{ " + openAI + ", active = false }": "At least one provider must be active",
-		"{ " + openAI + ", weight = 0 }":     "positive finite number",
-		"{ " + openAI + ", weight = 1e40 }":  "positive finite number",
-		"{ provider_id = \"openai\" }":       "must be a provider UUID",
-		"{ " + openAI + ", priority = -1 }":  "between 0 and 2147483647",
+		"":                                                     "at least 1 elements",
+		"{ " + openAI + ", active = false }":                   "At least one provider must be active",
+		"{ " + openAI + ", weight = 0 }":                       "positive finite number",
+		"{ " + openAI + ", weight = 1e40 }":                    "positive finite number",
+		"{ provider_id = \"openai\" }":                         "must be a provider UUID",
+		"{ " + openAI + ", priority = -1 }":                    "between 0 and 2147483647",
 		"{ " + openAI + ", priority = 1 }, { " + openAI + " }": "Duplicate provider",
 	} {
 		steps = append(steps, resource.TestStep{Config: config(providers), PlanOnly: true, ExpectError: regexp.MustCompile(message)})

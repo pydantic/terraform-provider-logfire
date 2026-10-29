@@ -3,12 +3,12 @@
 page_title: "logfire_gateway_endpoint Resource - logfire"
 subcategory: ""
 description: |-
-  Manages an organization-owned AI Gateway endpoint and the providers it routes to. Requires Growth, Enterprise Cloud, or self-hosted and a token with organization:read and organization:write scopes. Endpoints that use built-in providers or more than 100 providers are not supported. Import accepts the endpoint UUID or its organization-unique slug.
+  Manages an organization-owned AI Gateway endpoint and the providers it routes to. Requires Growth, Enterprise Cloud, or self-hosted and a token with organization:read_gateway and organization:write_gateway scopes (organization:read and organization:write are also accepted). Endpoints that use built-in providers or more than 100 providers are not supported. Import accepts the endpoint UUID or its organization-unique slug.
 ---
 
 # logfire_gateway_endpoint (Resource)
 
-Manages an organization-owned AI Gateway endpoint and the providers it routes to. Requires Growth, Enterprise Cloud, or self-hosted and a token with organization:read and organization:write scopes. Endpoints that use built-in providers or more than 100 providers are not supported. Import accepts the endpoint UUID or its organization-unique slug.
+Manages an organization-owned AI Gateway endpoint and the providers it routes to. Requires Growth, Enterprise Cloud, or self-hosted and a token with organization:read_gateway and organization:write_gateway scopes (organization:read and organization:write are also accepted). Endpoints that use built-in providers or more than 100 providers are not supported. Import accepts the endpoint UUID or its organization-unique slug.
 
 ## Example Usage
 

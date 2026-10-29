@@ -27,7 +27,8 @@ func (r *GatewayEndpointResource) Schema(
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Manages an organization-owned AI Gateway endpoint and the providers it routes to. " +
 			"Requires Growth, Enterprise Cloud, or self-hosted and a token with " +
-			"organization:read and organization:write scopes. " +
+			"organization:read_gateway and organization:write_gateway scopes " +
+			"(organization:read and organization:write are also accepted). " +
 			"Endpoints that use built-in providers or more than 100 providers are not supported. " +
 			"Import accepts the endpoint UUID or its organization-unique slug.",
 		Attributes: map[string]schema.Attribute{
