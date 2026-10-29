@@ -19,13 +19,19 @@ description: |-
 
 ## Credentials and rotation
 
-You supply the upstream provider key through `api_key`. The Logfire provider's
+You supply the upstream provider key through `api_key`. For `google-vertex`,
+`api_key` holds the service account key JSON, for example
+`file("vertex-service-account.json")`. The Logfire provider's
 own `api_key` authenticates management requests and belongs to the organization
 that owns these resources.
 
 Changing the resource's `api_key` rotates its credential in place. Keep the
 previous key valid until the apply succeeds. Changing only `require_pricing`
 or Bedrock settings does not resend the key.
+
+An `endpoint` change always resends the configured `api_key`. The API requires
+credentials with every endpoint change, so a stored key never moves to a new
+endpoint without the operator supplying it.
 
 The API never returns credentials. Terraform retains the configured key in
 state, even though it hides sensitive values from normal output. Use an
@@ -42,10 +48,19 @@ confirm the refresh. A conflicting slug is never adopted automatically.
 
 ## Supported configuration
 
-You can manage OpenAI, Anthropic, Bedrock, Doubleword, Groq, Hugging Face, and
-Mistral providers through this resource. Bedrock uses an API key, an API variant,
-and a region; it does not accept AWS access-key pairs or service-account JSON.
-Fixed-vendor endpoints are selected by Logfire. Existing providers with custom
+You can manage OpenAI, Anthropic, Azure, Bedrock, Doubleword, Google Vertex,
+Groq, Hugging Face, and Mistral providers through this resource.
+
+| Vendor | Credential | Endpoint settings |
+| --- | --- | --- |
+| `azure` | API key | `endpoint`, an Azure resource endpoint such as `https://<resource>.openai.azure.com` |
+| `bedrock` | API key | `bedrock_api` and `bedrock_region` |
+| `google-vertex` | Service account key JSON | `endpoint`, such as `https://aiplatform.googleapis.com` or `https://<region>-aiplatform.googleapis.com` |
+| Other vendors | API key | None. Logfire selects the endpoint. |
+
+Bedrock does not accept AWS access-key pairs, and Azure does not accept service
+principal JSON. Logfire validates each endpoint against the vendor's allowed
+hosts. Existing providers with custom
 endpoints may be outside this public API's supported configuration.
 
 This resource manages the upstream provider's lifecycle. It does not configure

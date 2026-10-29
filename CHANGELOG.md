@@ -1,5 +1,8 @@
 ## Unreleased
 
+FEATURES:
+- `logfire_gateway_provider`: supports the `azure` and `google-vertex` vendors with a new `endpoint` attribute. For `google-vertex`, `api_key` holds the service account key JSON. Google Vertex needs a Logfire release that includes it in the public Gateway provider API.
+
 ## 0.2.3
 
 SECURITY:

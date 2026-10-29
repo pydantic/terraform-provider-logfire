@@ -5,6 +5,7 @@ package provider
 
 import (
 	"context"
+	"slices"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -19,6 +20,8 @@ var (
 	_ resource.ResourceWithImportState    = &GatewayProviderResource{}
 	_ resource.ResourceWithValidateConfig = &GatewayProviderResource{}
 )
+
+var endpointVendors = []string{"azure", "google-vertex"}
 
 // NewGatewayProviderResource returns the organization-owned Gateway provider resource.
 func NewGatewayProviderResource() resource.Resource { return &GatewayProviderResource{} }
@@ -37,6 +40,7 @@ type GatewayProviderModel struct {
 	RequirePricing types.Bool   `tfsdk:"require_pricing"`
 	BedrockAPI     types.String `tfsdk:"bedrock_api"`
 	BedrockRegion  types.String `tfsdk:"bedrock_region"`
+	Endpoint       types.String `tfsdk:"endpoint"`
 	CreatedAt      types.String `tfsdk:"created_at"`
 }
 
@@ -76,9 +80,10 @@ func (r *GatewayProviderResource) Create(
 		Provider: logclient.GatewayProviderVendor{
 			Vendor: plan.Vendor.ValueString(),
 			Config: &logclient.GatewayProviderConfig{
-				Credentials: &logclient.GatewayProviderCredentials{Type: "api-key", Value: plan.APIKey.ValueString()},
+				Credentials: plan.credentials(),
 				API:         plan.BedrockAPI.ValueString(),
 				Region:      plan.BedrockRegion.ValueString(),
+				Endpoint:    plan.Endpoint.ValueString(),
 			},
 		},
 		Pricing: logclient.GatewayProviderPricing{Required: plan.RequirePricing.ValueBool()},
@@ -113,7 +118,7 @@ func (r *GatewayProviderResource) Read(ctx context.Context, req resource.ReadReq
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-// Update changes pricing and sends credentials only when their configuration changes.
+// Update changes pricing and sends credentials only when the key or endpoint changes.
 func (r *GatewayProviderResource) Update(
 	ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse,
 ) {
@@ -127,8 +132,12 @@ func (r *GatewayProviderResource) Update(
 		Pricing: logclient.GatewayProviderPricing{Required: plan.RequirePricing.ValueBool()},
 	}
 	config := logclient.GatewayProviderConfig{}
-	if !plan.APIKey.Equal(state.APIKey) {
-		config.Credentials = &logclient.GatewayProviderCredentials{Type: "api-key", Value: plan.APIKey.ValueString()}
+	if !plan.Endpoint.Equal(state.Endpoint) {
+		config.Endpoint = plan.Endpoint.ValueString()
+	}
+	// The API requires a key with every endpoint change, so a stored key never follows a moved endpoint.
+	if !plan.APIKey.Equal(state.APIKey) || config.Endpoint != "" {
+		config.Credentials = plan.credentials()
 	}
 	if !plan.BedrockAPI.Equal(state.BedrockAPI) {
 		config.API = plan.BedrockAPI.ValueString()
@@ -196,6 +205,14 @@ func (r *GatewayProviderResource) ImportState(
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), found.ID)...)
 }
 
+func (m *GatewayProviderModel) credentials() *logclient.GatewayProviderCredentials {
+	credentialType := "api-key"
+	if m.Vendor.ValueString() == "google-vertex" {
+		credentialType = "service-account-json"
+	}
+	return &logclient.GatewayProviderCredentials{Type: credentialType, Value: m.APIKey.ValueString()}
+}
+
 func (m *GatewayProviderModel) refresh(out *logclient.GatewayProviderRead) {
 	m.ID = types.StringValue(out.ID)
 	m.Slug = types.StringValue(out.Slug)
@@ -207,5 +224,9 @@ func (m *GatewayProviderModel) refresh(out *logclient.GatewayProviderRead) {
 	if out.Provider.Vendor == "bedrock" && out.Provider.Config != nil {
 		m.BedrockAPI = types.StringValue(out.Provider.Config.API)
 		m.BedrockRegion = types.StringValue(out.Provider.Config.Region)
+	}
+	m.Endpoint = types.StringNull()
+	if slices.Contains(endpointVendors, out.Provider.Vendor) && out.Provider.Config != nil {
+		m.Endpoint = types.StringValue(out.Provider.Config.Endpoint)
 	}
 }
