@@ -1,5 +1,8 @@
 ## Unreleased
 
+FEATURES:
+- `logfire_gateway_endpoint` manages an AI Gateway endpoint and the complete set of providers it routes to, with priority, weight, and active settings per provider. Import accepts the endpoint slug or UUID. Needs the first Logfire release after v2026-10-29.01.
+
 ## 0.2.3
 
 SECURITY:

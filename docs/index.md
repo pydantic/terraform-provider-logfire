@@ -52,6 +52,7 @@ Self-hosted Logfire instances expose APIs as they are released, so a feature the
 | `logfire_gateway_provider` | v2026-08-12.01 | logfire-0.13.40 or newer |
 | Delegating project-bound scopes (`project:gateway_proxy`, `project:read_otlp`, `project:write_otlp`) from an organization-wide key | v2026-09-14.01 | logfire-0.13.46 or newer |
 | `logfire_schedule`, and `alerts` on `logfire_slo` | v2026-09-23.01 | logfire-0.13.47 or newer |
+| `logfire_gateway_endpoint` | First release after v2026-10-29.01 | - |
 
 The instance version appears in the Logfire UI and in the `Logfire-Version` response header on releases that report a release tag; builds that report only an image identity are treated as unknown. Charts from logfire-0.13.45 report the release tag the chart was built from.
 
@@ -72,6 +73,7 @@ Each resource states the scopes its calls need. The summary below is the single 
 | `logfire_api_key` | `organization:create_api_key` to create; `organization:read_api_key` / `organization:write_api_key` to list, update, or delete; plus every scope the new key is granted | Organization-wide for organization and project scopes; a project-bound scope (`project:read_otlp`, `project:write_otlp`, `project:gateway_proxy`) on an organization-wide key needs `organization:create_api_key` alongside it (delegation only, v2026-09-14.01+) |
 | `logfire_gateway_api_key` | `organization:create_api_key`, `organization:read_api_key`, `organization:write_api_key`, and `project:gateway_proxy` | An organization-wide key holding `organization:create_api_key` and `project:gateway_proxy` (delegation only, v2026-09-14.01+), or a project-scoped key for the project |
 | `logfire_gateway_provider` | `organization:read` / `organization:write` | Organization-wide key |
+| `logfire_gateway_endpoint` | `organization:read` / `organization:write` | Organization-wide key |
 | `logfire_organization` | `organization:admin` | A key created in the admin-panel organization (self-hosted only) |
 
 Two rules decide what a credential can do:
