@@ -43,6 +43,10 @@ float. The provider keeps the configured value when it matches what Logfire stor
 If a routing policy uses a provider, the API refuses to remove or pause it.
 Update the routing policy first.
 
+If the organization has a provider with the same slug as the endpoint, the API
+refuses to delete the endpoint with a conflict error, because that provider would
+then be reachable directly. Remove that provider first, then destroy the endpoint.
+
 ## Failed creates
 
 Creation is not retried automatically. A failed request can still leave an
@@ -108,3 +112,8 @@ terraform import 'logfire_gateway_endpoint.default' "default"
 # By UUID:
 terraform import 'logfire_gateway_endpoint.default' "018f45c0-3cab-7b2f-a8f7-8a0b55a7ed00"
 ```
+
+An import leaves `priority`, `weight`, and `active` null when Logfire reports
+their defaults. If your configuration spells out a default, such as
+`weight = 1`, the first plan after the import shows a change. Applying it sends
+the same providers again and changes nothing.

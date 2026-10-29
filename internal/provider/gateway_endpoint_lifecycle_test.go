@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 
@@ -162,21 +163,24 @@ func TestLifecycleGatewayEndpoint(t *testing.T) {
 
 func TestLifecycleGatewayEndpointValidation(t *testing.T) {
 	t.Parallel()
-	config := func(providers string) string {
-		return lifecycleConfig("http://127.0.0.1:1", "gateway_endpoint", "slug = \"default\"\nproviders = ["+providers+"]")
+	config := func(body string) string {
+		return lifecycleConfig("http://127.0.0.1:1", "gateway_endpoint", "slug = \"default\"\n"+body)
 	}
+	providers := func(elements string) string { return "providers = [" + elements + "]" }
 	openAI := fmt.Sprintf("provider_id = %q", endpointOpenAI)
 	steps := []resource.TestStep{}
-	for providers, message := range map[string]string{
-		"":                                                     "at least 1 elements",
-		"{ " + openAI + ", active = false }":                   "At least one provider must be active",
-		"{ " + openAI + ", weight = 0 }":                       "positive finite number",
-		"{ " + openAI + ", weight = 1e40 }":                    "positive finite number",
-		"{ provider_id = \"openai\" }":                         "must be a provider UUID",
-		"{ " + openAI + ", priority = -1 }":                    "between 0 and 2147483647",
-		"{ " + openAI + ", priority = 1 }, { " + openAI + " }": "Duplicate provider",
+	for body, message := range map[string]string{
+		providers(""): "at least 1 elements",
+		providers("{ " + openAI + ", active = false }"):                                 "At least one provider must be active",
+		providers("{ " + openAI + ", weight = 0 }"):                                     "positive finite number",
+		providers("{ " + openAI + ", weight = 1e40 }"):                                  "positive finite number",
+		providers("{ provider_id = \"openai\" }"):                                       "must be a lowercase provider UUID",
+		providers(fmt.Sprintf("{ provider_id = %q }", strings.ToUpper(endpointOpenAI))): "must be a lowercase provider UUID",
+		providers("{ " + openAI + ", priority = -1 }"):                                  "between 0 and 2147483647",
+		providers("{ " + openAI + ", priority = 1 }, { " + openAI + " }"):               "Duplicate provider",
+		"description = \"Primary\\n\"\n" + providers("{ "+openAI+" }"):                  "must not start or end with whitespace",
 	} {
-		steps = append(steps, resource.TestStep{Config: config(providers), PlanOnly: true, ExpectError: regexp.MustCompile(message)})
+		steps = append(steps, resource.TestStep{Config: config(body), PlanOnly: true, ExpectError: regexp.MustCompile(message)})
 	}
 	resource.Test(t, resource.TestCase{IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories, Steps: steps})
 }

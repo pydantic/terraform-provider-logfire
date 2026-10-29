@@ -20,6 +20,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
+var lowercaseUUIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
 // Schema defines the supported public Gateway endpoint configuration.
 func (r *GatewayEndpointResource) Schema(
 	ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse,
@@ -50,7 +52,11 @@ func (r *GatewayEndpointResource) Schema(
 			"description": schema.StringAttribute{
 				Optional:            true,
 				MarkdownDescription: "Endpoint description.",
-				Validators:          []validator.String{stringvalidator.LengthAtMost(1000)},
+				Validators: []validator.String{
+					stringvalidator.LengthAtMost(1000),
+					stringvalidator.RegexMatches(regexp.MustCompile(`^(?s:\S(.*\S)?)?$`),
+						"must not start or end with whitespace, because Logfire trims it"),
+				},
 			},
 			"providers": schema.SetNestedAttribute{
 				Required: true,
@@ -63,7 +69,7 @@ func (r *GatewayEndpointResource) Schema(
 							Required:            true,
 							MarkdownDescription: "UUID of a `logfire_gateway_provider` in the same organization.",
 							Validators: []validator.String{
-								stringvalidator.RegexMatches(uuidPattern, "must be a provider UUID"),
+								stringvalidator.RegexMatches(lowercaseUUIDPattern, "must be a lowercase provider UUID"),
 							},
 						},
 						"priority": schema.Int64Attribute{
