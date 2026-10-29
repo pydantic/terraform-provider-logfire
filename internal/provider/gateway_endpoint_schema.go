@@ -102,6 +102,11 @@ func (r *GatewayEndpointResource) ValidateConfig(
 	if resp.Diagnostics.HasError() || set.IsNull() || set.IsUnknown() {
 		return
 	}
+	for _, element := range set.Elements() {
+		if element.IsUnknown() {
+			return
+		}
+	}
 	var providers []GatewayEndpointProviderModel
 	resp.Diagnostics.Append(set.ElementsAs(ctx, &providers, false)...)
 	if resp.Diagnostics.HasError() {

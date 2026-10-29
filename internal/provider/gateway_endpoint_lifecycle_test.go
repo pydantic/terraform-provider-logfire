@@ -13,6 +13,9 @@ import (
 	"sync"
 	"testing"
 
+	fwresource "github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
@@ -176,4 +179,34 @@ func TestLifecycleGatewayEndpointValidation(t *testing.T) {
 		steps = append(steps, resource.TestStep{Config: config(providers), PlanOnly: true, ExpectError: regexp.MustCompile(message)})
 	}
 	resource.Test(t, resource.TestCase{IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories, Steps: steps})
+}
+
+func TestGatewayEndpointValidationDefersUnknownProvider(t *testing.T) {
+	t.Parallel()
+	r := &GatewayEndpointResource{}
+	var schemaResponse fwresource.SchemaResponse
+	r.Schema(t.Context(), fwresource.SchemaRequest{}, &schemaResponse)
+	providersType, ok := schemaResponse.Schema.Attributes["providers"].GetType().TerraformType(t.Context()).(tftypes.Set)
+	if !ok {
+		t.Fatal("providers must be a set")
+	}
+	attributeTypes := map[string]tftypes.Type{}
+	attributes := map[string]tftypes.Value{}
+	for name, attribute := range schemaResponse.Schema.Attributes {
+		attributeTypes[name] = attribute.GetType().TerraformType(t.Context())
+		attributes[name] = tftypes.NewValue(attributeTypes[name], nil)
+	}
+	attributes["slug"] = tftypes.NewValue(tftypes.String, "default")
+	attributes["providers"] = tftypes.NewValue(attributeTypes["providers"], []tftypes.Value{
+		tftypes.NewValue(providersType.ElementType, tftypes.UnknownValue),
+	})
+	config := tfsdk.Config{
+		Schema: schemaResponse.Schema,
+		Raw:    tftypes.NewValue(tftypes.Object{AttributeTypes: attributeTypes}, attributes),
+	}
+	var response fwresource.ValidateConfigResponse
+	r.ValidateConfig(t.Context(), fwresource.ValidateConfigRequest{Config: config}, &response)
+	if response.Diagnostics.HasError() {
+		t.Fatalf("unknown provider must defer validation: %v", response.Diagnostics)
+	}
 }
