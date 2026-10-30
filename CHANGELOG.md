@@ -1,5 +1,8 @@
 ## Unreleased
 
+FEATURES:
+- `logfire_gateway_provider`: supports the `azure` and `google-vertex` vendors with a new `endpoint` attribute. For `google-vertex`, `api_key` holds the service account key JSON. Azure needs Logfire v2026-10-19.01 or newer, and Google Vertex needs v2026-10-29.02 or newer. An older self-hosted instance fails these vendors at apply with a 422.
+
 ## 0.2.3
 
 SECURITY:

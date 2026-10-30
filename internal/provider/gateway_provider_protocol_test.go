@@ -20,7 +20,10 @@ func TestGatewayProviderProtocolValidation(t *testing.T) {
 		wantError bool
 	}{
 		{"valid", "vendor", "openai", false},
-		{"unsupported vendor", "vendor", "azure", true},
+		{"unsupported vendor", "vendor", "cohere", true},
+		{"Azure endpoint", "endpoint", "https://my-resource.openai.azure.com", false},
+		{"endpoint trailing slash", "endpoint", "https://my-resource.openai.azure.com/", true},
+		{"plain HTTP endpoint", "endpoint", "http://my-resource.openai.azure.com", true},
 		{"empty key", "api_key", "", true},
 		{"missing key", "api_key", nil, true},
 		{"invalid slug", "slug", "has/slash", true},
@@ -31,6 +34,9 @@ func TestGatewayProviderProtocolValidation(t *testing.T) {
 			server := providerserver.NewProtocol6(provider.New("test")())()
 			_, s := gatewayResource(t, nil)
 			values := map[string]any{"slug": "primary", "vendor": "openai", "api_key": "synthetic-key"}
+			if tt.attribute == "endpoint" {
+				values["vendor"] = "azure"
+			}
 			values[tt.attribute] = tt.value
 			raw := gatewayValue(t, s, values)
 			config, err := tfprotov6.NewDynamicValue(raw.Type(), raw)
