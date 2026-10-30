@@ -6,6 +6,8 @@ package provider
 import (
 	"context"
 	"regexp"
+	"slices"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -26,7 +28,7 @@ func (r *GatewayProviderResource) Schema(
 		MarkdownDescription: "Manages an organization-owned AI Gateway provider. " +
 			"Requires Growth, Enterprise Cloud, or self-hosted and a token with " +
 			"organization:read and organization:write scopes. " +
-			"Built-in providers and custom upstream URLs are not supported. " +
+			"Built-in providers and arbitrary upstream URLs are not supported. " +
 			"Import accepts the provider UUID or its organization-unique slug.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -46,17 +48,20 @@ func (r *GatewayProviderResource) Schema(
 			},
 			"vendor": schema.StringAttribute{
 				Required: true,
-				MarkdownDescription: "Upstream vendor: openai, anthropic, bedrock, doubleword, groq, huggingface, or mistral. " +
-					"Changing it replaces the provider.",
+				MarkdownDescription: "Upstream vendor: openai, anthropic, azure, bedrock, doubleword, google-vertex, groq, " +
+					"huggingface, or mistral. Changing it replaces the provider.",
 				Validators: []validator.String{
-					stringvalidator.OneOf("openai", "anthropic", "bedrock", "doubleword", "groq", "huggingface", "mistral"),
+					stringvalidator.OneOf(
+						"openai", "anthropic", "azure", "bedrock", "doubleword", "google-vertex", "groq", "huggingface", "mistral",
+					),
 				},
 				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 			"api_key": schema.StringAttribute{
 				Required:  true,
 				Sensitive: true,
-				MarkdownDescription: "Upstream API key. Changing it rotates the credential in place. " +
+				MarkdownDescription: "Upstream API key. For google-vertex, the service account key JSON. " +
+					"Changing it rotates the credential in place. " +
 					"Logfire never returns this value; Terraform retains it in state. " +
 					"External credential changes cannot be detected. After import, the next apply sets the configured key.",
 				Validators: []validator.String{stringvalidator.LengthAtLeast(1)},
@@ -82,6 +87,16 @@ func (r *GatewayProviderResource) Schema(
 						"must be a lowercase AWS region such as us-east-1"),
 				},
 			},
+			"endpoint": schema.StringAttribute{
+				Optional: true,
+				MarkdownDescription: "Upstream endpoint URL, for example https://my-resource.openai.azure.com or " +
+					"https://us-central1-aiplatform.googleapis.com. Required only for azure and google-vertex; " +
+					"can be updated in place.",
+				Validators: []validator.String{
+					stringvalidator.RegexMatches(regexp.MustCompile(`^https://[^\s/]+(?:/\S*[^/\s])?$`),
+						"must be an https URL without a trailing slash"),
+				},
+			},
 			"created_at": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "Timestamp when the provider was created.",
@@ -91,7 +106,7 @@ func (r *GatewayProviderResource) Schema(
 	}
 }
 
-// ValidateConfig checks that only Bedrock providers select an API and region.
+// ValidateConfig checks that each vendor sets exactly the endpoint settings it uses.
 func (r *GatewayProviderResource) ValidateConfig(
 	ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse,
 ) {
@@ -100,20 +115,26 @@ func (r *GatewayProviderResource) ValidateConfig(
 	if resp.Diagnostics.HasError() || config.Vendor.IsUnknown() || config.Vendor.IsNull() {
 		return
 	}
-	for name, value := range map[string]types.String{
-		"bedrock_api":    config.BedrockAPI,
-		"bedrock_region": config.BedrockRegion,
+	vendor := config.Vendor.ValueString()
+	for name, setting := range map[string]struct {
+		value   types.String
+		vendors []string
+	}{
+		"bedrock_api":    {config.BedrockAPI, []string{"bedrock"}},
+		"bedrock_region": {config.BedrockRegion, []string{"bedrock"}},
+		"endpoint":       {config.Endpoint, endpointVendors},
 	} {
-		if value.IsUnknown() {
+		if setting.value.IsUnknown() {
 			continue
 		}
-		if config.Vendor.ValueString() == "bedrock" && value.IsNull() {
-			resp.Diagnostics.AddAttributeError(path.Root(name), "Missing Bedrock configuration",
-				name+" is required when vendor is bedrock.")
+		required := slices.Contains(setting.vendors, vendor)
+		if required && setting.value.IsNull() {
+			resp.Diagnostics.AddAttributeError(path.Root(name), "Missing provider configuration",
+				name+" is required when vendor is "+vendor+".")
 		}
-		if config.Vendor.ValueString() != "bedrock" && !value.IsNull() {
-			resp.Diagnostics.AddAttributeError(path.Root(name), "Unexpected Bedrock configuration",
-				name+" can only be set when vendor is bedrock.")
+		if !required && !setting.value.IsNull() {
+			resp.Diagnostics.AddAttributeError(path.Root(name), "Unexpected provider configuration",
+				name+" can only be set when vendor is "+strings.Join(setting.vendors, " or ")+".")
 		}
 	}
 }

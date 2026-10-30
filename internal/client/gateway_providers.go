@@ -11,17 +11,18 @@ import (
 	"net/url"
 )
 
-// GatewayProviderCredentials contains a write-only upstream API key.
+// GatewayProviderCredentials contains a write-only upstream API key or service account key.
 type GatewayProviderCredentials struct {
 	Type  string `json:"type"`
 	Value string `json:"value"`
 }
 
-// GatewayProviderConfig contains credentials and optional Bedrock endpoint selection.
+// GatewayProviderConfig contains credentials and the optional Bedrock, Azure, or Vertex endpoint selection.
 type GatewayProviderConfig struct {
 	Credentials *GatewayProviderCredentials `json:"credentials,omitempty"`
 	API         string                      `json:"api,omitempty"`
 	Region      string                      `json:"region,omitempty"`
+	Endpoint    string                      `json:"endpoint,omitempty"`
 }
 
 // GatewayProviderVendor identifies the upstream vendor and its configuration.
@@ -51,7 +52,7 @@ type GatewayProviderCreate struct {
 	Pricing  GatewayProviderPricing `json:"pricing"`
 }
 
-// GatewayProviderUpdate changes credentials, pricing, or Bedrock endpoint settings.
+// GatewayProviderUpdate changes credentials, pricing, or endpoint settings.
 type GatewayProviderUpdate struct {
 	Provider *GatewayProviderVendor `json:"provider,omitempty"`
 	Pricing  GatewayProviderPricing `json:"pricing"`

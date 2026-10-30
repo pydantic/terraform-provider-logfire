@@ -13,9 +13,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/pydantic/terraform-provider-logfire/internal/client"
 	"github.com/pydantic/terraform-provider-logfire/internal/provider"
@@ -67,22 +69,28 @@ func TestGatewayProviderConfiguration(t *testing.T) {
 		vendor    any
 		api       any
 		region    any
+		endpoint  any
 		wantError bool
 	}{
-		{"fixed vendor", "openai", nil, nil, false},
-		{"bedrock", "bedrock", "runtime", "us-east-1", false},
-		{"missing API", "bedrock", nil, "us-east-1", true},
-		{"missing region", "bedrock", "runtime", nil, true},
-		{"unexpected API", "openai", "runtime", nil, true},
-		{"unexpected region", "openai", nil, "us-east-1", true},
-		{"unknown vendor", tftypes.UnknownValue, nil, nil, false},
-		{"unknown region", "bedrock", "runtime", tftypes.UnknownValue, false},
+		{"fixed vendor", "openai", nil, nil, nil, false},
+		{"bedrock", "bedrock", "runtime", "us-east-1", nil, false},
+		{"missing API", "bedrock", nil, "us-east-1", nil, true},
+		{"missing region", "bedrock", "runtime", nil, nil, true},
+		{"unexpected API", "openai", "runtime", nil, nil, true},
+		{"unexpected region", "openai", nil, "us-east-1", nil, true},
+		{"unknown vendor", tftypes.UnknownValue, nil, nil, nil, false},
+		{"unknown region", "bedrock", "runtime", tftypes.UnknownValue, nil, false},
+		{"azure", "azure", nil, nil, "https://my-resource.openai.azure.com", false},
+		{"google-vertex", "google-vertex", nil, nil, "https://aiplatform.googleapis.com", false},
+		{"missing endpoint", "google-vertex", nil, nil, nil, true},
+		{"unexpected endpoint", "bedrock", "runtime", "us-east-1", "https://aiplatform.googleapis.com", true},
+		{"unknown endpoint", "azure", nil, nil, tftypes.UnknownValue, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			r, s := gatewayResource(t, nil)
 			config := tfsdk.Config{Schema: s, Raw: gatewayValue(t, s, map[string]any{
 				"slug": "primary", "vendor": tt.vendor, "api_key": "synthetic-key",
-				"bedrock_api": tt.api, "bedrock_region": tt.region,
+				"bedrock_api": tt.api, "bedrock_region": tt.region, "endpoint": tt.endpoint,
 			})}
 			var response resource.ValidateConfigResponse
 			r.ValidateConfig(t.Context(), resource.ValidateConfigRequest{Config: config}, &response)
@@ -95,26 +103,46 @@ func TestGatewayProviderConfiguration(t *testing.T) {
 
 func TestGatewayProviderMutationRequests(t *testing.T) {
 	for _, tt := range []struct {
-		name   string
-		create bool
-		vendor string
-		key    string
-		region string
-		want   string
+		name     string
+		create   bool
+		vendor   string
+		key      string
+		region   string
+		endpoint string
+		want     string
 	}{
-		{"create OpenAI", true, "openai", "synthetic-key", "", `{
+		{"create OpenAI", true, "openai", "synthetic-key", "", "", `{
 			"slug":"primary", "provider":{"vendor":"openai",
 			"config":{"credentials":{"type":"api-key","value":"synthetic-key"}}},
 			"pricing":{"required":false}}`},
-		{"create Bedrock", true, "bedrock", "synthetic-key", "us-east-1", `{
+		{"create Bedrock", true, "bedrock", "synthetic-key", "us-east-1", "", `{
 			"slug":"primary", "provider":{"vendor":"bedrock",
 			"config":{"credentials":{"type":"api-key","value":"synthetic-key"},
 			"api":"runtime","region":"us-east-1"}}, "pricing":{"required":false}}`},
-		{"pricing preserves credentials", false, "openai", "synthetic-key", "", `{"pricing":{"required":false}}`},
-		{"credential rotation", false, "openai", "rotated-key", "", `{
+		{"create Azure", true, "azure", "synthetic-key", "", "", `{
+			"slug":"primary", "provider":{"vendor":"azure",
+			"config":{"credentials":{"type":"api-key","value":"synthetic-key"},
+			"endpoint":"https://primary.openai.azure.com"}}, "pricing":{"required":false}}`},
+		{"create Vertex", true, "google-vertex", "{}", "", "", `{
+			"slug":"primary", "provider":{"vendor":"google-vertex",
+			"config":{"credentials":{"type":"service-account-json","value":"{}"},
+			"endpoint":"https://aiplatform.googleapis.com"}}, "pricing":{"required":false}}`},
+		{"pricing preserves credentials", false, "openai", "synthetic-key", "", "", `{"pricing":{"required":false}}`},
+		{"Vertex pricing preserves credentials", false, "google-vertex", "synthetic-key", "", "",
+			`{"pricing":{"required":false}}`},
+		{"credential rotation", false, "openai", "rotated-key", "", "", `{
 			"provider":{"vendor":"openai","config":{"credentials":{"type":"api-key","value":"rotated-key"}}},
 			"pricing":{"required":false}}`},
-		{"Bedrock region preserves credentials", false, "bedrock", "synthetic-key", "eu-west-1", `{
+		{"Vertex credential rotation", false, "google-vertex", "rotated-key", "", "", `{
+			"provider":{"vendor":"google-vertex",
+			"config":{"credentials":{"type":"service-account-json","value":"rotated-key"}}},
+			"pricing":{"required":false}}`},
+		{"endpoint change resends credentials", false, "google-vertex", "synthetic-key", "",
+			"https://europe-west4-aiplatform.googleapis.com", `{
+			"provider":{"vendor":"google-vertex",
+			"config":{"credentials":{"type":"service-account-json","value":"synthetic-key"},
+			"endpoint":"https://europe-west4-aiplatform.googleapis.com"}}, "pricing":{"required":false}}`},
+		{"Bedrock region preserves credentials", false, "bedrock", "synthetic-key", "eu-west-1", "", `{
 			"provider":{"vendor":"bedrock","config":{"region":"eu-west-1"}}, "pricing":{"required":false}}`},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -146,13 +174,21 @@ func TestGatewayProviderMutationRequests(t *testing.T) {
 				"id": "provider-id", "slug": "primary", "vendor": tt.vendor,
 				"api_key": "synthetic-key", "require_pricing": true,
 			}
-			if tt.vendor == "bedrock" {
+			switch tt.vendor {
+			case "bedrock":
 				values["bedrock_api"], values["bedrock_region"] = "runtime", "us-east-1"
+			case "azure":
+				values["endpoint"] = "https://primary.openai.azure.com"
+			case "google-vertex":
+				values["endpoint"] = "https://aiplatform.googleapis.com"
 			}
 			state := tfsdk.State{Schema: s, Raw: gatewayValue(t, s, values)}
 			values["api_key"], values["require_pricing"] = tt.key, false
 			if tt.region != "" {
 				values["bedrock_region"] = tt.region
+			}
+			if tt.endpoint != "" {
+				values["endpoint"] = tt.endpoint
 			}
 			plan := tfsdk.Plan{Schema: s, Raw: gatewayValue(t, s, values)}
 			if tt.create {
@@ -244,10 +280,14 @@ func TestGatewayProviderImportByUUID(t *testing.T) {
 
 type gatewayListTransport struct {
 	body string
+	path string
 }
 
 func (t gatewayListTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if req.Method != http.MethodGet || req.URL.Path != "/api/v1/gateway/providers/" {
+	if t.path == "" {
+		t.path = "/api/v1/gateway/providers/"
+	}
+	if req.Method != http.MethodGet || req.URL.Path != t.path {
 		return nil, fmt.Errorf("unexpected request: %s %s", req.Method, req.URL.Path)
 	}
 	return &http.Response{
@@ -282,5 +322,29 @@ func TestGatewayProviderImportBySlugNotFound(t *testing.T) {
 	r.ImportState(t.Context(), resource.ImportStateRequest{ID: "missing-slug"}, &response)
 	if !response.Diagnostics.HasError() {
 		t.Fatal("expected an import error for an unknown slug")
+	}
+}
+
+func TestGatewayProviderReadEndpoint(t *testing.T) {
+	for _, vendor := range []string{"azure", "google-vertex"} {
+		t.Run(vendor, func(t *testing.T) {
+			body := `{"id":"provider-id","slug":"primary","provider":{"vendor":"` + vendor +
+				`","config":{"endpoint":"https://aiplatform.googleapis.com"}},` +
+				`"pricing":{"required":true},"created_at":"2026-01-01T00:00:00Z"}`
+			r, s := gatewayResource(t, gatewayListTransport{body: body, path: "/api/v1/gateway/providers/provider-id/"})
+			values := map[string]any{"id": "provider-id", "api_key": "synthetic-key"}
+			state := tfsdk.State{Schema: s, Raw: gatewayValue(t, s, values)}
+			response := resource.ReadResponse{State: state}
+			r.Read(t.Context(), resource.ReadRequest{State: state}, &response)
+			if response.Diagnostics.HasError() {
+				t.Fatal(response.Diagnostics)
+			}
+			var endpoint, apiKey types.String
+			response.State.GetAttribute(t.Context(), path.Root("endpoint"), &endpoint)
+			response.State.GetAttribute(t.Context(), path.Root("api_key"), &apiKey)
+			if endpoint.ValueString() != "https://aiplatform.googleapis.com" || apiKey.ValueString() != "synthetic-key" {
+				t.Fatalf("endpoint = %v, api_key = %v", endpoint, apiKey)
+			}
+		})
 	}
 }

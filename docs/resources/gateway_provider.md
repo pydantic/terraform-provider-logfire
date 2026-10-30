@@ -3,12 +3,12 @@
 page_title: "logfire_gateway_provider Resource - logfire"
 subcategory: ""
 description: |-
-  Manages an organization-owned AI Gateway provider. Requires Growth, Enterprise Cloud, or self-hosted and a token with organization:read and organization:write scopes. Built-in providers and custom upstream URLs are not supported. Import accepts the provider UUID or its organization-unique slug.
+  Manages an organization-owned AI Gateway provider. Requires Growth, Enterprise Cloud, or self-hosted and a token with organization:read and organization:write scopes. Built-in providers and arbitrary upstream URLs are not supported. Import accepts the provider UUID or its organization-unique slug.
 ---
 
 # logfire_gateway_provider (Resource)
 
-Manages an organization-owned AI Gateway provider. Requires Growth, Enterprise Cloud, or self-hosted and a token with organization:read and organization:write scopes. Built-in providers and custom upstream URLs are not supported. Import accepts the provider UUID or its organization-unique slug.
+Manages an organization-owned AI Gateway provider. Requires Growth, Enterprise Cloud, or self-hosted and a token with organization:read and organization:write scopes. Built-in providers and arbitrary upstream URLs are not supported. Import accepts the provider UUID or its organization-unique slug.
 
 ## Example Usage
 
@@ -19,6 +19,11 @@ variable "openai_api_key" {
 }
 
 variable "bedrock_api_key" {
+  type      = string
+  sensitive = true
+}
+
+variable "azure_api_key" {
   type      = string
   sensitive = true
 }
@@ -37,17 +42,37 @@ resource "logfire_gateway_provider" "bedrock" {
   bedrock_region  = "us-east-1"
   require_pricing = false
 }
+
+resource "logfire_gateway_provider" "azure" {
+  slug     = "primary-azure"
+  vendor   = "azure"
+  api_key  = var.azure_api_key
+  endpoint = "https://my-resource.openai.azure.com"
+}
+
+resource "logfire_gateway_provider" "vertex" {
+  slug     = "primary-vertex"
+  vendor   = "google-vertex"
+  api_key  = file("vertex-service-account.json")
+  endpoint = "https://us-central1-aiplatform.googleapis.com"
+}
 ```
 
 ## Credentials and rotation
 
-You supply the upstream provider key through `api_key`. The Logfire provider's
+You supply the upstream provider key through `api_key`. For `google-vertex`,
+`api_key` holds the service account key JSON, for example
+`file("vertex-service-account.json")`. The Logfire provider's
 own `api_key` authenticates management requests and belongs to the organization
 that owns these resources.
 
 Changing the resource's `api_key` rotates its credential in place. Keep the
 previous key valid until the apply succeeds. Changing only `require_pricing`
 or Bedrock settings does not resend the key.
+
+An `endpoint` change always resends the configured `api_key`. The API requires
+credentials with every endpoint change, so a stored key never moves to a new
+endpoint without the operator supplying it.
 
 The API never returns credentials. Terraform retains the configured key in
 state, even though it hides sensitive values from normal output. Use an
@@ -64,10 +89,20 @@ confirm the refresh. A conflicting slug is never adopted automatically.
 
 ## Supported configuration
 
-You can manage OpenAI, Anthropic, Bedrock, Doubleword, Groq, Hugging Face, and
-Mistral providers through this resource. Bedrock uses an API key, an API variant,
-and a region; it does not accept AWS access-key pairs or service-account JSON.
-Fixed-vendor endpoints are selected by Logfire. Existing providers with custom
+You can manage OpenAI, Anthropic, Azure, Bedrock, Doubleword, Google Vertex,
+Groq, Hugging Face, and Mistral providers through this resource.
+
+| Vendor | Credential | Endpoint settings |
+| --- | --- | --- |
+| `azure` | API key | `endpoint`, an Azure resource endpoint such as `https://<resource>.openai.azure.com` |
+| `bedrock` | API key | `bedrock_api` and `bedrock_region` |
+| `google-vertex` | Service account key JSON | `endpoint`, such as `https://aiplatform.googleapis.com` or `https://<region>-aiplatform.googleapis.com` |
+| Other vendors | API key | None. Logfire selects the endpoint. |
+
+Bedrock does not accept AWS access-key pairs, and Azure does not accept service
+principal JSON. Logfire validates each endpoint against the vendor's allowed
+hosts, unless your organization has custom base URLs. With that entitlement,
+Logfire keeps any public HTTPS endpoint. Existing providers with custom
 endpoints may be outside this public API's supported configuration.
 
 This resource manages the upstream provider's lifecycle. It does not configure
@@ -78,14 +113,15 @@ Gateway Endpoint routing or memberships.
 
 ### Required
 
-- `api_key` (String, Sensitive) Upstream API key. Changing it rotates the credential in place. Logfire never returns this value; Terraform retains it in state. External credential changes cannot be detected. After import, the next apply sets the configured key.
+- `api_key` (String, Sensitive) Upstream API key. For google-vertex, the service account key JSON. Changing it rotates the credential in place. Logfire never returns this value; Terraform retains it in state. External credential changes cannot be detected. After import, the next apply sets the configured key.
 - `slug` (String) Organization-unique provider slug. Changing it replaces the provider.
-- `vendor` (String) Upstream vendor: openai, anthropic, bedrock, doubleword, groq, huggingface, or mistral. Changing it replaces the provider.
+- `vendor` (String) Upstream vendor: openai, anthropic, azure, bedrock, doubleword, google-vertex, groq, huggingface, or mistral. Changing it replaces the provider.
 
 ### Optional
 
 - `bedrock_api` (String) Bedrock API variant: runtime or mantle. Required only for bedrock; can be updated in place.
 - `bedrock_region` (String) AWS region used to derive the Bedrock endpoint, for example us-east-1. Required only for bedrock; can be updated in place.
+- `endpoint` (String) Upstream endpoint URL, for example https://my-resource.openai.azure.com or https://us-central1-aiplatform.googleapis.com. Required only for azure and google-vertex; can be updated in place.
 - `require_pricing` (Boolean) Require known model pricing before forwarding requests. Defaults to true.
 
 ### Read-Only
