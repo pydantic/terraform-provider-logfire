@@ -60,7 +60,7 @@ func (c *APIClient) CreateGatewayEndpoint(ctx context.Context, in GatewayEndpoin
 		disableAutomaticRetries(ctx), http.MethodPost, "/api/v1/gateway/endpoints/", in, &out, http.StatusCreated,
 	)
 	if err != nil {
-		return nil, err
+		return nil, gatewayEndpointsUnavailableError(http.MethodPost, err)
 	}
 	return &out, nil
 }
@@ -80,7 +80,7 @@ func (c *APIClient) FindGatewayEndpointBySlug(ctx context.Context, slug string) 
 	var page GatewayEndpointsPage
 	_, err := c.doJSON(ctx, http.MethodGet, "/api/v1/gateway/endpoints/?"+query.Encode(), nil, &page, http.StatusOK)
 	if err != nil {
-		return nil, err
+		return nil, gatewayEndpointsUnavailableError(http.MethodGet, err)
 	}
 	if len(page.Endpoints) == 0 {
 		return nil, &APIError{
@@ -121,4 +121,19 @@ func (c *APIClient) ReplaceGatewayEndpointProviders(
 func (c *APIClient) DeleteGatewayEndpoint(ctx context.Context, id string) error {
 	_, err := c.doJSON(ctx, http.MethodDelete, gatewayEndpointPath(id), nil, nil, http.StatusNoContent)
 	return err
+}
+
+// gatewayEndpointsUnavailableError translates a 404 from the endpoint collection
+// route into an upgrade hint. That route has no 404 of its own, so a 404 means
+// the instance predates the Gateway endpoints API.
+func gatewayEndpointsUnavailableError(method string, err error) error {
+	if !IsNotFoundError(err) {
+		return err
+	}
+	return &EndpointUnavailableError{
+		Method:         method,
+		Path:           "/api/v1/gateway/endpoints/",
+		MinimumRelease: "v2026-10-29.02",
+		BackendVersion: BackendVersionFromError(err),
+	}
 }
