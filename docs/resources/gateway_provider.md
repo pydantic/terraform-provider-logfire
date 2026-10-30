@@ -101,7 +101,8 @@ Groq, Hugging Face, and Mistral providers through this resource.
 
 Bedrock does not accept AWS access-key pairs, and Azure does not accept service
 principal JSON. Logfire validates each endpoint against the vendor's allowed
-hosts. Existing providers with custom
+hosts, unless your organization has custom base URLs. With that entitlement,
+Logfire keeps any public HTTPS endpoint. Existing providers with custom
 endpoints may be outside this public API's supported configuration.
 
 This resource manages the upstream provider's lifecycle. It does not configure
