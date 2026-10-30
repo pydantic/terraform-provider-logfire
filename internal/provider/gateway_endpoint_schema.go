@@ -7,6 +7,7 @@ import (
 	"context"
 	"math"
 	"regexp"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/setvalidator"
@@ -52,11 +53,7 @@ func (r *GatewayEndpointResource) Schema(
 			"description": schema.StringAttribute{
 				Optional:            true,
 				MarkdownDescription: "Endpoint description.",
-				Validators: []validator.String{
-					stringvalidator.LengthAtMost(1000),
-					stringvalidator.RegexMatches(regexp.MustCompile(`^(?s:\S(.*\S)?)?$`),
-						"must not start or end with whitespace, because Logfire trims it"),
-				},
+				Validators:          []validator.String{stringvalidator.LengthAtMost(1000)},
 			},
 			"providers": schema.SetNestedAttribute{
 				Required: true,
@@ -99,10 +96,16 @@ func (r *GatewayEndpointResource) Schema(
 	}
 }
 
-// ValidateConfig checks the provider rules the API enforces on the whole set.
+// ValidateConfig checks the description and the provider rules the API enforces on the whole set.
 func (r *GatewayEndpointResource) ValidateConfig(
 	ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse,
 ) {
+	var description types.String
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("description"), &description)...)
+	if v := description.ValueString(); strings.TrimSpace(v) != v {
+		resp.Diagnostics.AddAttributeError(path.Root("description"), "Invalid description",
+			"description must not start or end with whitespace, because Logfire trims it.")
+	}
 	var set types.Set
 	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("providers"), &set)...)
 	if resp.Diagnostics.HasError() || set.IsNull() || set.IsUnknown() {

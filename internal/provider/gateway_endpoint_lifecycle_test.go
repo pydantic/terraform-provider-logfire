@@ -179,6 +179,7 @@ func TestLifecycleGatewayEndpointValidation(t *testing.T) {
 		providers("{ " + openAI + ", priority = -1 }"):                                  "between 0 and 2147483647",
 		providers("{ " + openAI + ", priority = 1 }, { " + openAI + " }"):               "Duplicate provider",
 		"description = \"Primary\\n\"\n" + providers("{ "+openAI+" }"):                  "must not start or end with whitespace",
+		"description = \"Primary\\u00a0\"\n" + providers("{ "+openAI+" }"):              "must not start or end with whitespace",
 	} {
 		steps = append(steps, resource.TestStep{Config: config(body), PlanOnly: true, ExpectError: regexp.MustCompile(message)})
 	}
