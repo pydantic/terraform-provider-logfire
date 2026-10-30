@@ -148,6 +148,46 @@ func TestListAPIKeysMissingRouteHint(t *testing.T) {
 	}
 }
 
+func TestGatewayEndpointsMissingRouteHint(t *testing.T) {
+	t.Parallel()
+	c, err := NewAPIClient("https://example.invalid", "test-token", &http.Client{
+		Transport: versionedStubTransport{
+			status:  http.StatusNotFound,
+			body:    `{"detail":"Not Found"}`,
+			version: "v2026-10-29.01",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, createErr := c.CreateGatewayEndpoint(context.Background(), GatewayEndpointCreate{Slug: "default"})
+	_, findErr := c.FindGatewayEndpointBySlug(context.Background(), "default")
+	for _, err := range []error{createErr, findErr} {
+		var unavailable *EndpointUnavailableError
+		if !errors.As(err, &unavailable) {
+			t.Fatalf("expected EndpointUnavailableError, got %v", err)
+		}
+		for _, want := range []string{"v2026-10-29.02", "/api/v1/gateway/endpoints/", "reports version v2026-10-29.01"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("error %q does not mention %q", err, want)
+			}
+		}
+	}
+}
+
+func TestGetGatewayEndpointKeepsItemNotFound(t *testing.T) {
+	t.Parallel()
+	c, err := NewAPIClient("https://example.invalid", "test-token", &http.Client{
+		Transport: versionedStubTransport{status: http.StatusNotFound, body: `{"detail":"Endpoint not found."}`},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.GetGatewayEndpoint(context.Background(), "missing"); !IsNotFoundError(err) {
+		t.Fatalf("an item 404 must stay a not-found error so a deleted endpoint leaves state, got %v", err)
+	}
+}
+
 func TestCreateScheduleMissingRouteHint(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

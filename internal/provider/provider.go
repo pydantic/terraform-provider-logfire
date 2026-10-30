@@ -303,6 +303,7 @@ func (p *LogfireProvider) Resources(ctx context.Context) []func() resource.Resou
 		NewFrontendApplicationResource,
 		NewFrontendApplicationTokenResource,
 		NewGatewayAPIKeyResource,
+		NewGatewayEndpointResource,
 		NewGatewayProviderResource,
 		NewOrganizationResource,
 		NewProjectResource,
