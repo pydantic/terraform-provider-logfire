@@ -63,7 +63,7 @@ jobs:
     name: Terraform Provider Acceptance Tests
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       max-parallel: 1
       fail-fast: false
@@ -106,7 +106,7 @@ jobs:
           LOGFIRE_SCOPED_API_KEY: ${{ secrets.LOGFIRE_SCOPED_API_KEY }}
           LOGFIRE_API_KEY_TEST_PROJECT_ID: "e9731857-2b0f-4731-b21d-bbe39cb8540b"
         run: go test -v -cover ./internal/provider/
-        timeout-minutes: 10
+        timeout-minutes: 15
       - name: Skip acceptance tests
         if: steps.check-secrets.outputs.skip_tests == 'true'
         run: echo "Skipping acceptance tests - LOGFIRE_API_KEY secret not available"

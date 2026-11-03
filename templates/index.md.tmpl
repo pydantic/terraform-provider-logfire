@@ -50,6 +50,7 @@ Self-hosted Logfire instances expose APIs as they are released, so a feature the
 | `logfire_organization` create and list, organization import | v2026-06-03.01 | - |
 | `logfire_organization` read, update, delete (including setting `billing_email` at creation) | v2026-06-25.01 | - |
 | `logfire_gateway_provider` | v2026-08-12.01 | logfire-0.13.40 or newer |
+| `logfire_gateway_spending_limits`, `logfire_gateway_project_spending_limits` | v2026-10-16.01 | - |
 | Delegating project-bound scopes (`project:gateway_proxy`, `project:read_otlp`, `project:write_otlp`) from an organization-wide key | v2026-09-14.01 | logfire-0.13.46 or newer |
 | `logfire_schedule`, and `alerts` on `logfire_slo` | v2026-09-23.01 | logfire-0.13.47 or newer |
 | `logfire_gateway_provider` with the `azure` vendor | v2026-10-19.01 | - |
@@ -76,6 +77,8 @@ Each resource states the scopes its calls need. The summary below is the single 
 | `logfire_gateway_api_key` | `organization:create_api_key`, `organization:read_api_key`, `organization:write_api_key`, and `project:gateway_proxy` | An organization-wide key holding `organization:create_api_key` and `project:gateway_proxy` (delegation only, v2026-09-14.01+), or a project-scoped key for the project |
 | `logfire_gateway_provider` | `organization:read` / `organization:write` | Organization-wide key |
 | `logfire_gateway_endpoint` | `organization:read_gateway` / `organization:write_gateway` (`organization:read` / `organization:write` are also accepted) | Organization-wide key |
+| `logfire_gateway_spending_limits` | `organization:read_gateway` / `organization:write_gateway` (`organization:read` / `organization:write` are also accepted) | Organization-wide key |
+| `logfire_gateway_project_spending_limits` | `organization:read_gateway` / `organization:write_gateway` (`organization:read` / `organization:write` are also accepted) | A key that can reach the project |
 | `logfire_organization` | `organization:admin` | A key created in the admin-panel organization (self-hosted only) |
 
 Two rules decide what a credential can do:
