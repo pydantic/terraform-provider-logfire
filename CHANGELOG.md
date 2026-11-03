@@ -1,6 +1,6 @@
 ## Unreleased
 
-## 0.3.0
+## 0.2.4
 
 FEATURES:
 - `logfire_gateway_spending_limits` and `logfire_gateway_project_spending_limits` manage the daily, weekly, and monthly AI Gateway spending limits of the organization and of a project. The resources own all three windows, so a window you omit has no limit, and destroy removes every limit. Needs Logfire v2026-10-16.01 or newer.
