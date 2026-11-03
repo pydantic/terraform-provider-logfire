@@ -1,5 +1,7 @@
 ## Unreleased
 
+## 0.3.0
+
 FEATURES:
 - `logfire_gateway_spending_limits` and `logfire_gateway_project_spending_limits` manage the daily, weekly, and monthly AI Gateway spending limits of the organization and of a project. The resources own all three windows, so a window you omit has no limit, and destroy removes every limit. Needs Logfire v2026-10-16.01 or newer.
 - `logfire_gateway_endpoint` manages an AI Gateway endpoint and the complete set of providers it routes to, with priority, weight, and active settings per provider. Import accepts the endpoint slug or UUID. Needs Logfire v2026-10-29.02 or newer.
