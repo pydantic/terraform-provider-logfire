@@ -69,8 +69,9 @@ func (c *APIClient) SetGatewayProjectSpendingLimits(
 }
 
 // GatewayProjectSpendingLimitsUnavailableError translates a 404 into an upgrade
-// hint. The caller must first confirm that the project exists, because the
-// project route also returns 404 for an unknown project.
+// hint. Supported releases answer an unknown or inaccessible project with 403, so
+// a 404 means the route is missing. The caller must still confirm that the project
+// exists, because the error would otherwise blame the release for a deleted project.
 func GatewayProjectSpendingLimitsUnavailableError(method string, err error) error {
 	if !IsNotFoundError(err) {
 		return err

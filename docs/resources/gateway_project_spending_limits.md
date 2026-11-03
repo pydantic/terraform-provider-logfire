@@ -3,12 +3,12 @@
 page_title: "logfire_gateway_project_spending_limits Resource - logfire"
 subcategory: ""
 description: |-
-  Manages the AI Gateway spending limits of one project. When the project goes over a limit, the Gateway blocks every credential in the project until the window resets. Requires a plan that includes the AI Gateway and a token with organization:read_gateway and organization:write_gateway scopes (organization:read and organization:write are also accepted). The resource manages all three windows. Destroying it removes every limit of the project. The API returns the same access error for a deleted project and an inaccessible project. Terraform preserves the resource in state when it receives this error. Import accepts the project UUID.
+  Manages the AI Gateway spending limits of one project. When the project goes over a limit, the Gateway blocks every credential in the project until the window resets. Requires a plan that includes the AI Gateway and a token with organization:read_gateway and organization:write_gateway scopes (organization:read and organization:write are also accepted).
 ---
 
 # logfire_gateway_project_spending_limits (Resource)
 
-Manages the AI Gateway spending limits of one project. When the project goes over a limit, the Gateway blocks every credential in the project until the window resets. Requires a plan that includes the AI Gateway and a token with organization:read_gateway and organization:write_gateway scopes (organization:read and organization:write are also accepted). The resource manages all three windows. Destroying it removes every limit of the project. The API returns the same access error for a deleted project and an inaccessible project. Terraform preserves the resource in state when it receives this error. Import accepts the project UUID.
+Manages the AI Gateway spending limits of one project. When the project goes over a limit, the Gateway blocks every credential in the project until the window resets. Requires a plan that includes the AI Gateway and a token with `organization:read_gateway` and `organization:write_gateway` scopes (`organization:read` and `organization:write` are also accepted).
 
 ## Example Usage
 
@@ -18,6 +18,34 @@ resource "logfire_gateway_project_spending_limits" "example" {
   project_id  = logfire_project.example.id
   weekly_usd  = 200
   monthly_usd = 1000
+}
+```
+
+## Ownership
+
+The resource owns all three windows. A window you omit has no limit, and
+destroying the resource removes every limit of the project.
+
+Creating the resource replaces any limits set in the Logfire UI. To keep them,
+import the resource first and copy the imported values into your configuration.
+
+## Deleted or inaccessible projects
+
+The API answers a deleted project and a project the token cannot reach with the
+same access error. Terraform keeps the resource in state and reports the error on
+refresh and on destroy. When access returns, the next plan recovers without a
+change.
+
+If the project was deleted, destroy cannot clear its limits. Remove the resource
+from state instead, with a `removed` block or `terraform state rm`:
+
+```terraform
+removed {
+  from = logfire_gateway_project_spending_limits.example
+
+  lifecycle {
+    destroy = false
+  }
 }
 ```
 
@@ -40,9 +68,16 @@ resource "logfire_gateway_project_spending_limits" "example" {
 
 ## Import
 
-Import is supported using the following syntax:
+Import the limits of a project by the lowercase project UUID:
 
-The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
+```terraform
+import {
+  to = logfire_gateway_project_spending_limits.example
+  id = "018f45c0-3cab-7b2f-a8f7-8a0b55a7ed00"
+}
+```
+
+Or use the command line:
 
 ```shell
 # Import the spending limits of a project by the project UUID.

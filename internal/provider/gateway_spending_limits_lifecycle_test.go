@@ -27,7 +27,6 @@ type spendingLimitsAPI struct {
 	sync.Mutex
 	limits        map[string]logclient.GatewaySpendingLimits
 	requests      map[string]int
-	projectExists bool
 	projectDenied bool
 	routesMissing bool
 }
@@ -36,9 +35,8 @@ type spendingLimitsAPI struct {
 func newSpendingLimitsAPI(t *testing.T) (*httptest.Server, *spendingLimitsAPI) {
 	t.Helper()
 	api := &spendingLimitsAPI{
-		limits:        map[string]logclient.GatewaySpendingLimits{},
-		requests:      map[string]int{},
-		projectExists: true,
+		limits:   map[string]logclient.GatewaySpendingLimits{},
+		requests: map[string]int{},
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		api.Lock()
@@ -51,7 +49,7 @@ func newSpendingLimitsAPI(t *testing.T) (*httptest.Server, *spendingLimitsAPI) {
 		route := r.Method + " " + r.URL.Path
 		api.requests[route]++
 		if r.URL.Path == "/api/v1/projects/"+spendingLimitsProjectID+"/" && r.Method == http.MethodGet {
-			if !api.projectExists || api.projectDenied {
+			if api.projectDenied {
 				w.WriteHeader(http.StatusForbidden)
 				_, _ = w.Write([]byte(`{"detail":"You do not have permission to access this project"}`))
 				return
@@ -69,7 +67,7 @@ func newSpendingLimitsAPI(t *testing.T) (*httptest.Server, *spendingLimitsAPI) {
 			_, _ = w.Write([]byte(`{"detail":"Not Found"}`))
 			return
 		}
-		if r.URL.Path == spendingLimitsProjectURL && (!api.projectExists || api.projectDenied) {
+		if r.URL.Path == spendingLimitsProjectURL && api.projectDenied {
 			w.WriteHeader(http.StatusForbidden)
 			_, _ = w.Write([]byte(`{"detail":"You do not have permission to access this project"}`))
 			return
@@ -192,50 +190,45 @@ func TestLifecycleGatewayProjectSpendingLimits(t *testing.T) {
 	}
 }
 
+// The API answers a deleted project and an inaccessible project with the same 403,
+// so one case covers both. Refresh keeps the state and recovers without a write.
 func TestLifecycleGatewayProjectSpendingLimitsProjectUnavailable(t *testing.T) {
 	t.Parallel()
-	for _, reason := range []string{"deleted", "access_revoked"} {
-		t.Run(reason, func(t *testing.T) {
-			t.Parallel()
-			server, api := newSpendingLimitsAPI(t)
-			config := lifecycleConfig(server.URL, "gateway_project_spending_limits",
-				"project_id = \""+spendingLimitsProjectID+"\"\nmonthly_usd = 10")
-			resource.Test(t, resource.TestCase{
-				IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-				Steps: []resource.TestStep{
-					{Config: config},
-					{
-						PreConfig: func() {
-							api.Lock()
-							defer api.Unlock()
-							api.projectExists = reason != "deleted"
-							api.projectDenied = reason == "access_revoked"
-						},
-						Config:      config,
-						PlanOnly:    true,
-						ExpectError: regexp.MustCompile(`You do not have permission to access this\s+project`),
-					},
-					{
-						PreConfig: func() {
-							api.Lock()
-							defer api.Unlock()
-							api.projectExists = true
-							api.projectDenied = false
-						},
-						Config: config,
-						ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
-							plancheck.ExpectResourceAction("logfire_gateway_project_spending_limits.test", plancheck.ResourceActionNoop),
-						}},
-						Check: resource.TestCheckResourceAttr("logfire_gateway_project_spending_limits.test", "monthly_usd", "10"),
-					},
+	server, api := newSpendingLimitsAPI(t)
+	config := lifecycleConfig(server.URL, "gateway_project_spending_limits",
+		"project_id = \""+spendingLimitsProjectID+"\"\nmonthly_usd = 10")
+	resource.Test(t, resource.TestCase{
+		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: config},
+			{
+				PreConfig: func() {
+					api.Lock()
+					defer api.Unlock()
+					api.projectDenied = true
 				},
-			})
-			api.Lock()
-			defer api.Unlock()
-			if got := api.requests["PATCH "+spendingLimitsProjectURL]; got != 2 {
-				t.Errorf("PATCH requests = %d, want 2 (create and destroy)", got)
-			}
-		})
+				Config:      config,
+				PlanOnly:    true,
+				ExpectError: regexp.MustCompile(`You do not have permission to access this\s+project`),
+			},
+			{
+				PreConfig: func() {
+					api.Lock()
+					defer api.Unlock()
+					api.projectDenied = false
+				},
+				Config: config,
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
+					plancheck.ExpectResourceAction("logfire_gateway_project_spending_limits.test", plancheck.ResourceActionNoop),
+				}},
+				Check: resource.TestCheckResourceAttr("logfire_gateway_project_spending_limits.test", "monthly_usd", "10"),
+			},
+		},
+	})
+	api.Lock()
+	defer api.Unlock()
+	if got := api.requests["PATCH "+spendingLimitsProjectURL]; got != 2 {
+		t.Errorf("PATCH requests = %d, want 2 (create and destroy)", got)
 	}
 }
 
@@ -270,21 +263,25 @@ func TestLifecycleGatewaySpendingLimitsValidation(t *testing.T) {
 			ExpectError: regexp.MustCompile(message),
 		})
 	}
-	steps = append(steps, resource.TestStep{
-		Config:      lifecycleConfig("http://127.0.0.1:1", "gateway_project_spending_limits", `project_id = "demo"`),
-		PlanOnly:    true,
-		ExpectError: regexp.MustCompile("must be a project UUID"),
-	})
+	for _, projectID := range []string{"demo", strings.ToUpper(spendingLimitsProjectID)} {
+		steps = append(steps, resource.TestStep{
+			Config:      lifecycleConfig("http://127.0.0.1:1", "gateway_project_spending_limits", `project_id = "`+projectID+`"`),
+			PlanOnly:    true,
+			ExpectError: regexp.MustCompile("must be a lowercase project UUID"),
+		})
+	}
 	resource.Test(t, resource.TestCase{IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories, Steps: steps})
 }
 
 func TestGatewaySpendingLimitsImportRejectsOtherIDs(t *testing.T) {
 	t.Parallel()
 	server, _ := newSpendingLimitsAPI(t)
-	for kind, id := range map[string]string{
-		"gateway_spending_limits":         "org-123",
-		"gateway_project_spending_limits": "demo",
+	for _, tc := range []struct{ kind, id string }{
+		{"gateway_spending_limits", "org-123"},
+		{"gateway_project_spending_limits", "demo"},
+		{"gateway_project_spending_limits", strings.ToUpper(spendingLimitsProjectID)},
 	} {
+		kind, id := tc.kind, tc.id
 		body := "daily_usd = 1"
 		if strings.Contains(kind, "project") {
 			body = "project_id = \"" + spendingLimitsProjectID + "\"\n" + body
