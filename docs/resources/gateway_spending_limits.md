@@ -3,12 +3,12 @@
 page_title: "logfire_gateway_spending_limits Resource - logfire"
 subcategory: ""
 description: |-
-  Manages the AI Gateway spending limits of the organization. An organization limit caps the Gateway spend of every project and credential in the organization. Requires Growth, Enterprise Cloud, or self-hosted and a token with organization:read_gateway and organization:write_gateway scopes (organization:read and organization:write are also accepted). Declare at most one of this resource for each organization. The resource manages all three windows. Destroying it removes every organization limit. Import accepts organization.
+  Manages the AI Gateway spending limits of the organization. An organization limit caps the Gateway spend of every project and credential in the organization. Requires a plan that includes the AI Gateway and a token with organization:read_gateway and organization:write_gateway scopes (organization:read and organization:write are also accepted). Declare at most one of this resource for each organization. The resource manages all three windows. Destroying it removes every organization limit. Import accepts organization.
 ---
 
 # logfire_gateway_spending_limits (Resource)
 
-Manages the AI Gateway spending limits of the organization. An organization limit caps the Gateway spend of every project and credential in the organization. Requires Growth, Enterprise Cloud, or self-hosted and a token with organization:read_gateway and organization:write_gateway scopes (organization:read and organization:write are also accepted). Declare at most one of this resource for each organization. The resource manages all three windows. Destroying it removes every organization limit. Import accepts `organization`.
+Manages the AI Gateway spending limits of the organization. An organization limit caps the Gateway spend of every project and credential in the organization. Requires a plan that includes the AI Gateway and a token with organization:read_gateway and organization:write_gateway scopes (organization:read and organization:write are also accepted). Declare at most one of this resource for each organization. The resource manages all three windows. Destroying it removes every organization limit. Import accepts `organization`.
 
 ## Example Usage
 

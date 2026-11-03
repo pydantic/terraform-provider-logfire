@@ -99,7 +99,7 @@ func (r *GatewaySpendingLimitsResource) Schema(
 		"weekly_usd":  window("weekly", "A week starts on Monday at 00:00 UTC."),
 		"monthly_usd": window("monthly", "A month starts on the 1st at 00:00 UTC."),
 	}
-	scopes := "Requires Growth, Enterprise Cloud, or self-hosted and a token with " +
+	scopes := "Requires a plan that includes the AI Gateway and a token with " +
 		"organization:read_gateway and organization:write_gateway scopes " +
 		"(organization:read and organization:write are also accepted). "
 	if r.project {
@@ -121,6 +121,8 @@ func (r *GatewaySpendingLimitsResource) Schema(
 				"When the project goes over a limit, the Gateway blocks every credential in the project " +
 				"until the window resets. " + scopes +
 				"The resource manages all three windows. Destroying it removes every limit of the project. " +
+				"The API returns the same access error for a deleted project and an inaccessible project. " +
+				"Terraform preserves the resource in state when it receives this error. " +
 				"Import accepts the project UUID.",
 			Attributes: attributes,
 		}

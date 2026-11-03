@@ -3,12 +3,12 @@
 page_title: "logfire_gateway_project_spending_limits Resource - logfire"
 subcategory: ""
 description: |-
-  Manages the AI Gateway spending limits of one project. When the project goes over a limit, the Gateway blocks every credential in the project until the window resets. Requires Growth, Enterprise Cloud, or self-hosted and a token with organization:read_gateway and organization:write_gateway scopes (organization:read and organization:write are also accepted). The resource manages all three windows. Destroying it removes every limit of the project. Import accepts the project UUID.
+  Manages the AI Gateway spending limits of one project. When the project goes over a limit, the Gateway blocks every credential in the project until the window resets. Requires a plan that includes the AI Gateway and a token with organization:read_gateway and organization:write_gateway scopes (organization:read and organization:write are also accepted). The resource manages all three windows. Destroying it removes every limit of the project. The API returns the same access error for a deleted project and an inaccessible project. Terraform preserves the resource in state when it receives this error. Import accepts the project UUID.
 ---
 
 # logfire_gateway_project_spending_limits (Resource)
 
-Manages the AI Gateway spending limits of one project. When the project goes over a limit, the Gateway blocks every credential in the project until the window resets. Requires Growth, Enterprise Cloud, or self-hosted and a token with organization:read_gateway and organization:write_gateway scopes (organization:read and organization:write are also accepted). The resource manages all three windows. Destroying it removes every limit of the project. Import accepts the project UUID.
+Manages the AI Gateway spending limits of one project. When the project goes over a limit, the Gateway blocks every credential in the project until the window resets. Requires a plan that includes the AI Gateway and a token with organization:read_gateway and organization:write_gateway scopes (organization:read and organization:write are also accepted). The resource manages all three windows. Destroying it removes every limit of the project. The API returns the same access error for a deleted project and an inaccessible project. Terraform preserves the resource in state when it receives this error. Import accepts the project UUID.
 
 ## Example Usage
 

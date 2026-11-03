@@ -28,6 +28,7 @@ type spendingLimitsAPI struct {
 	limits        map[string]logclient.GatewaySpendingLimits
 	requests      map[string]int
 	projectExists bool
+	projectDenied bool
 	routesMissing bool
 }
 
@@ -50,9 +51,9 @@ func newSpendingLimitsAPI(t *testing.T) (*httptest.Server, *spendingLimitsAPI) {
 		route := r.Method + " " + r.URL.Path
 		api.requests[route]++
 		if r.URL.Path == "/api/v1/projects/"+spendingLimitsProjectID+"/" && r.Method == http.MethodGet {
-			if !api.projectExists {
-				w.WriteHeader(http.StatusNotFound)
-				_, _ = w.Write([]byte(`{"detail":"Project not found."}`))
+			if !api.projectExists || api.projectDenied {
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(`{"detail":"You do not have permission to access this project"}`))
 				return
 			}
 			_, _ = w.Write([]byte(`{"id":"` + spendingLimitsProjectID + `","project_name":"demo","visibility":"private"}`))
@@ -63,9 +64,14 @@ func newSpendingLimitsAPI(t *testing.T) (*httptest.Server, *spendingLimitsAPI) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		if api.routesMissing || (r.URL.Path == spendingLimitsProjectURL && !api.projectExists) {
+		if api.routesMissing {
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"detail":"Not Found"}`))
+			return
+		}
+		if r.URL.Path == spendingLimitsProjectURL && (!api.projectExists || api.projectDenied) {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"detail":"You do not have permission to access this project"}`))
 			return
 		}
 		limits := api.limits[r.URL.Path]
@@ -186,28 +192,51 @@ func TestLifecycleGatewayProjectSpendingLimits(t *testing.T) {
 	}
 }
 
-func TestLifecycleGatewayProjectSpendingLimitsProjectDeleted(t *testing.T) {
+func TestLifecycleGatewayProjectSpendingLimitsProjectUnavailable(t *testing.T) {
 	t.Parallel()
-	server, api := newSpendingLimitsAPI(t)
-	config := lifecycleConfig(server.URL, "gateway_project_spending_limits",
-		"project_id = \""+spendingLimitsProjectID+"\"\nmonthly_usd = 10")
-	resource.Test(t, resource.TestCase{
-		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{Config: config},
-			{
-				// A deleted project removes the resource from state, so the plan creates it again.
-				PreConfig: func() {
-					api.Lock()
-					defer api.Unlock()
-					api.projectExists = false
+	for _, reason := range []string{"deleted", "access_revoked"} {
+		t.Run(reason, func(t *testing.T) {
+			t.Parallel()
+			server, api := newSpendingLimitsAPI(t)
+			config := lifecycleConfig(server.URL, "gateway_project_spending_limits",
+				"project_id = \""+spendingLimitsProjectID+"\"\nmonthly_usd = 10")
+			resource.Test(t, resource.TestCase{
+				IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+				Steps: []resource.TestStep{
+					{Config: config},
+					{
+						PreConfig: func() {
+							api.Lock()
+							defer api.Unlock()
+							api.projectExists = reason != "deleted"
+							api.projectDenied = reason == "access_revoked"
+						},
+						Config:      config,
+						PlanOnly:    true,
+						ExpectError: regexp.MustCompile(`You do not have permission to access this\s+project`),
+					},
+					{
+						PreConfig: func() {
+							api.Lock()
+							defer api.Unlock()
+							api.projectExists = true
+							api.projectDenied = false
+						},
+						Config: config,
+						ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
+							plancheck.ExpectResourceAction("logfire_gateway_project_spending_limits.test", plancheck.ResourceActionNoop),
+						}},
+						Check: resource.TestCheckResourceAttr("logfire_gateway_project_spending_limits.test", "monthly_usd", "10"),
+					},
 				},
-				Config:             config,
-				PlanOnly:           true,
-				ExpectNonEmptyPlan: true,
-			},
-		},
-	})
+			})
+			api.Lock()
+			defer api.Unlock()
+			if got := api.requests["PATCH "+spendingLimitsProjectURL]; got != 2 {
+				t.Errorf("PATCH requests = %d, want 2 (create and destroy)", got)
+			}
+		})
+	}
 }
 
 func TestLifecycleGatewaySpendingLimitsOnOlderLogfire(t *testing.T) {
