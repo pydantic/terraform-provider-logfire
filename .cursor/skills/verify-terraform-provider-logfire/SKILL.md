@@ -16,11 +16,14 @@ a cloud deployment or telemetry query for every provider change.
 
 Run from the checkout being changed. The provider has no server to keep running.
 The test framework starts the provider and owns each temporary API and state file.
-Create a private run directory outside the repository:
+Create a private run directory outside the repository. Keep its path short. The
+tests use `$RUN_DIR/scratch` as `TMPDIR`, and the provider creates its Unix socket
+there. macOS limits socket paths to 104 bytes, and a run directory under the macOS
+`$TMPDIR` goes over that limit. The tests then fail with `timeout waiting on reattach config`:
 
 ```bash
 umask 077
-export RUN_DIR=$(mktemp -d "${TMPDIR:-/tmp}/terraform-logfire-verify.XXXXXX")
+export RUN_DIR=$(mktemp -d /tmp/tflv.XXXXXX)
 mkdir -p "$RUN_DIR/tools" "$RUN_DIR/scratch" "$RUN_DIR/evidence"
 git rev-parse HEAD > "$RUN_DIR/evidence/source-sha.txt"
 git diff --binary > "$RUN_DIR/evidence/source.diff"
