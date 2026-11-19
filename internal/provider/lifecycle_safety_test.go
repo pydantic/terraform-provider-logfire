@@ -202,6 +202,7 @@ func TestLifecycleEmailRecipients(t *testing.T) {
 			{Config: email(`"a@example.com", "b@example.com"`), ResourceName: "logfire_channel.test", ImportState: true, ImportStateVerify: true},
 			{Config: email(`"a@Example.com"`), ExpectError: regexp.MustCompile("lowercase domain")},
 			{Config: email(`" a@example.com"`), ExpectError: regexp.MustCompile("lowercase domain")},
+			{Config: email(`"a@example.com\u00a0"`), ExpectError: regexp.MustCompile("lowercase domain")},
 			{Config: email(`"OnCall@example.com"`), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.recipients.#", "1")},
 		},
 	})

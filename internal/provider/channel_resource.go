@@ -139,7 +139,7 @@ func (r *ChannelResource) Schema(ctx context.Context, req resource.SchemaRequest
 							// The API normalizes each address. Another spelling would come back
 							// changed and fail the apply with an inconsistent result.
 							setvalidator.ValueStringsAre(stringvalidator.RegexMatches(
-								regexp.MustCompile(`^\S(.*\S)?@[^@\s\p{Lu}]+$`),
+								regexp.MustCompile(`^[^\s\p{Z}](.*[^\s\p{Z}])?@[^@\s\p{Z}\p{Lu}]+$`),
 								"must be an email address with a lowercase domain and no surrounding spaces",
 							)),
 						},
