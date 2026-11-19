@@ -51,6 +51,24 @@ func (r *FrontendApplicationResource) Metadata(ctx context.Context, req resource
 
 func (r *FrontendApplicationResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	replace := []planmodifier.String{stringplanmodifier.RequiresReplace()}
+	const renameDescription = "Requires replacement unless the new value is the " +
+		"application's current name in Logfire."
+	// Read keeps the configured name when the Logfire UI renames an application, so
+	// the configuration can catch up without a replacement.
+	replaceUnlessServerName := stringplanmodifier.RequiresReplaceIf(
+		func(
+			ctx context.Context,
+			req planmodifier.StringRequest,
+			resp *stringplanmodifier.RequiresReplaceIfFuncResponse,
+		) {
+			serverName, diags := req.Private.GetKey(ctx, serverNameKey)
+			resp.Diagnostics.Append(diags...)
+			planned := serverNameValue(req.PlanValue.ValueString())
+			resp.RequiresReplace = !bytes.Equal(serverName, planned)
+		},
+		renameDescription,
+		renameDescription,
+	)
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Experimental: the backing management API is currently enabled only in Logfire staging environments. Manages an immutable Logfire frontend application identity and exposes one active restricted browser token. Use `logfire_frontend_application_token` for two-phase rotation. Creation is not retried automatically because the operation is not idempotent; after an uncertain failure, list the applications and import the matching identity instead of applying again.",
 		Attributes: map[string]schema.Attribute{
@@ -64,7 +82,7 @@ func (r *FrontendApplicationResource) Schema(ctx context.Context, req resource.S
 			},
 			"name": schema.StringAttribute{
 				Required: true, MarkdownDescription: "Application name. Logfire overwrites `service.name` with this value. The API cannot rename an application, so changing this replaces it, unless the new value is its current name in Logfire. After a rename in the Logfire UI, Terraform keeps the configured name and plans no change. Update this value to the new name to follow the rename without a replacement.",
-				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplaceIf(requiresReplaceUnlessServerName, "Requires replacement unless the new value is the application's current name in Logfire.", "Requires replacement unless the new value is the application's current name in Logfire.")},
+				PlanModifiers: []planmodifier.String{replaceUnlessServerName},
 				Validators:    []validator.String{stringvalidator.LengthAtLeast(1)},
 			},
 			"service_namespace": schema.StringAttribute{
@@ -155,14 +173,6 @@ const serverNameKey = "server_name"
 func serverNameValue(name string) []byte {
 	b, _ := json.Marshal(name)
 	return b
-}
-
-// The Logfire UI can rename an application and Read keeps the configured name, so the
-// configuration can catch up to a UI rename without a replacement.
-func requiresReplaceUnlessServerName(ctx context.Context, req planmodifier.StringRequest, resp *stringplanmodifier.RequiresReplaceIfFuncResponse) {
-	serverName, diags := req.Private.GetKey(ctx, serverNameKey)
-	resp.Diagnostics.Append(diags...)
-	resp.RequiresReplace = !bytes.Equal(serverName, serverNameValue(req.PlanValue.ValueString()))
 }
 
 func frontendApplicationToModel(application *logclient.FrontendApplication, state *FrontendApplicationModel) {
