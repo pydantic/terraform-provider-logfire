@@ -53,22 +53,15 @@ func (r *FrontendApplicationResource) Schema(ctx context.Context, req resource.S
 	replace := []planmodifier.String{stringplanmodifier.RequiresReplace()}
 	const renameDescription = "Requires replacement unless the new value is the " +
 		"application's current name in Logfire."
-	// Read keeps the configured name when the Logfire UI renames an application, so
-	// the configuration can catch up without a replacement.
-	replaceUnlessServerName := stringplanmodifier.RequiresReplaceIf(
-		func(
-			ctx context.Context,
-			req planmodifier.StringRequest,
-			resp *stringplanmodifier.RequiresReplaceIfFuncResponse,
-		) {
-			serverName, diags := req.Private.GetKey(ctx, serverNameKey)
-			resp.Diagnostics.Append(diags...)
-			planned := serverNameValue(req.PlanValue.ValueString())
-			resp.RequiresReplace = !bytes.Equal(serverName, planned)
-		},
-		renameDescription,
-		renameDescription,
-	)
+	// Read keeps the configured name after a UI rename, so the config can catch up.
+	replaceUnlessServerName := stringplanmodifier.RequiresReplaceIf(func(ctx context.Context,
+		req planmodifier.StringRequest, resp *stringplanmodifier.RequiresReplaceIfFuncResponse,
+	) {
+		serverName, diags := req.Private.GetKey(ctx, serverNameKey)
+		resp.Diagnostics.Append(diags...)
+		planned := serverNameValue(req.PlanValue.ValueString())
+		resp.RequiresReplace = !bytes.Equal(serverName, planned)
+	}, renameDescription, renameDescription)
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Experimental: the backing management API is currently enabled only in Logfire staging environments. Manages an immutable Logfire frontend application identity and exposes one active restricted browser token. Use `logfire_frontend_application_token` for two-phase rotation. Creation is not retried automatically because the operation is not idempotent; after an uncertain failure, list the applications and import the matching identity instead of applying again.",
 		Attributes: map[string]schema.Attribute{
