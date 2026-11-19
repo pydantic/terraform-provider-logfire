@@ -1,7 +1,7 @@
 ## Unreleased
 
 FEATURES:
-- `logfire_alert`: the new `instance_policy` attribute tracks each result row as its own occurrence, keyed by identity columns, and `notify_when` accepts `instances_changed` to notify about each row that opens or closes. Removing `instance_policy` from the configuration removes the policy. The provider sends the API's deprecated `continuity_runs` with the value of `missing_runs`. An organization without alert instance policies enabled gets an error that names the missing opt-in.
+- `logfire_alert`: the new `instance_policy` attribute tracks each result row as its own occurrence, keyed by identity columns, and `notify_when` accepts `instances_changed`, which sends one notification for each run that opens or closes occurrences. Removing `instance_policy` from the configuration removes the policy. The provider sends the API's deprecated `continuity_runs` with the value of `missing_runs`. An organization without alert instance policies enabled gets an error that names the missing opt-in. A Logfire version without instance policies gets an upgrade error, and the alert it saved stays in state.
 
 ## 0.2.4
 
