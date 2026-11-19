@@ -25,10 +25,12 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 )
 
-// fakeScheduleLogfire serves the schedule routes as Logfire does: it stores
-// the windows it receives and returns every time as "HH:MM:SS". It starts
-// with one schedule, `seeded`, whose times have non-zero seconds.
-func fakeScheduleLogfire(t *testing.T) *httptest.Server {
+// fakeScheduleLogfire serves the schedule routes under route, which is the
+// notification windows route or the deprecated one of an older instance, and
+// answers 404 elsewhere. It stores the windows it receives and returns every
+// time as "HH:MM:SS". It starts with one schedule, `seeded`, whose times have
+// non-zero seconds.
+func fakeScheduleLogfire(t *testing.T, route string) *httptest.Server {
 	t.Helper()
 	const seeded = "55555555-5555-5555-5555-555555555555"
 	type window struct {
@@ -66,7 +68,11 @@ func fakeScheduleLogfire(t *testing.T) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
-		id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/schedules/"), "/")
+		if !strings.HasPrefix(r.URL.Path, route) {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		id := strings.Trim(strings.TrimPrefix(r.URL.Path, route), "/")
 		if r.Method == http.MethodPost || r.Method == http.MethodPut {
 			var in schedule
 			if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
@@ -115,9 +121,16 @@ resource "logfire_schedule" "test" {
 
 // TestScheduleTimesRoundTrip applies `HH:MM` and `HH:MM:SS` times, which the
 // API returns as `HH:MM:SS`, and checks that neither shows a diff afterwards
-// and that an import reads the same values.
+// and that an import reads the same values. It runs against the notification
+// windows route and the deprecated route of an older instance.
 func TestScheduleTimesRoundTrip(t *testing.T) {
-	server := fakeScheduleLogfire(t)
+	for _, route := range []string{"/api/v1/notification-windows/", "/api/v1/schedules/"} {
+		t.Run(route, func(t *testing.T) { scheduleTimesRoundTrip(t, route) })
+	}
+}
+
+func scheduleTimesRoundTrip(t *testing.T, route string) {
+	server := fakeScheduleLogfire(t, route)
 	defer server.Close()
 	config := testScheduleSecondsConfig(server.URL, "Office hours", "09:00", "17:30:15")
 	resource.Test(t, resource.TestCase{
@@ -148,7 +161,7 @@ func TestScheduleTimesRoundTrip(t *testing.T) {
 // seconds. The imported values must be valid configuration: the same values
 // in configuration then plan no change.
 func TestScheduleImportWithSeconds(t *testing.T) {
-	server := fakeScheduleLogfire(t)
+	server := fakeScheduleLogfire(t, "/api/v1/notification-windows/")
 	defer server.Close()
 	config := testScheduleSecondsConfig(server.URL, "Night shift", "08:15:30", "17:45:59")
 	resource.Test(t, resource.TestCase{

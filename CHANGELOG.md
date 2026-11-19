@@ -1,5 +1,8 @@
 ## Unreleased
 
+BUG FIXES:
+- `logfire_schedule` calls the `/api/v1/notification-windows/` routes, because Logfire deprecated `/api/v1/schedules/`. A Logfire instance that only has the old routes still works: the provider falls back to them when the new ones answer 404. No configuration changes.
+
 ## 0.2.4
 
 FEATURES:
