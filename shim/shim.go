@@ -11,9 +11,9 @@ import (
 // Option customizes the provider that New returns.
 type Option = provider.Option
 
-// WithDashboardManager names the tool that embeds the provider, such as
-// "Pulumi" or "Crossplane". Logfire shows it as the manager of the dashboards
-// the provider writes. The default is Terraform.
+// WithDashboardManager names the Go program that embeds the provider, such as
+// the Pulumi bridge. Logfire shows it as the manager of the dashboards the
+// provider writes. The default is Terraform.
 func WithDashboardManager(tool string) Option {
 	return provider.WithDashboardManager(tool)
 }

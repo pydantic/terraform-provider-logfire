@@ -245,7 +245,7 @@ removed {
 	if api.creates != 2 || api.id != "" {
 		t.Fatalf("lifecycle left creates=%d, remote ID=%q; want two creates and final deletion", api.creates, api.id)
 	}
-	if len(api.writes) != 6 || api.writes[1] != `{"name":"Renamed","managed_by":"terraform","managed_allow_edits":true}` || !strings.Contains(api.writes[0], `"managed_by":"terraform","managed_allow_edits":true`) || !strings.Contains(api.writes[0], `"largeInteger":9007199254740993`) || !strings.Contains(api.writes[0], `"fraction":0.333333333333333333333333333333333333`) {
+	if len(api.writes) != 6 || api.writes[1] != `{"name":"Renamed","managed_by":"terraform","managed_allow_edits":true}` || !strings.HasSuffix(api.writes[0], `"managed_by":"terraform"}`) || !strings.Contains(api.writes[0], `"largeInteger":9007199254740993`) || !strings.Contains(api.writes[0], `"fraction":0.333333333333333333333333333333333333`) {
 		t.Fatalf("unexpected dashboard writes: %v", api.writes)
 	}
 	for i, query := range []string{"", "", "replace_layout=true", "replace_layout=true", "replace_layout=true", ""} {
@@ -285,19 +285,27 @@ func TestLifecycleDashboardManagedAllowEdits(t *testing.T) {
 		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: config("managed_allow_edits = false"),
+				Config: config(""),
 				Check:  resource.TestCheckResourceAttr(address, "managed_allow_edits", "false"),
 			},
 			{
 				Config:           config(""),
-				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction(address, plancheck.ResourceActionUpdate)}},
-				Check:            resource.TestCheckNoResourceAttr(address, "managed_allow_edits"),
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}},
+			},
+			{
+				Config: config("managed_allow_edits = true"),
+				Check:  resource.TestCheckResourceAttr(address, "managed_allow_edits", "true"),
+			},
+			{
+				Config:           config(""),
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}},
+				Check:            resource.TestCheckResourceAttr(address, "managed_allow_edits", "true"),
 			},
 		},
 	})
 	api.Lock()
 	defer api.Unlock()
-	if len(api.writes) != 2 || !strings.Contains(api.writes[0], `"managed_by":"terraform"}`) || api.writes[1] != `{"managed_by":"terraform","managed_allow_edits":true}` {
+	if len(api.writes) != 2 || !strings.HasSuffix(api.writes[0], `"managed_by":"terraform"}`) || api.writes[1] != `{"managed_by":"terraform","managed_allow_edits":true}` {
 		t.Fatalf("unexpected dashboard writes: %v", api.writes)
 	}
 }

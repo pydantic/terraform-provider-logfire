@@ -4,14 +4,14 @@ page_title: "logfire_dashboard Resource - logfire"
 subcategory: ""
 description: |-
   Manages a Logfire dashboard.
-  The provider marks the dashboard as managed by the tool that applies it, and Logfire shows a Managed badge on it. Set managed_allow_edits to false to also block edits from the Logfire UI and other API clients. A Logfire instance without managed dashboards ignores the marker. An existing dashboard gets the marker on its next update.
+  The provider marks the dashboard as managed by the tool that applies it, and Logfire shows a Managed badge on it. A new dashboard is also locked against edits from the Logfire UI and other API clients unless managed_allow_edits is true. A Logfire instance without managed dashboards ignores the marker. An existing dashboard gets the marker on its next update.
 ---
 
 # logfire_dashboard (Resource)
 
 Manages a Logfire dashboard.
 
-The provider marks the dashboard as managed by the tool that applies it, and Logfire shows a Managed badge on it. Set `managed_allow_edits` to `false` to also block edits from the Logfire UI and other API clients. A Logfire instance without managed dashboards ignores the marker. An existing dashboard gets the marker on its next update.
+The provider marks the dashboard as managed by the tool that applies it, and Logfire shows a Managed badge on it. A new dashboard is also locked against edits from the Logfire UI and other API clients unless `managed_allow_edits` is `true`. A Logfire instance without managed dashboards ignores the marker. An existing dashboard gets the marker on its next update.
 
 ## Example Usage
 
@@ -67,7 +67,7 @@ when applying a layout change. Re-export the dashboard to adopt its current layo
 
 ### Optional
 
-- `managed_allow_edits` (Boolean) Whether the Logfire UI and other API clients can edit the dashboard. Defaults to `true`. Set it to `false` to lock the dashboard so that only the provider changes it.
+- `managed_allow_edits` (Boolean) Whether the Logfire UI and other API clients can edit the dashboard. Defaults to `false` for a new dashboard, so only the provider changes it. A dashboard created by an earlier provider version stays editable until you set the attribute. Removing the attribute keeps the current value. Set it to `true` to allow edits again.
 
 ### Read-Only
 

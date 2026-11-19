@@ -40,8 +40,33 @@ type DashboardModel struct {
 	AllowEdits types.Bool   `tfsdk:"managed_allow_edits"`
 }
 
-// dashboardAllowEdits reads managed_allow_edits, which defaults to true.
+// dashboardAllowEdits reads managed_allow_edits. Null marks a dashboard from before the
+// attribute, which stays editable.
 func dashboardAllowEdits(v types.Bool) bool { return v.IsNull() || v.ValueBool() }
+
+// dashboardAllowEditsDefault plans false for a new dashboard and keeps the stored value of an
+// existing one.
+type dashboardAllowEditsDefault struct{}
+
+func (dashboardAllowEditsDefault) Description(context.Context) string {
+	return "New dashboards default to false. Existing dashboards keep their value."
+}
+
+func (m dashboardAllowEditsDefault) MarkdownDescription(ctx context.Context) string {
+	return m.Description(ctx)
+}
+
+func (dashboardAllowEditsDefault) PlanModifyBool(
+	_ context.Context, req planmodifier.BoolRequest, resp *planmodifier.BoolResponse,
+) {
+	if !req.ConfigValue.IsNull() {
+		return
+	}
+	resp.PlanValue = req.StateValue
+	if req.State.Raw.IsNull() {
+		resp.PlanValue = types.BoolValue(false)
+	}
+}
 
 func (r *DashboardResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_dashboard"
@@ -51,7 +76,7 @@ func (r *DashboardResource) Schema(ctx context.Context, req resource.SchemaReque
 	resp.Schema = rschema.Schema{
 		MarkdownDescription: "Manages a Logfire dashboard.\n\n" +
 			"The provider marks the dashboard as managed by the tool that applies it, and Logfire shows a Managed badge on it. " +
-			"Set `managed_allow_edits` to `false` to also block edits from the Logfire UI and other API clients. " +
+			"A new dashboard is also locked against edits from the Logfire UI and other API clients unless `managed_allow_edits` is `true`. " +
 			"A Logfire instance without managed dashboards ignores the marker. An existing dashboard gets the marker on its next update.",
 		Attributes: map[string]rschema.Attribute{
 			"id": rschema.StringAttribute{
@@ -96,7 +121,9 @@ func (r *DashboardResource) Schema(ctx context.Context, req resource.SchemaReque
 			},
 			"managed_allow_edits": rschema.BoolAttribute{
 				Optional:            true,
-				MarkdownDescription: "Whether the Logfire UI and other API clients can edit the dashboard. Defaults to `true`. Set it to `false` to lock the dashboard so that only the provider changes it.",
+				Computed:            true,
+				MarkdownDescription: "Whether the Logfire UI and other API clients can edit the dashboard. Defaults to `false` for a new dashboard, so only the provider changes it. A dashboard created by an earlier provider version stays editable until you set the attribute. Removing the attribute keeps the current value. Set it to `true` to allow edits again.",
+				PlanModifiers:       []planmodifier.Bool{dashboardAllowEditsDefault{}},
 			},
 		},
 	}
