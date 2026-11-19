@@ -133,9 +133,15 @@ func (r *ChannelResource) Schema(ctx context.Context, req resource.SchemaRequest
 					"recipients": rschema.SetAttribute{
 						Optional:            true,
 						ElementType:         types.StringType,
-						MarkdownDescription: "Email addresses the channel notifies, 1 to 50. Required for `email` channels, which need a Logfire plan with custom email recipients. Write each address in the form Logfire normalizes it to, with a lowercase domain, to avoid a diff after apply. A recipient who unsubscribes leaves the channel, and Logfire rejects an update that adds them back until you remove the address from the configuration.",
+						MarkdownDescription: "Email addresses the channel notifies, 1 to 50. Required for `email` channels, which need a Logfire plan with custom email recipients. Logfire stores each address with a lowercase domain, so the provider rejects an address with uppercase letters in its domain or with surrounding spaces. A recipient who unsubscribes leaves the channel, and Logfire rejects an update that adds them back until you remove the address from the configuration.",
 						Validators: []validator.Set{
 							setvalidator.SizeBetween(1, 50),
+							// The API normalizes each address. Another spelling would come back
+							// changed and fail the apply with an inconsistent result.
+							setvalidator.ValueStringsAre(stringvalidator.RegexMatches(
+								regexp.MustCompile(`^\S(.*\S)?@[^@\s\p{Lu}]+$`),
+								"must be an email address with a lowercase domain and no surrounding spaces",
+							)),
 						},
 					},
 					"auth_key": rschema.StringAttribute{
