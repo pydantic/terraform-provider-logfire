@@ -216,15 +216,6 @@ func channelModelToCreate(m *ChannelModel) (logclient.ChannelCreate, diag.Diagno
 
 func channelConfigModelToAPI(m *ChannelConfigModel) (interface{}, diag.Diagnostics) {
 	var diags diag.Diagnostics
-	if m == nil {
-		diags.Append(diag.NewErrorDiagnostic("Invalid channel config", "config block must be provided."))
-		return nil, diags
-	}
-	if m.Type.IsNull() || m.Type.IsUnknown() {
-		diags.Append(diag.NewErrorDiagnostic("Invalid channel config", "config.type must be set."))
-		return nil, diags
-	}
-
 	cfgType := m.Type.ValueString()
 	if cfgType != "opsgenie" {
 		diags.Append(disallowConfigString(m.BaseURL, "config.base_url", cfgType)...)
@@ -235,12 +226,7 @@ func channelConfigModelToAPI(m *ChannelConfigModel) (interface{}, diag.Diagnosti
 	if diags.HasError() {
 		return nil, diags
 	}
-	mapper, ok := channelConfigModelToAPIMappers[cfgType]
-	if ok {
-		return mapper(m)
-	}
-	diags.Append(diag.NewErrorDiagnostic("Invalid channel config", fmt.Sprintf("unsupported config type %q", cfgType)))
-	return nil, diags
+	return channelConfigModelToAPIMappers[cfgType](m)
 }
 
 type channelConfigString struct {
@@ -740,10 +726,10 @@ func (r *ChannelResource) Update(ctx context.Context, req resource.UpdateRequest
 	if plan.Config != nil {
 		config := *plan.Config
 		if state.Config != nil && state.Config.Type.ValueString() == config.Type.ValueString() {
-			if config.Type.ValueString() == "slack-integration" && config.IncludeAgentPrompt.IsUnknown() {
+			if config.IncludeAgentPrompt.IsUnknown() {
 				config.IncludeAgentPrompt = state.Config.IncludeAgentPrompt
 			}
-			if config.Type.ValueString() == "opsgenie" && config.BaseURL.IsUnknown() {
+			if config.BaseURL.IsUnknown() {
 				config.BaseURL = state.Config.BaseURL
 			}
 		}
