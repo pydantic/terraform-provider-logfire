@@ -1258,8 +1258,8 @@ type DashboardUpdateRequest struct {
 
 // DashboardManager marks a dashboard as managed by the tool that writes it.
 // Logfire shows the tool on the dashboard and, unless ManagedAllowEdits is
-// set, blocks edits from the UI and other API clients. Backends without
-// managed dashboards ignore these fields.
+// set, blocks edits from the UI and the MCP server. The dashboards API stays
+// open to the manager. Backends without managed dashboards ignore these fields.
 type DashboardManager struct {
 	ManagedBy         string  `json:"managed_by,omitempty"`
 	ManagedByName     *string `json:"managed_by_name,omitempty"`
@@ -1297,6 +1297,9 @@ type Dashboard struct {
 	DashboardName string          `json:"dashboard_name"`
 	DashboardSlug string          `json:"dashboard_slug"`
 	Definition    json.RawMessage `json:"definition"`
+	// Backends without managed dashboards leave these out.
+	ManagedBy         *string `json:"managed_by"`
+	ManagedAllowEdits *bool   `json:"managed_allow_edits"`
 }
 
 type GetDashboardResponse struct {

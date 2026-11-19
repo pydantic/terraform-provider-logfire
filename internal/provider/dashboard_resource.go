@@ -44,8 +44,8 @@ type DashboardModel struct {
 // attribute, which stays editable.
 func dashboardAllowEdits(v types.Bool) bool { return v.IsNull() || v.ValueBool() }
 
-// dashboardAllowEditsDefault plans false for a new dashboard and keeps the stored value of an
-// existing one.
+// dashboardAllowEditsDefault leaves a new dashboard's value to the create response and keeps the
+// stored value of an existing one.
 type dashboardAllowEditsDefault struct{}
 
 func (dashboardAllowEditsDefault) Description(context.Context) string {
@@ -64,7 +64,7 @@ func (dashboardAllowEditsDefault) PlanModifyBool(
 	}
 	resp.PlanValue = req.StateValue
 	if req.State.Raw.IsNull() {
-		resp.PlanValue = types.BoolValue(false)
+		resp.PlanValue = types.BoolUnknown()
 	}
 }
 
@@ -76,7 +76,8 @@ func (r *DashboardResource) Schema(ctx context.Context, req resource.SchemaReque
 	resp.Schema = rschema.Schema{
 		MarkdownDescription: "Manages a Logfire dashboard.\n\n" +
 			"The provider marks the dashboard as managed by the tool that applies it, and Logfire shows a Managed badge on it. " +
-			"A new dashboard is also locked against edits from the Logfire UI and other API clients unless `managed_allow_edits` is `true`. " +
+			"A new dashboard is also locked against edits in the Logfire UI and through the Logfire MCP server unless `managed_allow_edits` is `true`. " +
+			"The lock does not cover the dashboards API, which the provider uses. " +
 			"A Logfire instance without managed dashboards ignores the marker. An existing dashboard gets the marker on its next update.",
 		Attributes: map[string]rschema.Attribute{
 			"id": rschema.StringAttribute{
@@ -122,7 +123,7 @@ func (r *DashboardResource) Schema(ctx context.Context, req resource.SchemaReque
 			"managed_allow_edits": rschema.BoolAttribute{
 				Optional:            true,
 				Computed:            true,
-				MarkdownDescription: "Whether the Logfire UI and other API clients can edit the dashboard. Defaults to `false` for a new dashboard, so only the provider changes it. A dashboard created by an earlier provider version stays editable until you set the attribute. Removing the attribute keeps the current value. Set it to `true` to allow edits again.",
+				MarkdownDescription: "Whether the Logfire UI and the Logfire MCP server can edit the dashboard. Defaults to `false` for a new dashboard. A Logfire instance without managed dashboards leaves it unset. A dashboard created by an earlier provider version stays editable until you set the attribute. Removing the attribute keeps the current value. Set it to `true` to allow edits again.",
 				PlanModifiers:       []planmodifier.Bool{dashboardAllowEditsDefault{}},
 			},
 		},
@@ -192,6 +193,12 @@ func (r *DashboardResource) Create(ctx context.Context, req resource.CreateReque
 	}
 	state.Definition = preserveDashboardDefinition(plan.Definition, state.Definition)
 	state.AllowEdits = plan.AllowEdits
+	if plan.AllowEdits.IsUnknown() {
+		state.AllowEdits = types.BoolNull()
+		if out.ManagedBy != nil && *out.ManagedBy != "" && out.ManagedAllowEdits != nil {
+			state.AllowEdits = types.BoolValue(*out.ManagedAllowEdits)
+		}
+	}
 	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
 		state.ProjectID = types.StringValue(projectID)
 	}
@@ -313,7 +320,8 @@ func (r *DashboardResource) Update(ctx context.Context, req resource.UpdateReque
 		payload.ReplaceLayout = true
 	}
 
-	if payload.Name == nil && payload.Definition == nil && dashboardAllowEdits(plan.AllowEdits) == dashboardAllowEdits(state.AllowEdits) {
+	// Null and true send the same marker, but a dashboard without the marker still needs the write.
+	if payload.Name == nil && payload.Definition == nil && plan.AllowEdits.Equal(state.AllowEdits) {
 		state.Definition = plan.Definition
 		state.Name = plan.Name
 		state.AllowEdits = plan.AllowEdits

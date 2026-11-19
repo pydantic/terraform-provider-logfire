@@ -41,6 +41,7 @@ type dashboardLifecycleAPIState struct {
 	id, name, definition string
 	managedBy            string
 	allowEdits           bool
+	olderLogfire         bool
 	creates              int
 	writes               []string
 	queries              []string
@@ -53,7 +54,11 @@ func (a *dashboardLifecycleAPIState) ServeHTTP(w http.ResponseWriter, req *http.
 	w.Header().Set("Content-Type", "application/json")
 	const base = "/api/v1/projects/project-1/dashboards/"
 	dashboard := func() any {
-		return map[string]any{"id": a.id, "project_id": "project-1", "dashboard_name": a.name, "dashboard_slug": "main", "definition": json.RawMessage(a.definition)}
+		d := map[string]any{"id": a.id, "project_id": "project-1", "dashboard_name": a.name, "dashboard_slug": "main", "definition": json.RawMessage(a.definition)}
+		if a.managedBy != "" {
+			d["managed_by"], d["managed_allow_edits"] = a.managedBy, a.allowEdits
+		}
+		return d
 	}
 	switch {
 	case req.Method == http.MethodGet && req.URL.Path == "/api/v1/projects/":
@@ -92,7 +97,9 @@ func (a *dashboardLifecycleAPIState) ServeHTTP(w http.ResponseWriter, req *http.
 		if payload.Name != nil {
 			a.name = *payload.Name
 		}
-		a.managedBy, a.allowEdits = payload.ManagedBy, payload.AllowEdits
+		if !a.olderLogfire {
+			a.managedBy, a.allowEdits = payload.ManagedBy, payload.AllowEdits
+		}
 		if req.Method == http.MethodPost {
 			a.creates++
 			a.id, a.definition = fmt.Sprintf("dashboard-%d", a.creates), dashboardLifecycleAPI
@@ -330,11 +337,41 @@ func TestLifecycleDashboardManagedAllowEdits(t *testing.T) {
 				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}},
 				Check:            resource.TestCheckNoResourceAttr(address, "managed_allow_edits"),
 			},
+			{
+				Config:           config("managed_allow_edits = true"),
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction(address, plancheck.ResourceActionUpdate)}},
+				Check:            resource.TestCheckResourceAttr(address, "managed_allow_edits", "true"),
+			},
 		},
 	})
 	api.Lock()
 	defer api.Unlock()
-	if len(api.writes) != 3 || !strings.HasSuffix(api.writes[0], `"managed_by":"terraform"}`) || api.writes[1] != `{"managed_by":"terraform","managed_allow_edits":true}` || api.writes[2] != api.writes[1] {
+	const allowEdits = `{"managed_by":"terraform","managed_allow_edits":true}`
+	if len(api.writes) != 4 || !strings.HasSuffix(api.writes[0], `"managed_by":"terraform"}`) || api.writes[1] != allowEdits || api.writes[2] != allowEdits || api.writes[3] != allowEdits {
 		t.Fatalf("unexpected dashboard writes: %v", api.writes)
 	}
+}
+
+// A Logfire instance without managed dashboards reports no lock, so create and import agree on null.
+func TestLifecycleDashboardOnOlderLogfire(t *testing.T) {
+	t.Parallel()
+	api := &dashboardLifecycleAPIState{olderLogfire: true}
+	server := httptest.NewServer(api)
+	defer server.Close()
+	file := filepath.Join(t.TempDir(), "dashboard.json")
+	if err := os.WriteFile(file, []byte(dashboardLifecycleFile), 0600); err != nil {
+		t.Fatal(err)
+	}
+	config := lifecycleConfig(server.URL, "dashboard", fmt.Sprintf("project_id = \"project-1\"\nname = \"Main\"\nslug = \"main\"\ndefinition = file(%q)", file))
+	const address = "logfire_dashboard.test"
+	resource.Test(t, resource.TestCase{
+		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: config, Check: resource.TestCheckNoResourceAttr(address, "managed_allow_edits")},
+			{
+				Config: config, ResourceName: address, ImportState: true, ImportStateId: "test/main",
+				ImportStateVerify: true, ImportStateVerifyIgnore: []string{"definition"},
+			},
+		},
+	})
 }
