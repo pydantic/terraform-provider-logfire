@@ -37,7 +37,11 @@ type DashboardModel struct {
 	Name       types.String `tfsdk:"name"`
 	Slug       types.String `tfsdk:"slug"`
 	Definition types.String `tfsdk:"definition"`
+	AllowEdits types.Bool   `tfsdk:"managed_allow_edits"`
 }
+
+// dashboardAllowEdits reads managed_allow_edits, which defaults to true.
+func dashboardAllowEdits(v types.Bool) bool { return v.IsNull() || v.ValueBool() }
 
 func (r *DashboardResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_dashboard"
@@ -45,7 +49,10 @@ func (r *DashboardResource) Metadata(ctx context.Context, req resource.MetadataR
 
 func (r *DashboardResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = rschema.Schema{
-		MarkdownDescription: "Manages a Logfire dashboard.",
+		MarkdownDescription: "Manages a Logfire dashboard.\n\n" +
+			"The provider marks the dashboard as managed by the tool that applies it, and Logfire shows a Managed badge on it. " +
+			"Set `managed_allow_edits` to `false` to also block edits from the Logfire UI and other API clients. " +
+			"A Logfire instance without managed dashboards ignores the marker. An existing dashboard gets the marker on its next update.",
 		Attributes: map[string]rschema.Attribute{
 			"id": rschema.StringAttribute{
 				Computed:            true,
@@ -86,6 +93,10 @@ func (r *DashboardResource) Schema(ctx context.Context, req resource.SchemaReque
 				MarkdownDescription: "Dashboard definition JSON payload.",
 				PlanModifiers:       []planmodifier.String{dashboardDefinitionPlanModifier{}},
 				Validators:          []validator.String{dashboardDefinitionValidator{}},
+			},
+			"managed_allow_edits": rschema.BoolAttribute{
+				Optional:            true,
+				MarkdownDescription: "Whether the Logfire UI and other API clients can edit the dashboard. Defaults to `true`. Set it to `false` to lock the dashboard so that only the provider changes it.",
 			},
 		},
 	}
@@ -137,6 +148,8 @@ func (r *DashboardResource) Create(ctx context.Context, req resource.CreateReque
 		Name:       plan.Name.ValueString(),
 		Slug:       plan.Slug.ValueString(),
 		Definition: defRaw,
+
+		DashboardManager: r.client.DashboardManager(dashboardAllowEdits(plan.AllowEdits)),
 	}
 
 	out, err := r.client.CreateDashboard(ctx, projectID, payload)
@@ -151,6 +164,7 @@ func (r *DashboardResource) Create(ctx context.Context, req resource.CreateReque
 		return
 	}
 	state.Definition = preserveDashboardDefinition(plan.Definition, state.Definition)
+	state.AllowEdits = plan.AllowEdits
 	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
 		state.ProjectID = types.StringValue(projectID)
 	}
@@ -247,7 +261,7 @@ func (r *DashboardResource) Update(ctx context.Context, req resource.UpdateReque
 	projectID := state.ProjectID.ValueString()
 	dashboardID := state.ID.ValueString()
 
-	payload := logclient.DashboardUpdateRequest{}
+	payload := logclient.DashboardUpdateRequest{DashboardManager: r.client.DashboardManager(dashboardAllowEdits(plan.AllowEdits))}
 	if !plan.Name.Equal(state.Name) {
 		name := plan.Name.ValueString()
 		payload.Name = &name
@@ -267,9 +281,10 @@ func (r *DashboardResource) Update(ctx context.Context, req resource.UpdateReque
 		payload.ReplaceLayout = true
 	}
 
-	if payload.Name == nil && payload.Definition == nil {
+	if payload.Name == nil && payload.Definition == nil && dashboardAllowEdits(plan.AllowEdits) == dashboardAllowEdits(state.AllowEdits) {
 		state.Definition = plan.Definition
 		state.Name = plan.Name
+		state.AllowEdits = plan.AllowEdits
 		resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 		return
 	}
@@ -287,6 +302,7 @@ func (r *DashboardResource) Update(ctx context.Context, req resource.UpdateReque
 		return
 	}
 	newState.Definition = preserveDashboardDefinition(plan.Definition, newState.Definition)
+	newState.AllowEdits = plan.AllowEdits
 	if newState.ProjectID.IsNull() || newState.ProjectID.IsUnknown() || newState.ProjectID.ValueString() == "" {
 		newState.ProjectID = types.StringValue(projectID)
 	}

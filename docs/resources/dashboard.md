@@ -4,11 +4,14 @@ page_title: "logfire_dashboard Resource - logfire"
 subcategory: ""
 description: |-
   Manages a Logfire dashboard.
+  The provider marks the dashboard as managed by the tool that applies it, and Logfire shows a Managed badge on it. Set managed_allow_edits to false to also block edits from the Logfire UI and other API clients. A Logfire instance without managed dashboards ignores the marker. An existing dashboard gets the marker on its next update.
 ---
 
 # logfire_dashboard (Resource)
 
 Manages a Logfire dashboard.
+
+The provider marks the dashboard as managed by the tool that applies it, and Logfire shows a Managed badge on it. Set `managed_allow_edits` to `false` to also block edits from the Logfire UI and other API clients. A Logfire instance without managed dashboards ignores the marker. An existing dashboard gets the marker on its next update.
 
 ## Example Usage
 
@@ -61,6 +64,10 @@ when applying a layout change. Re-export the dashboard to adopt its current layo
 - `name` (String) Dashboard display name.
 - `project_id` (String) Project UUID used for API paths.
 - `slug` (String) Dashboard slug used in URLs.
+
+### Optional
+
+- `managed_allow_edits` (Boolean) Whether the Logfire UI and other API clients can edit the dashboard. Defaults to `true`. Set it to `false` to lock the dashboard so that only the provider changes it.
 
 ### Read-Only
 

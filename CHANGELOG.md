@@ -1,5 +1,9 @@
 ## Unreleased
 
+FEATURES:
+- `logfire_dashboard` marks each dashboard it writes as managed, so Logfire shows a Managed badge on it. Set the new `managed_allow_edits` attribute to `false` to also block edits from the Logfire UI and other API clients. An existing dashboard gets the marker on its next update. Logfire instances without managed dashboards ignore the marker.
+- Embedders can name their tool with `shim.New(version, shim.WithDashboardManager("Pulumi"))`. `shim.New(version)` is unchanged.
+
 ## 0.2.4
 
 FEATURES:
