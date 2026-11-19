@@ -4,7 +4,9 @@
 package provider
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -61,8 +63,9 @@ func (r *FrontendApplicationResource) Schema(ctx context.Context, req resource.S
 				Validators: []validator.String{stringvalidator.LengthAtLeast(1)},
 			},
 			"name": schema.StringAttribute{
-				Required: true, MarkdownDescription: "Immutable application name. Logfire overwrites `service.name` with this value.", PlanModifiers: replace,
-				Validators: []validator.String{stringvalidator.LengthAtLeast(1)},
+				Required: true, MarkdownDescription: "Application name. Logfire overwrites `service.name` with this value. The API cannot rename an application, so changing this replaces it, unless the new value is its current name in Logfire. After a rename in the Logfire UI, Terraform keeps the configured name and plans no change. Update this value to the new name to follow the rename without a replacement.",
+				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplaceIf(requiresReplaceUnlessServerName, "Requires replacement unless the new value is the application's current name in Logfire.", "Requires replacement unless the new value is the application's current name in Logfire.")},
+				Validators:    []validator.String{stringvalidator.LengthAtLeast(1)},
 			},
 			"service_namespace": schema.StringAttribute{
 				Optional: true, MarkdownDescription: "Immutable value used to overwrite `service.namespace` when set.", PlanModifiers: replace,
@@ -146,6 +149,22 @@ func setOptionalString(target *types.String, value *string) {
 	}
 }
 
+const serverNameKey = "server_name"
+
+// Private state needs valid JSON. Marshaling a string cannot fail.
+func serverNameValue(name string) []byte {
+	b, _ := json.Marshal(name)
+	return b
+}
+
+// The Logfire UI can rename an application and Read keeps the configured name, so the
+// configuration can catch up to a UI rename without a replacement.
+func requiresReplaceUnlessServerName(ctx context.Context, req planmodifier.StringRequest, resp *stringplanmodifier.RequiresReplaceIfFuncResponse) {
+	serverName, diags := req.Private.GetKey(ctx, serverNameKey)
+	resp.Diagnostics.Append(diags...)
+	resp.RequiresReplace = !bytes.Equal(serverName, serverNameValue(req.PlanValue.ValueString()))
+}
+
 func frontendApplicationToModel(application *logclient.FrontendApplication, state *FrontendApplicationModel) {
 	state.ID = types.StringValue(application.ID)
 	state.ProjectID = types.StringValue(application.ProjectID)
@@ -218,6 +237,10 @@ func (r *FrontendApplicationResource) Read(ctx context.Context, req resource.Rea
 	var refreshed FrontendApplicationModel
 	frontendApplicationToModel(application, &refreshed)
 	refreshed.AdoptExistingServiceName = state.AdoptExistingServiceName
+	resp.Diagnostics.Append(resp.Private.SetKey(ctx, serverNameKey, serverNameValue(application.Name))...)
+	if !state.Name.IsNull() {
+		refreshed.Name = state.Name
+	}
 	tokens, err := r.client.ListFrontendApplicationTokens(ctx, application.ProjectID, application.ID)
 	if err != nil {
 		resp.Diagnostics.AddError("Read frontend application tokens failed", err.Error())
@@ -251,6 +274,7 @@ func (r *FrontendApplicationResource) Update(ctx context.Context, req resource.U
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	state.Name = plan.Name
 	state.AdoptExistingServiceName = plan.AdoptExistingServiceName
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
