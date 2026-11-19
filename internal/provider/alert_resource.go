@@ -340,22 +340,6 @@ func alertInstancePolicyToAPI(m *AlertInstancePolicyModel) *logclient.AlertInsta
 	}
 }
 
-func alertInstancePolicyFromAPI(p *logclient.AlertInstancePolicy) *AlertInstancePolicyModel {
-	if p == nil {
-		return nil
-	}
-	columns := make([]types.String, len(p.IdentityColumns))
-	for i, column := range p.IdentityColumns {
-		columns[i] = types.StringValue(column)
-	}
-	return &AlertInstancePolicyModel{
-		IdentityColumns: columns,
-		PendingRuns:     types.Int64Value(p.PendingRuns),
-		MissingRuns:     types.Int64Value(p.MissingRuns),
-		MissingBehavior: types.StringValue(p.MissingBehavior),
-	}
-}
-
 // addAlertSaveError names the missing opt-in when the API refuses an instance
 // policy, instead of showing its raw problem body.
 func addAlertSaveError(diags *diag.Diagnostics, summary string, err error) {
@@ -475,7 +459,19 @@ func alertReadToModel(ctx context.Context, a *logclient.AlertRead, m *AlertModel
 	m.ChannelAssignments = set
 	m.NotifyWhen = types.StringValue(a.NotifyWhen)
 	m.Active = types.BoolValue(a.Active)
-	m.InstancePolicy = alertInstancePolicyFromAPI(a.InstancePolicy)
+	m.InstancePolicy = nil
+	if p := a.InstancePolicy; p != nil {
+		columns := make([]types.String, len(p.IdentityColumns))
+		for i, column := range p.IdentityColumns {
+			columns[i] = types.StringValue(column)
+		}
+		m.InstancePolicy = &AlertInstancePolicyModel{
+			IdentityColumns: columns,
+			PendingRuns:     types.Int64Value(p.PendingRuns),
+			MissingRuns:     types.Int64Value(p.MissingRuns),
+			MissingBehavior: types.StringValue(p.MissingBehavior),
+		}
+	}
 	return nil
 }
 
