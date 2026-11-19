@@ -39,6 +39,8 @@ const dashboardLifecycleAPI = `{"kind":"Dashboard","metadata":{"name":"Main","pr
 type dashboardLifecycleAPIState struct {
 	sync.Mutex
 	id, name, definition string
+	managedBy            string
+	allowEdits           bool
 	creates              int
 	writes               []string
 	queries              []string
@@ -78,6 +80,8 @@ func (a *dashboardLifecycleAPIState) ServeHTTP(w http.ResponseWriter, req *http.
 		var payload struct {
 			Name       *string         `json:"name"`
 			Definition json.RawMessage `json:"definition"`
+			ManagedBy  string          `json:"managed_by"`
+			AllowEdits bool            `json:"managed_allow_edits"`
 		}
 		if err := json.Unmarshal(body, &payload); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
@@ -88,6 +92,7 @@ func (a *dashboardLifecycleAPIState) ServeHTTP(w http.ResponseWriter, req *http.
 		if payload.Name != nil {
 			a.name = *payload.Name
 		}
+		a.managedBy, a.allowEdits = payload.ManagedBy, payload.AllowEdits
 		if req.Method == http.MethodPost {
 			a.creates++
 			a.id, a.definition = fmt.Sprintf("dashboard-%d", a.creates), dashboardLifecycleAPI
@@ -99,7 +104,11 @@ func (a *dashboardLifecycleAPIState) ServeHTTP(w http.ResponseWriter, req *http.
 	case req.Method == http.MethodGet && a.id != "" && req.URL.Path == base+a.id+"/":
 		var definition map[string]json.RawMessage
 		_ = json.Unmarshal([]byte(a.definition), &definition)
-		definition["metadata"], _ = json.Marshal(map[string]any{"name": a.name, "project": "test", "version": 8})
+		metadata := map[string]any{"name": a.name, "project": "test", "version": 8}
+		if a.managedBy != "" {
+			metadata["managedBy"], metadata["managedAllowEdits"] = a.managedBy, a.allowEdits
+		}
+		definition["metadata"], _ = json.Marshal(metadata)
 		_ = json.NewEncoder(w).Encode(map[string]any{"dashboard": definition})
 	case req.Method == http.MethodDelete && a.id != "" && req.URL.Path == base+a.id+"/":
 		a.id = ""
@@ -210,7 +219,8 @@ removed {
 				},
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckResourceAttr(address, "id", "dashboard-1"),
-					resource.TestCheckResourceAttr(address, "definition", reexportedAPI)),
+					resource.TestCheckResourceAttr(address, "definition", strings.Replace(reexportedAPI,
+						`"metadata":{`, `"metadata":{"managedAllowEdits":false,"managedBy":"terraform",`, 1))),
 			},
 			{
 				Config: config("Renamed", updated), ConfigPlanChecks: empty,
@@ -245,7 +255,7 @@ removed {
 	if api.creates != 2 || api.id != "" {
 		t.Fatalf("lifecycle left creates=%d, remote ID=%q; want two creates and final deletion", api.creates, api.id)
 	}
-	if len(api.writes) != 6 || api.writes[1] != `{"name":"Renamed","managed_by":"terraform","managed_allow_edits":true}` || !strings.HasSuffix(api.writes[0], `"managed_by":"terraform"}`) || !strings.Contains(api.writes[0], `"largeInteger":9007199254740993`) || !strings.Contains(api.writes[0], `"fraction":0.333333333333333333333333333333333333`) {
+	if len(api.writes) != 6 || api.writes[1] != `{"name":"Renamed","managed_by":"terraform"}` || !strings.HasSuffix(api.writes[0], `"managed_by":"terraform"}`) || !strings.Contains(api.writes[0], `"largeInteger":9007199254740993`) || !strings.Contains(api.writes[0], `"fraction":0.333333333333333333333333333333333333`) {
 		t.Fatalf("unexpected dashboard writes: %v", api.writes)
 	}
 	for i, query := range []string{"", "", "replace_layout=true", "replace_layout=true", "replace_layout=true", ""} {
@@ -301,11 +311,30 @@ func TestLifecycleDashboardManagedAllowEdits(t *testing.T) {
 				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}},
 				Check:            resource.TestCheckResourceAttr(address, "managed_allow_edits", "true"),
 			},
+			{
+				PreConfig:        func() { api.Lock(); api.allowEdits = false; api.Unlock() },
+				Config:           config("managed_allow_edits = true"),
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction(address, plancheck.ResourceActionUpdate)}},
+				Check:            resource.TestCheckResourceAttr(address, "managed_allow_edits", "true"),
+			},
+			{
+				Config: fmt.Sprintf("provider \"logfire\" {\nbase_url = %q\napi_key = \"test-token\"\n}\nremoved {\nfrom = %s\nlifecycle { destroy = false }\n}", server.URL, address),
+			},
+			{
+				PreConfig: func() { api.Lock(); api.managedBy = ""; api.Unlock() },
+				Config:    config(""), ResourceName: address,
+				ImportState: true, ImportStateId: "test/main", ImportStatePersist: true,
+			},
+			{
+				Config:           config(""),
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}},
+				Check:            resource.TestCheckNoResourceAttr(address, "managed_allow_edits"),
+			},
 		},
 	})
 	api.Lock()
 	defer api.Unlock()
-	if len(api.writes) != 2 || !strings.HasSuffix(api.writes[0], `"managed_by":"terraform"}`) || api.writes[1] != `{"managed_by":"terraform","managed_allow_edits":true}` {
+	if len(api.writes) != 3 || !strings.HasSuffix(api.writes[0], `"managed_by":"terraform"}`) || api.writes[1] != `{"managed_by":"terraform","managed_allow_edits":true}` || api.writes[2] != api.writes[1] {
 		t.Fatalf("unexpected dashboard writes: %v", api.writes)
 	}
 }

@@ -252,6 +252,11 @@ func (r *DashboardResource) Read(ctx context.Context, req resource.ReadRequest, 
 		if name, ok := metadata["name"].(string); ok && name != "" {
 			state.Name = types.StringValue(name)
 		}
+		// Only a dashboard with a manager has the lock. Older backends report neither field.
+		allowEdits, ok := metadata["managedAllowEdits"].(bool)
+		if manager, _ := metadata["managedBy"].(string); ok && manager != "" {
+			state.AllowEdits = types.BoolValue(allowEdits)
+		}
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
