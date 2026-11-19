@@ -114,5 +114,9 @@ func TestScheduleMissingIDIsNotFound(t *testing.T) {
 		if _, status, err := c.GetSchedule(context.Background(), "missing"); !IsNotFoundError(err) || status != http.StatusNotFound {
 			t.Fatalf("serves %v: status %d, error %v; want a not-found error", serves, status, err)
 		}
+		// The window's own 404 is final, so a failure on the old route cannot replace it.
+		if serves[0] == notificationWindowsRoute && len(calls) != 1 {
+			t.Fatalf("serves %v: requests %v; want only the notification windows route", serves, calls)
+		}
 	}
 }

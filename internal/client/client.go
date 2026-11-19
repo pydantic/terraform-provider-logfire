@@ -1558,9 +1558,10 @@ const (
 )
 
 // doSchedule calls the notification windows route. An instance that predates
-// that route answers 404, and doSchedule then calls the deprecated /schedules/
-// route Logfire served before. A 404 never has an effect, so the second call
-// is safe for every method. Once the deprecated route has answered, later
+// that route answers FastAPI's missing-route 404, and doSchedule then calls the
+// deprecated /schedules/ route Logfire served before. A 404 never has an effect,
+// so the second call is safe for every method. A 404 for a missing window is
+// final, so a failed second call cannot hide it. Once the deprecated route has answered, later
 // calls skip the new one. An empty id addresses the collection.
 func (c *APIClient) doSchedule(
 	ctx context.Context, method, id string, in, out any, expected int,
@@ -1571,7 +1572,7 @@ func (c *APIClient) doSchedule(
 	}
 	if !c.legacySchedules.Load() {
 		resp, err := c.doJSON(ctx, method, notificationWindowsPath+suffix, in, out, expected)
-		if !IsNotFoundError(err) {
+		if !isMissingRoute(err) {
 			return resp, err
 		}
 	}
