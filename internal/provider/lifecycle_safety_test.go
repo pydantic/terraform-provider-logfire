@@ -149,6 +149,61 @@ func TestLifecycleSlackSettings(t *testing.T) {
 	}
 }
 
+func TestLifecycleOpsgenieBaseURL(t *testing.T) {
+	t.Parallel()
+	server, api := newLifecycleAPI(t, "channel")
+	opsgenie := func(name, baseURL string) string {
+		return lifecycleConfig(server.URL, "channel", fmt.Sprintf("name = %q\nconfig {\ntype = \"opsgenie\"\nauth_key = \"key\"\n%s\n}", name, baseURL))
+	}
+	const eu = "https://api.eu.opsgenie.com"
+	resource.Test(t, resource.TestCase{
+		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: opsgenie("opsgenie", ""), Check: resource.TestCheckNoResourceAttr("logfire_channel.test", "config.base_url")},
+			{
+				PreConfig: func() {
+					api.Lock()
+					defer api.Unlock()
+					config, ok := api.item["config"].(map[string]any)
+					if !ok {
+						t.Fatalf("stored config = %v", api.item["config"])
+					}
+					config["base_url"] = eu
+				},
+				Config: opsgenie("renamed", ""),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("logfire_channel.test", "config.base_url", eu),
+					func(*terraform.State) error {
+						api.Lock()
+						defer api.Unlock()
+						config, _ := api.item["config"].(map[string]any)
+						if got := config["base_url"]; got != eu {
+							return fmt.Errorf("base_url after update = %v, want the value set outside Terraform", got)
+						}
+						return nil
+					}),
+			},
+			{Config: opsgenie("renamed", "base_url = \"https://api.opsgenie.com\""), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.base_url", "https://api.opsgenie.com")},
+		},
+	})
+}
+
+func TestLifecycleEmailRecipients(t *testing.T) {
+	t.Parallel()
+	server, _ := newLifecycleAPI(t, "channel")
+	email := func(recipients string) string {
+		return lifecycleConfig(server.URL, "channel", fmt.Sprintf("name = \"email\"\nconfig {\ntype = \"email\"\nrecipients = [%s]\n}", recipients))
+	}
+	resource.Test(t, resource.TestCase{
+		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: email(`"a@example.com"`), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.recipients.#", "1")},
+			{Config: email(`"a@example.com", "b@example.com"`), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.recipients.#", "2")},
+			{Config: email(`"a@example.com", "b@example.com"`), ResourceName: "logfire_channel.test", ImportState: true, ImportStateVerify: true},
+		},
+	})
+}
+
 func TestLifecyclePartialCreateRecovery(t *testing.T) {
 	for _, kind := range []string{"organization", "channel"} {
 		t.Run(kind, func(t *testing.T) {

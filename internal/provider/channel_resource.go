@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	objectvalidator "github.com/hashicorp/terraform-plugin-framework-validators/objectvalidator"
+	setvalidator "github.com/hashicorp/terraform-plugin-framework-validators/setvalidator"
 	stringvalidator "github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -39,17 +40,18 @@ type ChannelResource struct {
 const maskedChannelSecretPlaceholder = "**********"
 
 type ChannelConfigModel struct {
-	// Email config exists in the API but is not exposed via Terraform yet.
-	Type               types.String `tfsdk:"type"` // webhook | opsgenie | pagerduty | pagerduty-integration | slack-integration
-	Format             types.String `tfsdk:"format"`
-	URL                types.String `tfsdk:"url"`
-	AuthKey            types.String `tfsdk:"auth_key"`
-	RoutingKey         types.String `tfsdk:"routing_key"`
-	Region             types.String `tfsdk:"region"`
-	InstallID          types.String `tfsdk:"install_id"`
-	ChannelID          types.String `tfsdk:"channel_id"`
-	ServiceID          types.String `tfsdk:"service_id"`
-	IncludeAgentPrompt types.Bool   `tfsdk:"include_agent_prompt"`
+	Type               types.String   `tfsdk:"type"` // webhook | email | opsgenie | pagerduty | pagerduty-integration | slack-integration
+	Format             types.String   `tfsdk:"format"`
+	URL                types.String   `tfsdk:"url"`
+	Recipients         []types.String `tfsdk:"recipients"`
+	AuthKey            types.String   `tfsdk:"auth_key"`
+	BaseURL            types.String   `tfsdk:"base_url"`
+	RoutingKey         types.String   `tfsdk:"routing_key"`
+	Region             types.String   `tfsdk:"region"`
+	InstallID          types.String   `tfsdk:"install_id"`
+	ChannelID          types.String   `tfsdk:"channel_id"`
+	ServiceID          types.String   `tfsdk:"service_id"`
+	IncludeAgentPrompt types.Bool     `tfsdk:"include_agent_prompt"`
 }
 
 type ChannelModel struct {
@@ -61,6 +63,7 @@ type ChannelModel struct {
 
 var channelConfigModelToAPIMappers = map[string]func(*ChannelConfigModel) (interface{}, diag.Diagnostics){
 	"webhook":               webhookConfigModelToAPI,
+	"email":                 emailConfigModelToAPI,
 	"opsgenie":              opsgenieConfigModelToAPI,
 	"pagerduty":             pagerdutyConfigModelToAPI,
 	"pagerduty-integration": pagerdutyIntegrationConfigModelToAPI,
@@ -105,9 +108,9 @@ func (r *ChannelResource) Schema(ctx context.Context, req resource.SchemaRequest
 				Attributes: map[string]rschema.Attribute{
 					"type": rschema.StringAttribute{
 						Required:            true,
-						MarkdownDescription: "Channel type (`webhook`, `opsgenie`, `pagerduty`, `pagerduty-integration`, or `slack-integration`).",
+						MarkdownDescription: "Channel type (`webhook`, `email`, `opsgenie`, `pagerduty`, `pagerduty-integration`, or `slack-integration`).",
 						Validators: []validator.String{
-							stringvalidator.OneOf("webhook", "opsgenie", "pagerduty", "pagerduty-integration", "slack-integration"),
+							stringvalidator.OneOf("webhook", "email", "opsgenie", "pagerduty", "pagerduty-integration", "slack-integration"),
 						},
 					},
 					"format": rschema.StringAttribute{
@@ -127,10 +130,29 @@ func (r *ChannelResource) Schema(ctx context.Context, req resource.SchemaRequest
 							),
 						},
 					},
+					"recipients": rschema.SetAttribute{
+						Optional:            true,
+						ElementType:         types.StringType,
+						MarkdownDescription: "Email addresses the channel notifies, 1 to 50. Required for `email` channels, which need a Logfire plan with custom email recipients. Write each address in the form Logfire normalizes it to, with a lowercase domain, to avoid a diff after apply. A recipient who unsubscribes leaves the channel, and Logfire rejects an update that adds them back until you remove the address from the configuration.",
+						Validators: []validator.Set{
+							setvalidator.SizeBetween(1, 50),
+						},
+					},
 					"auth_key": rschema.StringAttribute{
 						Optional:            true,
 						Sensitive:           true,
 						MarkdownDescription: "Opsgenie API key.",
+					},
+					"base_url": rschema.StringAttribute{
+						Optional:            true,
+						Computed:            true,
+						MarkdownDescription: "Opsgenie API base URL, for example `https://api.eu.opsgenie.com` for an EU account. Only for `opsgenie` channels. Omitting it on an existing channel retains the current value; set it to `https://api.opsgenie.com` explicitly to return to the default US endpoint.",
+						Validators: []validator.String{
+							stringvalidator.RegexMatches(
+								regexp.MustCompile(`^https://`),
+								"must be a valid HTTPS URL",
+							),
+						},
 					},
 					"routing_key": rschema.StringAttribute{
 						Optional:            true,
@@ -204,14 +226,18 @@ func channelConfigModelToAPI(m *ChannelConfigModel) (interface{}, diag.Diagnosti
 	}
 
 	cfgType := m.Type.ValueString()
+	if cfgType != "opsgenie" {
+		diags.Append(disallowConfigString(m.BaseURL, "config.base_url", cfgType)...)
+	}
+	if cfgType != "email" && len(m.Recipients) > 0 {
+		diags.AddError("Invalid channel config", fmt.Sprintf("config.recipients cannot be set for %s channels.", cfgType))
+	}
+	if diags.HasError() {
+		return nil, diags
+	}
 	mapper, ok := channelConfigModelToAPIMappers[cfgType]
 	if ok {
 		return mapper(m)
-	}
-	if cfgType == "email" {
-		// Email config exists in API but not exposed in Terraform yet
-		diags.Append(diag.NewErrorDiagnostic("Invalid channel config", "email channels are not yet supported via Terraform."))
-		return nil, diags
 	}
 	diags.Append(diag.NewErrorDiagnostic("Invalid channel config", fmt.Sprintf("unsupported config type %q", cfgType)))
 	return nil, diags
@@ -247,6 +273,35 @@ func webhookConfigModelToAPI(m *ChannelConfigModel) (interface{}, diag.Diagnosti
 	}, diags
 }
 
+func emailConfigModelToAPI(m *ChannelConfigModel) (interface{}, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	if len(m.Recipients) == 0 {
+		diags.AddError("Invalid channel config", "config.recipients must be set for email channels.")
+	}
+	diags.Append(disallowConfigFields("email",
+		channelConfigString{m.Format, "config.format"},
+		channelConfigString{m.URL, "config.url"},
+		channelConfigString{m.AuthKey, "config.auth_key"},
+		channelConfigString{m.RoutingKey, "config.routing_key"},
+		channelConfigString{m.Region, "config.region"},
+		channelConfigString{m.InstallID, "config.install_id"},
+		channelConfigString{m.ChannelID, "config.channel_id"},
+		channelConfigString{m.ServiceID, "config.service_id"},
+	)...)
+	diags.Append(disallowIncludeAgentPrompt(m.IncludeAgentPrompt, "email")...)
+	if diags.HasError() {
+		return nil, diags
+	}
+	recipients := make([]string, len(m.Recipients))
+	for i, r := range m.Recipients {
+		recipients[i] = r.ValueString()
+	}
+	return &logclient.EmailConfig{
+		ChannelConfigBase: logclient.ChannelConfigBase{Type: "email"},
+		Recipients:        recipients,
+	}, diags
+}
+
 func opsgenieConfigModelToAPI(m *ChannelConfigModel) (interface{}, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	key, keyDiags := requiredConfigString(m.AuthKey, "config.auth_key", "opsgenie")
@@ -267,6 +322,7 @@ func opsgenieConfigModelToAPI(m *ChannelConfigModel) (interface{}, diag.Diagnost
 	return &logclient.OpsgenieConfig{
 		ChannelConfigBase: logclient.ChannelConfigBase{Type: "opsgenie"},
 		AuthKey:           stringPointer(key),
+		BaseURL:           optionalConfigStringPointer(m.BaseURL),
 	}, diags
 }
 
@@ -368,6 +424,7 @@ func channelConfigAPIToModel(cfg interface{}) (*ChannelConfigModel, diag.Diagnos
 		Format:             types.StringNull(),
 		URL:                types.StringNull(),
 		AuthKey:            types.StringNull(),
+		BaseURL:            types.StringNull(),
 		RoutingKey:         types.StringNull(),
 		Region:             types.StringNull(),
 		InstallID:          types.StringNull(),
@@ -377,13 +434,8 @@ func channelConfigAPIToModel(cfg interface{}) (*ChannelConfigModel, diag.Diagnos
 	}
 
 	switch genericCfg.Type {
-	case "webhook", "opsgenie", "pagerduty", "pagerduty-integration", "slack-integration":
+	case "webhook", "email", "opsgenie", "pagerduty", "pagerduty-integration", "slack-integration":
 		populateChannelConfigModel(model, &genericCfg)
-	case "email":
-		// Email channels exist in API but not exposed in Terraform yet
-		return nil, diag.Diagnostics{
-			diag.NewErrorDiagnostic("Unsupported channel config", "email channels are not yet supported via Terraform."),
-		}
 	default:
 		return nil, diag.Diagnostics{
 			diag.NewErrorDiagnostic("Invalid channel config", fmt.Sprintf("unsupported config type %q", genericCfg.Type)),
@@ -395,7 +447,11 @@ func channelConfigAPIToModel(cfg interface{}) (*ChannelConfigModel, diag.Diagnos
 func populateChannelConfigModel(model *ChannelConfigModel, cfg *logclient.ChannelConfig) {
 	setOptionalConfigString(&model.Format, cfg.Format)
 	setOptionalConfigString(&model.URL, cfg.URL)
+	for _, r := range cfg.Recipients {
+		model.Recipients = append(model.Recipients, types.StringValue(r))
+	}
 	setOptionalConfigString(&model.AuthKey, cfg.AuthKey)
+	setOptionalConfigString(&model.BaseURL, cfg.BaseURL)
 	setOptionalConfigString(&model.RoutingKey, cfg.RoutingKey)
 	setOptionalConfigString(&model.Region, cfg.Region)
 	setOptionalConfigString(&model.InstallID, cfg.InstallID)
@@ -683,9 +739,13 @@ func (r *ChannelResource) Update(ctx context.Context, req resource.UpdateRequest
 	}
 	if plan.Config != nil {
 		config := *plan.Config
-		if config.Type.ValueString() == "slack-integration" && config.IncludeAgentPrompt.IsUnknown() &&
-			state.Config != nil && state.Config.Type.ValueString() == "slack-integration" {
-			config.IncludeAgentPrompt = state.Config.IncludeAgentPrompt
+		if state.Config != nil && state.Config.Type.ValueString() == config.Type.ValueString() {
+			if config.Type.ValueString() == "slack-integration" && config.IncludeAgentPrompt.IsUnknown() {
+				config.IncludeAgentPrompt = state.Config.IncludeAgentPrompt
+			}
+			if config.Type.ValueString() == "opsgenie" && config.BaseURL.IsUnknown() {
+				config.BaseURL = state.Config.BaseURL
+			}
 		}
 		cfg, diags := channelConfigModelToAPI(&config)
 		resp.Diagnostics.Append(diags...)

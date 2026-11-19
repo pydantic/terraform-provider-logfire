@@ -13,6 +13,11 @@ Manages a Logfire alert channel. Import accepts the channel UUID or its name (la
 ## Example Usage
 
 ```terraform
+variable "opsgenie_auth_key" {
+  type      = string
+  sensitive = true
+}
+
 variable "pagerduty_routing_key" {
   type      = string
   sensitive = true
@@ -26,6 +31,27 @@ resource "logfire_channel" "example" {
     type   = "webhook"
     format = "auto"
     url    = "https://example.com/logfire-webhook"
+  }
+}
+
+resource "logfire_channel" "opsgenie_eu" {
+  name   = "opsgenie-eu"
+  active = true
+
+  config {
+    type     = "opsgenie"
+    auth_key = var.opsgenie_auth_key
+    base_url = "https://api.eu.opsgenie.com"
+  }
+}
+
+resource "logfire_channel" "email" {
+  name   = "email-on-call"
+  active = true
+
+  config {
+    type       = "email"
+    recipients = ["oncall@example.com", "sre@example.com"]
   }
 }
 
@@ -90,15 +116,17 @@ resource "logfire_channel" "pagerduty_app" {
 
 Required:
 
-- `type` (String) Channel type (`webhook`, `opsgenie`, `pagerduty`, `pagerduty-integration`, or `slack-integration`).
+- `type` (String) Channel type (`webhook`, `email`, `opsgenie`, `pagerduty`, `pagerduty-integration`, or `slack-integration`).
 
 Optional:
 
 - `auth_key` (String, Sensitive) Opsgenie API key.
+- `base_url` (String) Opsgenie API base URL, for example `https://api.eu.opsgenie.com` for an EU account. Only for `opsgenie` channels. Omitting it on an existing channel retains the current value; set it to `https://api.opsgenie.com` explicitly to return to the default US endpoint.
 - `channel_id` (String) Slack channel ID (for example `C0123456789`) the notifications are posted to. The Logfire Slack bot must already be a member of the channel.
 - `format` (String) Webhook payload format.
 - `include_agent_prompt` (Boolean) Whether Slack issue notifications include the "Ask your agent" MCP prompt line. Defaults to `true` for new Slack channels. Omitting it on an existing channel retains the current setting; set it to `true` explicitly to re-enable the prompt.
 - `install_id` (String) ID of the organization's Slack App or PagerDuty App installation, created by connecting the platform in the Logfire UI (Organization Settings -> Connections). The installation must belong to the same organization, be active, and match the channel type.
+- `recipients` (Set of String) Email addresses the channel notifies, 1 to 50. Required for `email` channels, which need a Logfire plan with custom email recipients. Write each address in the form Logfire normalizes it to, with a lowercase domain, to avoid a diff after apply. A recipient who unsubscribes leaves the channel, and Logfire rejects an update that adds them back until you remove the address from the configuration.
 - `region` (String) PagerDuty account region (`us` or `eu`). When omitted, Logfire uses the US Events API endpoint. Only for `pagerduty` channels; a `pagerduty-integration` channel takes its region from the connected account.
 - `routing_key` (String, Sensitive) PagerDuty Events API v2 integration routing key. Only for `pagerduty` channels; `pagerduty-integration` channels resolve the key from the installation instead.
 - `service_id` (String) Logfire's ID (a UUID) for the PagerDuty service incidents are opened on, as approved for the installation when connecting PagerDuty. This is not PagerDuty's own service ID. Required for `pagerduty-integration` channels.
