@@ -167,7 +167,28 @@ Stop only processes started by this run. Do not remove a shared stack. Record
 unremoved resources as incomplete cleanup. Use pstack's
 `maintain-verification-skill` when the test commands or provider behavior change.
 
+## Independent review
+
+To have other agents review pull requests, prepare one bundle per pull request
+first, then start one fresh reviewer per bundle in parallel:
+
+```bash
+PLATFORM_REPO=../platform PLATFORM_REV=origin/main \
+  .cursor/skills/verify-terraform-provider-logfire/prepare-review.sh 92 93 94
+```
+
+The script completes Launch once for all bundles. It downloads Terraform 1.14.9 and
+1.8.5 and checks their checksums. It exports the platform `api.json`, checks out each
+exact head, and saves the diff against its base. It also compiles the provider and
+its tests into shared Go caches. Give each reviewer only its `brief.md`. The brief
+names the bundle's inputs.
+
+Keep the reviews independent. Do not pass the author's receipts, test results,
+review threads, other reviewers' findings or your view of the change. Speed them up
+through setup and parallelism instead. After the reviews, run the printed `cleanup.sh`.
+It removes the checkouts, tools and caches and keeps each `evidence` directory.
+
 ## Helpers
 
-No new helper is needed. `make test`, `make test-e2e`, the existing `TestAcc` tests,
-and Terraform's test framework own the CLI lifecycle.
+`prepare-review.sh` prepares independent review bundles. `make test`, `make test-e2e`,
+the existing `TestAcc` tests, and Terraform's test framework own the CLI lifecycle.
