@@ -1562,20 +1562,20 @@ const (
 // route Logfire served before. A 404 never has an effect, so the second call
 // is safe for every method. Once the deprecated route has answered, later
 // calls skip the new one. An empty id addresses the collection.
-func (c *APIClient) doSchedule(ctx context.Context, method, id string, in, out any, expected int) (*http.Response, error) {
-	path := func(base string) string {
-		if id == "" {
-			return base
-		}
-		return base + url.PathEscape(id) + "/"
+func (c *APIClient) doSchedule(
+	ctx context.Context, method, id string, in, out any, expected int,
+) (*http.Response, error) {
+	suffix := ""
+	if id != "" {
+		suffix = url.PathEscape(id) + "/"
 	}
 	if !c.legacySchedules.Load() {
-		resp, err := c.doJSON(ctx, method, path(notificationWindowsPath), in, out, expected)
+		resp, err := c.doJSON(ctx, method, notificationWindowsPath+suffix, in, out, expected)
 		if !IsNotFoundError(err) {
 			return resp, err
 		}
 	}
-	resp, err := c.doJSON(ctx, method, path(legacySchedulesPath), in, out, expected)
+	resp, err := c.doJSON(ctx, method, legacySchedulesPath+suffix, in, out, expected)
 	if err == nil {
 		c.legacySchedules.Store(true)
 	}
@@ -1587,29 +1587,24 @@ func (c *APIClient) doSchedule(ctx context.Context, method, id string, in, out a
 // second schedule.
 func (c *APIClient) CreateSchedule(ctx context.Context, in ScheduleCreate) (*ScheduleRead, error) {
 	var out ScheduleRead
-	_, err := c.doSchedule(disableAutomaticRetries(ctx), http.MethodPost, "", in, &out, http.StatusCreated)
+	ctx = disableAutomaticRetries(ctx)
+	_, err := c.doSchedule(ctx, http.MethodPost, "", in, &out, http.StatusCreated)
+	if IsNotFoundError(err) {
+		// Schedules have no list route and unknown ids live under /{id}/, so
+		// a 404 on a create from both routes means the instance predates the
+		// schedules API rather than an unknown schedule.
+		return nil, &EndpointUnavailableError{
+			Method:         http.MethodPost,
+			Path:           notificationWindowsPath,
+			MinimumRelease: "v2026-09-23.01",
+			MinimumChart:   "logfire-0.13.47",
+			BackendVersion: BackendVersionFromError(err),
+		}
+	}
 	if err != nil {
-		return nil, schedulesEndpointUnavailableError(err)
+		return nil, err
 	}
 	return &out, nil
-}
-
-// schedulesEndpointUnavailableError translates a 404 from the schedule
-// collection route into an actionable upgrade hint. Schedules have no list
-// route and unknown ids live under /{id}/, so a 404 on a create from both
-// routes means the instance predates the schedules API rather than an unknown
-// schedule.
-func schedulesEndpointUnavailableError(err error) error {
-	if !IsNotFoundError(err) {
-		return err
-	}
-	return &EndpointUnavailableError{
-		Method:         http.MethodPost,
-		Path:           notificationWindowsPath,
-		MinimumRelease: "v2026-09-23.01",
-		MinimumChart:   "logfire-0.13.47",
-		BackendVersion: BackendVersionFromError(err),
-	}
 }
 
 func (c *APIClient) GetSchedule(ctx context.Context, id string) (*ScheduleRead, int, error) {
