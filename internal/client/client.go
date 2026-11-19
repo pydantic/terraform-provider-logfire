@@ -344,6 +344,12 @@ type APIClient struct {
 	userAgent string
 	headers   http.Header
 
+	// ManagedBy and ManagedByName identify the tool that owns the dashboards
+	// this client writes. Logfire accepts "terraform", "pulumi", or "other"
+	// with a name.
+	ManagedBy     string
+	ManagedByName string
+
 	orgTokenMu    sync.Mutex
 	orgTokenCache map[string]orgTokenEntry
 }
@@ -415,6 +421,12 @@ func WithUserAgent(ua string) Option {
 		if trimmed := strings.TrimSpace(ua); trimmed != "" {
 			c.userAgent = trimmed
 		}
+	}
+}
+
+func WithManagedBy(managedBy, name string) Option {
+	return func(c *APIClient) {
+		c.ManagedBy, c.ManagedByName = managedBy, name
 	}
 }
 
@@ -1229,15 +1241,22 @@ func (c *APIClient) RevokeFrontendApplicationToken(ctx context.Context, projectI
 // ---- Dashboards ----
 
 type DashboardCreateRequest struct {
-	Name       string          `json:"name"`
-	Slug       string          `json:"slug"`
-	Definition json.RawMessage `json:"definition"`
+	Name              string          `json:"name"`
+	Slug              string          `json:"slug"`
+	Definition        json.RawMessage `json:"definition"`
+	ManagedBy         string          `json:"managed_by,omitempty"`
+	ManagedByName     string          `json:"managed_by_name,omitempty"`
+	ManagedAllowEdits bool            `json:"managed_allow_edits,omitempty"`
 }
 
 type DashboardUpdateRequest struct {
 	Name          *string          `json:"name,omitempty"`
 	Definition    *json.RawMessage `json:"definition,omitempty"`
-	ReplaceLayout bool             `json:"-"`
+	ManagedBy     string           `json:"managed_by,omitempty"`
+	ManagedByName string           `json:"managed_by_name,omitempty"`
+	// The API rejects managed_allow_edits without managed_by, so nil omits it.
+	ManagedAllowEdits *bool `json:"managed_allow_edits,omitempty"`
+	ReplaceLayout     bool  `json:"-"`
 }
 
 type DashboardSummary struct {

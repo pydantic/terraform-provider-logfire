@@ -50,3 +50,64 @@ func TestUpdateDashboardLayoutReplacementIsOptIn(t *testing.T) {
 		})
 	}
 }
+
+func TestDashboardWritesSendManagedBy(t *testing.T) {
+	t.Parallel()
+	definition := json.RawMessage(`{"kind":"Dashboard","spec":{}}`)
+	allow, deny := true, false
+	for _, tc := range []struct {
+		name, body string
+		write      func(*APIClient) error
+	}{
+		{
+			"create", `{"name":"Main","slug":"main","definition":{"kind":"Dashboard","spec":{}},"managed_by":"terraform"}`,
+			func(c *APIClient) error {
+				_, err := c.CreateDashboard(t.Context(), "project-id", DashboardCreateRequest{Name: "Main", Slug: "main", Definition: definition, ManagedBy: "terraform"})
+				return err
+			},
+		},
+		{
+			"create with edits allowed", `{"name":"Main","slug":"main","definition":{"kind":"Dashboard","spec":{}},"managed_by":"other","managed_by_name":"crossplane","managed_allow_edits":true}`,
+			func(c *APIClient) error {
+				_, err := c.CreateDashboard(t.Context(), "project-id", DashboardCreateRequest{Name: "Main", Slug: "main", Definition: definition, ManagedBy: "other", ManagedByName: "crossplane", ManagedAllowEdits: true})
+				return err
+			},
+		},
+		{
+			"update", `{"managed_by":"pulumi","managed_allow_edits":false}`,
+			func(c *APIClient) error {
+				_, err := c.UpdateDashboard(t.Context(), "project-id", "dashboard-id", DashboardUpdateRequest{ManagedBy: "pulumi", ManagedAllowEdits: &deny})
+				return err
+			},
+		},
+		{
+			"update with edits allowed", `{"managed_by":"other","managed_by_name":"crossplane","managed_allow_edits":true}`,
+			func(c *APIClient) error {
+				_, err := c.UpdateDashboard(t.Context(), "project-id", "dashboard-id", DashboardUpdateRequest{ManagedBy: "other", ManagedByName: "crossplane", ManagedAllowEdits: &allow})
+				return err
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				body, err := io.ReadAll(req.Body)
+				if err != nil {
+					t.Error(err)
+				}
+				if string(body) != tc.body {
+					t.Errorf("unexpected body: %s", body)
+				}
+				// A server with the release gate off returns a null manager.
+				_, _ = io.WriteString(w, `{"id":"dashboard-id","dashboard_name":"Main","managed_by":null}`)
+			}))
+			defer server.Close()
+			client, err := NewAPIClient(server.URL, "test", server.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := tc.write(client); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}

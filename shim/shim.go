@@ -12,3 +12,7 @@ import (
 func New(version string) func() tfpfprovider.Provider {
 	return provider.New(version)
 }
+
+func NewManagedBy(version, managedBy string) func() tfpfprovider.Provider {
+	return provider.NewManagedBy(version, managedBy)
+}

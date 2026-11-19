@@ -13,6 +13,7 @@ import (
 	stringvalidator "github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	rschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
@@ -37,6 +38,7 @@ type DashboardModel struct {
 	Name       types.String `tfsdk:"name"`
 	Slug       types.String `tfsdk:"slug"`
 	Definition types.String `tfsdk:"definition"`
+	AllowUIEdits types.Bool `tfsdk:"allow_ui_edits"`
 }
 
 func (r *DashboardResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -86,6 +88,12 @@ func (r *DashboardResource) Schema(ctx context.Context, req resource.SchemaReque
 				MarkdownDescription: "Dashboard definition JSON payload.",
 				PlanModifiers:       []planmodifier.String{dashboardDefinitionPlanModifier{}},
 				Validators:          []validator.String{dashboardDefinitionValidator{}},
+			},
+			"allow_ui_edits": rschema.BoolAttribute{
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(false),
+				MarkdownDescription: "Whether Logfire users can edit the dashboard. Logfire marks the dashboard as managed by this tool and refuses edits from its UI, MCP server, and Assistant. Set to `true` to keep the mark and allow those edits. The next apply overwrites them. Defaults to `false`.",
 			},
 		},
 	}
@@ -137,6 +145,10 @@ func (r *DashboardResource) Create(ctx context.Context, req resource.CreateReque
 		Name:       plan.Name.ValueString(),
 		Slug:       plan.Slug.ValueString(),
 		Definition: defRaw,
+
+		ManagedBy:         r.client.ManagedBy,
+		ManagedByName:     r.client.ManagedByName,
+		ManagedAllowEdits: plan.AllowUIEdits.ValueBool(),
 	}
 
 	out, err := r.client.CreateDashboard(ctx, projectID, payload)
@@ -151,6 +163,7 @@ func (r *DashboardResource) Create(ctx context.Context, req resource.CreateReque
 		return
 	}
 	state.Definition = preserveDashboardDefinition(plan.Definition, state.Definition)
+	state.AllowUIEdits = plan.AllowUIEdits
 	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
 		state.ProjectID = types.StringValue(projectID)
 	}
@@ -247,7 +260,12 @@ func (r *DashboardResource) Update(ctx context.Context, req resource.UpdateReque
 	projectID := state.ProjectID.ValueString()
 	dashboardID := state.ID.ValueString()
 
-	payload := logclient.DashboardUpdateRequest{}
+	allowEdits := plan.AllowUIEdits.ValueBool()
+	payload := logclient.DashboardUpdateRequest{
+		ManagedBy:         r.client.ManagedBy,
+		ManagedByName:     r.client.ManagedByName,
+		ManagedAllowEdits: &allowEdits,
+	}
 	if !plan.Name.Equal(state.Name) {
 		name := plan.Name.ValueString()
 		payload.Name = &name
@@ -267,13 +285,6 @@ func (r *DashboardResource) Update(ctx context.Context, req resource.UpdateReque
 		payload.ReplaceLayout = true
 	}
 
-	if payload.Name == nil && payload.Definition == nil {
-		state.Definition = plan.Definition
-		state.Name = plan.Name
-		resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
-		return
-	}
-
 	out, err := r.client.UpdateDashboard(ctx, projectID, dashboardID, payload)
 	if err != nil {
 		resp.Diagnostics.AddError("Update dashboard failed", err.Error())
@@ -287,6 +298,7 @@ func (r *DashboardResource) Update(ctx context.Context, req resource.UpdateReque
 		return
 	}
 	newState.Definition = preserveDashboardDefinition(plan.Definition, newState.Definition)
+	newState.AllowUIEdits = plan.AllowUIEdits
 	if newState.ProjectID.IsNull() || newState.ProjectID.IsUnknown() || newState.ProjectID.ValueString() == "" {
 		newState.ProjectID = types.StringValue(projectID)
 	}
@@ -432,6 +444,7 @@ func (r *DashboardResource) ImportState(ctx context.Context, req resource.Import
 	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
 		state.ProjectID = types.StringValue(projectID)
 	}
+	state.AllowUIEdits = types.BoolValue(false)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 

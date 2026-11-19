@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -40,11 +41,17 @@ var reservedCustomHeaders = map[string]struct{}{
 	"x-terraform-provider-version": {},
 }
 
+const managedByEnvVar = "LOGFIRE_MANAGED_BY"
+
 func New(version string) func() provider.Provider {
-	return func() provider.Provider { return &LogfireProvider{version: version} }
+	return NewManagedBy(version, "")
 }
 
-type LogfireProvider struct{ version string }
+func NewManagedBy(version, managedBy string) func() provider.Provider {
+	return func() provider.Provider { return &LogfireProvider{version: version, managedBy: managedBy} }
+}
+
+type LogfireProvider struct{ version, managedBy string }
 
 type LogfireProviderModel struct {
 	BaseUrl       types.String `tfsdk:"base_url"`
@@ -176,12 +183,23 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 		headers.Set("X-Terraform-Provider-Version", p.version)
 	}
 
+	tool := p.managedBy
+	if tool == "" {
+		tool = os.Getenv(managedByEnvVar)
+	}
+	managedBy, managedByName, err := managedByFields(tool)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid "+managedByEnvVar, err.Error())
+		return
+	}
+
 	apiClient, err := client.NewAPIClient(
 		base_url,
 		api_key,
 		nil,
 		client.WithUserAgent(ua),
-		client.WithAdditionalHeaders(headers))
+		client.WithAdditionalHeaders(headers),
+		client.WithManagedBy(managedBy, managedByName))
 
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid provider configuration", err.Error())
@@ -191,6 +209,19 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 	resp.DataSourceData = apiClient
 	resp.ResourceData = apiClient
 	tflog.Info(ctx, "Logfire client configured successfully")
+}
+
+func managedByFields(tool string) (managedBy, name string, err error) {
+	switch tool = strings.TrimSpace(tool); {
+	case tool == "":
+		return "terraform", "", nil
+	case tool == "terraform" || tool == "pulumi":
+		return tool, "", nil
+	case utf8.RuneCountInString(tool) > 64:
+		return "", "", fmt.Errorf("the tool name must be at most 64 characters, got %d", utf8.RuneCountInString(tool))
+	default:
+		return "other", tool, nil
+	}
 }
 
 func customHeadersFromConfig(ctx context.Context, config types.Map) (http.Header, diag.Diagnostics) {

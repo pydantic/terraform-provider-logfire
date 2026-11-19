@@ -1,5 +1,9 @@
 ## Unreleased
 
+FEATURES:
+- `logfire_dashboard` marks each dashboard it creates or updates as managed by Terraform. Logfire shows a "Managed by Terraform" badge and refuses edits from its UI, MCP server, and Assistant. The new optional `allow_ui_edits` attribute (default `false`) keeps the badge and allows those edits. After the upgrade, the first plan shows an in-place update of each existing dashboard that sets `allow_ui_edits`, and that update applies the mark. A Logfire instance without managed dashboard support saves the dashboard and ignores the mark.
+- The `LOGFIRE_MANAGED_BY` environment variable names the tool for wrappers of this provider: `terraform` (default), `pulumi`, or any other name of at most 64 characters. `shim.NewManagedBy` does the same for a wrapper that embeds the provider as a Go package.
+
 ## 0.2.4
 
 FEATURES:

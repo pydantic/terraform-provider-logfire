@@ -6,6 +6,7 @@ package provider
 import (
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
@@ -85,4 +86,26 @@ func testAccScopedProjectID(t *testing.T) string {
 		t.Skip("skipping scoped API key test: LOGFIRE_SCOPED_API_KEY and LOGFIRE_API_KEY_TEST_PROJECT_ID must be set")
 	}
 	return os.Getenv("LOGFIRE_API_KEY_TEST_PROJECT_ID")
+}
+
+func TestManagedByFields(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		tool, managedBy, name string
+		wantErr               bool
+	}{
+		{tool: "", managedBy: "terraform"},
+		{tool: "  ", managedBy: "terraform"},
+		{tool: "terraform", managedBy: "terraform"},
+		{tool: "pulumi", managedBy: "pulumi"},
+		{tool: "crossplane", managedBy: "other", name: "crossplane"},
+		{tool: " crossplane ", managedBy: "other", name: "crossplane"},
+		{tool: strings.Repeat("a", 64), managedBy: "other", name: strings.Repeat("a", 64)},
+		{tool: strings.Repeat("a", 65), wantErr: true},
+	} {
+		managedBy, name, err := managedByFields(tc.tool)
+		if (err != nil) != tc.wantErr || managedBy != tc.managedBy || name != tc.name {
+			t.Errorf("managedByFields(%q) = %q, %q, %v", tc.tool, managedBy, name, err)
+		}
+	}
 }

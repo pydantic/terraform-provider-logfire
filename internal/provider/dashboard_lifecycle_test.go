@@ -15,6 +15,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/providerserver"
+	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 )
@@ -245,7 +247,7 @@ removed {
 	if api.creates != 2 || api.id != "" {
 		t.Fatalf("lifecycle left creates=%d, remote ID=%q; want two creates and final deletion", api.creates, api.id)
 	}
-	if len(api.writes) != 6 || api.writes[1] != `{"name":"Renamed"}` || !strings.Contains(api.writes[0], `"largeInteger":9007199254740993`) || !strings.Contains(api.writes[0], `"fraction":0.333333333333333333333333333333333333`) {
+	if len(api.writes) != 6 || api.writes[1] != `{"name":"Renamed","managed_by":"terraform","managed_allow_edits":false}` || !strings.Contains(api.writes[0], `"largeInteger":9007199254740993`) || !strings.Contains(api.writes[0], `"fraction":0.333333333333333333333333333333333333`) {
 		t.Fatalf("unexpected dashboard writes: %v", api.writes)
 	}
 	for i, query := range []string{"", "", "replace_layout=true", "replace_layout=true", "replace_layout=true", ""} {
@@ -265,5 +267,57 @@ removed {
 		if metadata := payload.Definition.Metadata; metadata.Name != "Main" || metadata.Project != "test" {
 			t.Fatalf("create %d metadata = %+v, want Main in test", i, metadata)
 		}
+	}
+}
+
+// The test sets LOGFIRE_MANAGED_BY, so it does not run in parallel.
+func TestLifecycleDashboardManagedBy(t *testing.T) {
+	definition := filepath.Join(t.TempDir(), "dashboard.json")
+	if err := os.WriteFile(definition, []byte(dashboardLifecycleFile), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, constructor, env, want string
+	}{
+		{"default", "", "", `"managed_by":"terraform"`},
+		{"environment names pulumi", "", "pulumi", `"managed_by":"pulumi"`},
+		{"environment names another tool", "", "crossplane", `"managed_by":"other","managed_by_name":"crossplane"`},
+		{"constructor wins over environment", "pulumi", "crossplane", `"managed_by":"pulumi"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(managedByEnvVar, tc.env)
+			api := &dashboardLifecycleAPIState{}
+			server := httptest.NewServer(api)
+			defer server.Close()
+			config := func(extra string) string {
+				return lifecycleConfig(server.URL, "dashboard", fmt.Sprintf("project_id = \"project-1\"\nname = \"Main\"\nslug = \"main\"\ndefinition = file(%q)\n%s", definition, extra))
+			}
+			const address = "logfire_dashboard.test"
+			inPlace := resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction(address, plancheck.ResourceActionUpdate)}}
+			resource.Test(t, resource.TestCase{
+				IsUnitTest: true,
+				ProtoV6ProviderFactories: map[string]func() (tfprotov6.ProviderServer, error){
+					"logfire": providerserver.NewProtocol6WithError(NewManagedBy("test", tc.constructor)()),
+				},
+				Steps: []resource.TestStep{
+					{Config: config(""), Check: resource.TestCheckResourceAttr(address, "allow_ui_edits", "false")},
+					{Config: config("allow_ui_edits = true"), ConfigPlanChecks: inPlace, Check: resource.TestCheckResourceAttr(address, "allow_ui_edits", "true")},
+					{Config: config(""), ConfigPlanChecks: inPlace, Check: resource.TestCheckResourceAttr(address, "allow_ui_edits", "false")},
+				},
+			})
+			api.Lock()
+			defer api.Unlock()
+			if len(api.writes) != 3 {
+				t.Fatalf("writes = %v, want a create and two updates", api.writes)
+			}
+			if !strings.HasSuffix(api.writes[0], tc.want+"}") {
+				t.Fatalf("create body = %s, want suffix %s", api.writes[0], tc.want)
+			}
+			for i, allow := range []string{"true", "false"} {
+				if want := "{" + tc.want + `,"managed_allow_edits":` + allow + "}"; api.writes[i+1] != want {
+					t.Fatalf("update %d body = %s, want %s", i+1, api.writes[i+1], want)
+				}
+			}
+		})
 	}
 }
