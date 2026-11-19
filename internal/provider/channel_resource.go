@@ -8,7 +8,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 
 	objectvalidator "github.com/hashicorp/terraform-plugin-framework-validators/objectvalidator"
@@ -25,6 +27,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
+	"golang.org/x/net/idna"
+	"golang.org/x/text/unicode/norm"
 )
 
 var _ resource.Resource = &ChannelResource{}
@@ -133,14 +137,11 @@ func (r *ChannelResource) Schema(ctx context.Context, req resource.SchemaRequest
 					"recipients": rschema.SetAttribute{
 						Optional:            true,
 						ElementType:         types.StringType,
-						MarkdownDescription: "Email addresses the channel notifies, 1 to 50. Required for `email` channels, which need a Logfire plan with custom email recipients. Logfire stores each address with a lowercase domain, so the provider rejects an address with uppercase letters in its domain or with surrounding spaces. A recipient who unsubscribes leaves the channel, and Logfire rejects an update that adds them back until you remove the address from the configuration.",
+						MarkdownDescription: "Email addresses the channel notifies, 1 to 50. Required for `email` channels, which need a Logfire plan with custom email recipients. Logfire normalizes each address, for example by lowercasing its domain. The provider keeps the configured spelling when Logfire stores an equivalent one. A recipient who unsubscribes leaves the channel, and Logfire rejects an update that adds them back until you remove the address from the configuration.",
 						Validators: []validator.Set{
 							setvalidator.SizeBetween(1, 50),
-							// The API normalizes each address. Another spelling would come back
-							// changed and fail the apply with an inconsistent result.
 							setvalidator.ValueStringsAre(stringvalidator.RegexMatches(
-								regexp.MustCompile(`^[^\s\p{Z}](.*[^\s\p{Z}])?@[^@\s\p{Z}\p{Lu}]+$`),
-								"must be an email address with a lowercase domain and no surrounding spaces",
+								regexp.MustCompile(`^.+@.+$`), "must be an email address",
 							)),
 						},
 					},
@@ -154,9 +155,11 @@ func (r *ChannelResource) Schema(ctx context.Context, req resource.SchemaRequest
 						Computed:            true,
 						MarkdownDescription: "Opsgenie API base URL, for example `https://api.eu.opsgenie.com` for an EU account. Only for `opsgenie` channels. Omitting it on an existing channel retains the current value; set it to `https://api.opsgenie.com` explicitly to return to the default US endpoint.",
 						Validators: []validator.String{
+							// The provider trims the URL it sends, so surrounding spaces would come
+							// back changed and fail the apply.
 							stringvalidator.RegexMatches(
-								regexp.MustCompile(`^https://`),
-								"must be a valid HTTPS URL",
+								regexp.MustCompile(`^https://[^\s\p{Z}]+$`),
+								"must be an HTTPS URL without spaces",
 							),
 						},
 					},
@@ -288,6 +291,8 @@ func emailConfigModelToAPI(m *ChannelConfigModel) (interface{}, diag.Diagnostics
 	for i, r := range m.Recipients {
 		recipients[i] = r.ValueString()
 	}
+	// Sorted so that Update can compare two configs.
+	slices.Sort(recipients)
 	return &logclient.EmailConfig{
 		ChannelConfigBase: logclient.ChannelConfigBase{Type: "email"},
 		Recipients:        recipients,
@@ -553,9 +558,37 @@ func reconcileChannelConfigMaskedSecrets(remote, fallback *ChannelConfigModel) *
 			fallback.RoutingKey,
 			isMaskedPagerdutyRoutingKey,
 		)
+	case "email":
+		for i, stored := range remote.Recipients {
+			for _, configured := range fallback.Recipients {
+				if sameEmail(configured.ValueString(), stored.ValueString()) {
+					remote.Recipients[i] = configured
+				}
+			}
+		}
 	}
 
 	return remote
+}
+
+// sameEmail reports whether Logfire stored the configured address. Logfire trims it, normalizes
+// it to NFC, writes an IDNA domain in Unicode and lowercases the domain and some mailbox names,
+// such as postmaster.
+func sameEmail(configured, stored string) bool {
+	return strings.EqualFold(canonicalEmail(configured), canonicalEmail(stored))
+}
+
+func canonicalEmail(address string) string {
+	address = norm.NFC.String(strings.TrimSpace(address))
+	at := strings.LastIndex(address, "@")
+	if at < 0 {
+		return address
+	}
+	domain, err := idna.ToUnicode(address[at+1:])
+	if err != nil {
+		return address
+	}
+	return address[:at+1] + domain
 }
 
 func preserveMaskedConfigValue(remote, fallback types.String, isMasked func(string) bool) types.String {
@@ -744,7 +777,15 @@ func (r *ChannelResource) Update(ctx context.Context, req resource.UpdateRequest
 		if resp.Diagnostics.HasError() {
 			return
 		}
-		payload.Config = &cfg
+		// Logfire keeps a config the update leaves out. Resending an unchanged email config fails
+		// after the last recipient unsubscribes, because Logfire keeps that address.
+		var current any
+		if state.Config != nil {
+			current, _ = channelConfigModelToAPI(state.Config)
+		}
+		if !reflect.DeepEqual(cfg, current) {
+			payload.Config = &cfg
+		}
 	}
 
 	out, err := r.client.UpdateChannel(ctx, id, payload)

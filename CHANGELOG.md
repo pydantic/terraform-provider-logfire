@@ -1,7 +1,7 @@
 ## Unreleased
 
 FEATURES:
-- `logfire_channel` supports `email` channels with a new `recipients` attribute, which needs a Logfire plan with custom email recipients. The provider rejects an address with an uppercase domain or surrounding spaces, because Logfire stores the normalized form and the apply would fail with an inconsistent result.
+- `logfire_channel` supports `email` channels with a new `recipients` attribute, which needs a Logfire plan with custom email recipients. Logfire normalizes addresses, for example by lowercasing the domain. The provider keeps the configured spelling. A rename or deactivation leaves the recipients untouched, so it still works after the last recipient unsubscribes.
 - `logfire_channel`: Opsgenie channels accept a `base_url` attribute for accounts outside the US region, such as `https://api.eu.opsgenie.com`. Omitting it on an existing channel retains the current value, so an update no longer drops a base URL set in the Logfire UI.
 
 ## 0.2.4

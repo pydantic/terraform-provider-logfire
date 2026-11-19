@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -18,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+	"golang.org/x/net/idna"
 )
 
 func lifecycleConfig(baseURL, kind, body string) string {
@@ -32,6 +34,22 @@ type lifecycleAPI struct {
 	failFollowup bool
 	creates      int
 	deletes      int
+	// unsubscribed is an address that left the channel. Logfire refuses a config that lists it.
+	unsubscribed string
+}
+
+// normalizeEmail mimics the API's email-validator normalization for the spellings the tests use.
+func normalizeEmail(address string) string {
+	address = strings.TrimSpace(address)
+	at := strings.LastIndex(address, "@")
+	local, domain := address[:at], strings.ToLower(address[at+1:])
+	if strings.EqualFold(local, "postmaster") {
+		local = "postmaster"
+	}
+	if unicodeDomain, err := idna.ToUnicode(domain); err == nil {
+		domain = unicodeDomain
+	}
+	return local + "@" + domain
 }
 
 // Only channel and organization recovery need a stateful local API. Ordinary
@@ -62,6 +80,18 @@ func newLifecycleAPI(t *testing.T, kind string) (*httptest.Server, *lifecycleAPI
 				t.Errorf("request body: %v", err)
 				w.WriteHeader(http.StatusBadRequest)
 				return
+			}
+			if config, ok := payload["config"].(map[string]any); ok && config["type"] == "email" {
+				recipients, _ := config["recipients"].([]any)
+				for i, recipient := range recipients {
+					address, _ := recipient.(string)
+					recipients[i] = normalizeEmail(address)
+					if recipients[i] == api.unsubscribed {
+						w.WriteHeader(http.StatusConflict)
+						_, _ = w.Write([]byte(`{"detail":"unsubscribed from this channel"}`))
+						return
+					}
+				}
 			}
 			if config, ok := payload["config"].(map[string]any); ok && config["type"] == "slack-integration" {
 				if _, present := config["include_agent_prompt"]; !present {
@@ -183,6 +213,7 @@ func TestLifecycleOpsgenieBaseURL(t *testing.T) {
 						return nil
 					}),
 			},
+			{Config: opsgenie("renamed", "base_url = \"https://api.opsgenie.com \""), ExpectError: regexp.MustCompile(`without\s+spaces`)},
 			{Config: opsgenie("renamed", "base_url = \"https://api.opsgenie.com\""), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.base_url", "https://api.opsgenie.com")},
 		},
 	})
@@ -190,20 +221,29 @@ func TestLifecycleOpsgenieBaseURL(t *testing.T) {
 
 func TestLifecycleEmailRecipients(t *testing.T) {
 	t.Parallel()
-	server, _ := newLifecycleAPI(t, "channel")
-	email := func(recipients string) string {
-		return lifecycleConfig(server.URL, "channel", fmt.Sprintf("name = \"email\"\nconfig {\ntype = \"email\"\nrecipients = [%s]\n}", recipients))
+	server, api := newLifecycleAPI(t, "channel")
+	named := func(name, recipients string) string {
+		return lifecycleConfig(server.URL, "channel", fmt.Sprintf("name = %q\nconfig {\ntype = \"email\"\nrecipients = [%s]\n}", name, recipients))
 	}
+	email := func(recipients string) string { return named("email", recipients) }
+	const normalized = `"a@Example.com", " Postmaster@example.com", "b@xn--bcher-kva.example\u00a0"`
 	resource.Test(t, resource.TestCase{
 		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{Config: email(`"a@example.com"`), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.recipients.#", "1")},
 			{Config: email(`"a@example.com", "b@example.com"`), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.recipients.#", "2")},
 			{Config: email(`"a@example.com", "b@example.com"`), ResourceName: "logfire_channel.test", ImportState: true, ImportStateVerify: true},
-			{Config: email(`"a@Example.com"`), ExpectError: regexp.MustCompile("lowercase domain")},
-			{Config: email(`" a@example.com"`), ExpectError: regexp.MustCompile("lowercase domain")},
-			{Config: email(`"a@example.com\u00a0"`), ExpectError: regexp.MustCompile("lowercase domain")},
-			{Config: email(`"OnCall@example.com"`), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.recipients.#", "1")},
+			// Logfire stores other spellings of these, so each must keep its configured spelling.
+			{Config: email(normalized), Check: resource.TestCheckTypeSetElemAttr("logfire_channel.test", "config.recipients.*", " Postmaster@example.com")},
+			{Config: email(normalized), ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}}},
+			{Config: email(`"not-an-address"`), ExpectError: regexp.MustCompile(`must be an email\s+address`)},
+			{
+				// Logfire keeps the last address after it unsubscribes, so a rename must not resend it.
+				PreConfig: func() { api.Lock(); api.unsubscribed = "a@example.com"; api.Unlock() },
+				Config:    named("renamed", normalized),
+				Check:     resource.TestCheckResourceAttr("logfire_channel.test", "name", "renamed"),
+			},
+			{Config: named("renamed", `"a@example.com"`), ExpectError: regexp.MustCompile("unsubscribed")},
 		},
 	})
 }
