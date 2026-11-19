@@ -17,6 +17,11 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request cancels its older run. Pushes to main always finish.
+concurrency:
+  group: tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # Ensure project builds before running testing matrix
   build:
@@ -56,16 +61,14 @@ jobs:
           git diff --compact-summary --exit-code || \
             (echo; echo "Unexpected difference in directories after code generation. Run 'make generate' command and commit."; exit 1)
 
-  # Run acceptance tests in a matrix with Terraform CLI versions
+  # Every Terraform version runs the local tests. Only the newest also runs the
+  # live acceptance tests, which use the shared hosted organization's rate limit.
   test:
-    # Only run acceptance tests for PRs from the same repo (skips forked PRs)
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     name: Terraform Provider Acceptance Tests
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
-      max-parallel: 1
       fail-fast: false
       matrix:
         terraform:
@@ -82,15 +85,17 @@ jobs:
           terraform_version: ${{ matrix.terraform }}
           terraform_wrapper: false
       - run: go mod download
+      - name: Run unit and lifecycle tests
+        run: go test -v -cover -timeout=10m ./...
       - name: Check if secrets are available
         id: check-secrets
+        if: matrix.terraform == '1.14.*'
         run: |
           if [[ -z "${{ secrets.LOGFIRE_API_KEY }}" ]]; then
             echo "skip_tests=true" >> $GITHUB_OUTPUT
             echo "LOGFIRE_API_KEY secret not available, skipping acceptance tests"
           else
             echo "skip_tests=false" >> $GITHUB_OUTPUT
-            echo "LOGFIRE_API_KEY secret available, running acceptance tests"
           fi
       - name: Run acceptance tests
         if: steps.check-secrets.outputs.skip_tests == 'false'
@@ -105,8 +110,5 @@ jobs:
           # Tests skip when it is absent (forks without secrets).
           LOGFIRE_SCOPED_API_KEY: ${{ secrets.LOGFIRE_SCOPED_API_KEY }}
           LOGFIRE_API_KEY_TEST_PROJECT_ID: "e9731857-2b0f-4731-b21d-bbe39cb8540b"
-        run: go test -v -cover -timeout=14m ./internal/provider/
+        run: go test -v -cover -timeout=14m -run '^TestAcc' ./internal/provider/
         timeout-minutes: 15
-      - name: Skip acceptance tests
-        if: steps.check-secrets.outputs.skip_tests == 'true'
-        run: echo "Skipping acceptance tests - LOGFIRE_API_KEY secret not available"

@@ -39,21 +39,28 @@ const (
 )
 
 var (
-	defaultLimiter = newRateLimiter(defaultRequestsPerMinute, defaultRequestsPerHour)
+	// Logfire limits API requests per organization on each backend. Every client in the
+	// process shares one limiter per host, so requests to one backend never spend another's.
+	hostLimiters   = map[string]*rateLimiter{}
+	hostLimitersMu sync.Mutex
 	jitterRand     = rand.New(rand.NewSource(time.Now().UnixNano()))
 	jitterMu       sync.Mutex
 )
 
 type rateLimitedTransport struct {
-	next    http.RoundTripper
-	limiter *rateLimiter
+	next http.RoundTripper
 }
 
 func (t *rateLimitedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if t.limiter != nil {
-		if err := t.limiter.Wait(req.Context()); err != nil {
-			return nil, err
-		}
+	hostLimitersMu.Lock()
+	limiter := hostLimiters[req.URL.Host]
+	if limiter == nil {
+		limiter = newRateLimiter(defaultRequestsPerMinute, defaultRequestsPerHour)
+		hostLimiters[req.URL.Host] = limiter
+	}
+	hostLimitersMu.Unlock()
+	if err := limiter.Wait(req.Context()); err != nil {
+		return nil, err
 	}
 	return t.next.RoundTrip(req)
 }
@@ -308,10 +315,7 @@ func (g *rateGate) stop() {
 
 func newDefaultHTTPClient() *http.Client {
 	baseTransport := defaultTransport()
-	limitedTransport := &rateLimitedTransport{
-		next:    baseTransport,
-		limiter: defaultLimiter,
-	}
+	limitedTransport := &rateLimitedTransport{next: baseTransport}
 	return &http.Client{
 		Timeout: defaultRequestTimeout,
 		Transport: &retryingTransport{

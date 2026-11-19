@@ -45,3 +45,28 @@ func TestIsNotFoundError(t *testing.T) {
 		t.Fatalf("expected IsNotFoundError to be false for non-404")
 	}
 }
+
+func TestRateLimiterIsPerHost(t *testing.T) {
+	transport := &rateLimitedTransport{next: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
+	})}
+	limiters := map[string]*rateLimiter{}
+	for _, u := range []string{"http://a.test/x", "http://a.test/y", "http://b.test/x"} {
+		req, err := http.NewRequest(http.MethodGet, u, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := transport.RoundTrip(req); err != nil {
+			t.Fatal(err)
+		}
+		hostLimitersMu.Lock()
+		if seen, ok := limiters[req.URL.Host]; ok && seen != hostLimiters[req.URL.Host] {
+			t.Errorf("host %s got a second limiter", req.URL.Host)
+		}
+		limiters[req.URL.Host] = hostLimiters[req.URL.Host]
+		hostLimitersMu.Unlock()
+	}
+	if limiters["a.test"] == nil || limiters["a.test"] == limiters["b.test"] {
+		t.Fatalf("hosts must have separate limiters: %v", limiters)
+	}
+}

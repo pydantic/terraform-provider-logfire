@@ -1,5 +1,8 @@
 ## Unreleased
 
+BUG FIXES:
+- The provider rate limit applies per Logfire host. Provider configurations that point at different Logfire instances no longer share one request budget.
+
 ## 0.2.4
 
 FEATURES:
