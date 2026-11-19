@@ -27,9 +27,9 @@ func IsNotFoundError(err error) bool {
 	return false
 }
 
-// isMissingRoute reports a 404 for a route the instance does not serve, which
-// FastAPI answers with the detail "Not Found". A route that looks up an item
-// answers a missing item with its own detail.
+// isMissingRoute reports a 404 for a route the instance does not serve. A route
+// that looks up an item answers a missing item with its own detail, while FastAPI
+// answers a missing route with "Not Found" and a proxy may send no detail at all.
 func isMissingRoute(err error) bool {
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
@@ -38,7 +38,8 @@ func isMissingRoute(err error) bool {
 	var body struct {
 		Detail string `json:"detail"`
 	}
-	return json.Unmarshal([]byte(apiErr.Message), &body) == nil && body.Detail == "Not Found"
+	_ = json.Unmarshal([]byte(apiErr.Message), &body)
+	return body.Detail == "" || body.Detail == "Not Found"
 }
 
 // IsConflictError reports whether the error represents an HTTP 409.
