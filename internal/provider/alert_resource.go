@@ -156,7 +156,7 @@ func (r *AlertResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 			),
 			"notify_when": rschema.StringAttribute{
 				Required:            true,
-				MarkdownDescription: "Notification rule. Must match API enum. `instances_changed` notifies about each result row that opens or closes, and needs `instance_policy`.",
+				MarkdownDescription: "Notification rule. Must match API enum. `instances_changed` needs `instance_policy`. It sends one notification for each run that opens or closes occurrences, listing them.",
 				Validators: []validator.String{
 					stringvalidator.OneOf(notification_constraint...),
 				},
@@ -180,7 +180,7 @@ func (r *AlertResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 						Validators: []validator.List{
 							listvalidator.SizeBetween(1, 8),
 							listvalidator.UniqueValues(),
-							listvalidator.ValueStringsAre(stringvalidator.LengthBetween(1, 128)),
+							listvalidator.ValueStringsAre(stringvalidator.UTF8LengthBetween(1, 128)),
 						},
 					},
 					"pending_runs": rschema.Int64Attribute{
@@ -353,6 +353,16 @@ func addAlertSaveError(diags *diag.Diagnostics, summary string, err error) {
 	diags.AddError(summary, err.Error())
 }
 
+// addIgnoredPolicyError reports a Logfire version without instance policies, which saves the
+// alert and drops instance_policy. The caller still saves the alert Logfire returned.
+func addIgnoredPolicyError(diags *diag.Diagnostics, planned *AlertInstancePolicyModel, saved *logclient.AlertRead) {
+	if planned != nil && saved.InstancePolicy == nil {
+		diags.AddAttributeError(path.Root("instance_policy"), "Logfire ignored instance_policy",
+			"This Logfire version does not support alert instance policies, so it saved the alert without one. "+
+				"Upgrade Logfire, or remove instance_policy.")
+	}
+}
+
 func alertModelToCreate(ctx context.Context, m *AlertModel) (logclient.AlertCreate, diag.Diagnostics) {
 	tw, err := parseDurationText(m.TimeWindow.ValueString())
 	if err != nil {
@@ -522,6 +532,7 @@ func (r *AlertResource) Create(ctx context.Context, req resource.CreateRequest, 
 	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
 		state.ProjectID = plan.ProjectID
 	}
+	addIgnoredPolicyError(&resp.Diagnostics, plan.InstancePolicy, fresh)
 
 	tflog.Trace(ctx, "created alert", map[string]any{"id": state.ID.ValueString(), "project_id": projectID})
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -713,6 +724,7 @@ func (r *AlertResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	if newState.ProjectID.IsNull() || newState.ProjectID.IsUnknown() || newState.ProjectID.ValueString() == "" {
 		newState.ProjectID = state.ProjectID
 	}
+	addIgnoredPolicyError(&resp.Diagnostics, plan.InstancePolicy, out)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &newState)...)
 }
 

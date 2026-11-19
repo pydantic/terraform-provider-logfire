@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
@@ -23,6 +24,8 @@ type alertPolicyAPI struct {
 	alert  map[string]any
 	writes []map[string]any
 	denied bool
+	// olderLogfire drops instance_policy like a Logfire version without instance policies.
+	olderLogfire bool
 }
 
 // newAlertPolicyAPI mimics the alert API's policy handling: an omitted instance_policy keeps the stored one and null removes it.
@@ -45,6 +48,9 @@ func newAlertPolicyAPI(t *testing.T) (*httptest.Server, *alertPolicyAPI) {
 				w.WriteHeader(http.StatusForbidden)
 				_, _ = w.Write([]byte(`{"status":403,"error_code":"alert_instances_not_enabled"}`))
 				return
+			}
+			if api.olderLogfire {
+				delete(body, "instance_policy")
 			}
 			if api.alert == nil {
 				api.alert = map[string]any{"id": "alert-1", "project_id": alertPolicyProjectID, "channels": []any{}, "active": true}
@@ -156,6 +162,43 @@ channel_assignments = []
 				},
 				Config:      config("renamed again", "instances_changed", policy(2)),
 				ExpectError: regexp.MustCompile(`alert_instances_not_enabled`),
+			},
+		},
+	})
+}
+
+func TestLifecycleAlertInstancePolicyOnOlderLogfire(t *testing.T) {
+	t.Parallel()
+	server, api := newAlertPolicyAPI(t)
+	api.olderLogfire = true
+	config := func(policy string) string {
+		return lifecycleConfig(server.URL, "alert", fmt.Sprintf(`project_id = %q
+name = "alert"
+query = "select 1"
+time_window = "5m"
+frequency = "1m"
+notify_when = "has_matches"
+channel_assignments = []
+%s`, alertPolicyProjectID, policy))
+	}
+	resource.Test(t, resource.TestCase{
+		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: config(`instance_policy = {
+  identity_columns = ["service_name"]
+  pending_runs     = 1
+  missing_runs     = 1
+  missing_behavior = "expire"
+}`),
+				ExpectError: regexp.MustCompile(`does not support alert instance policies`),
+			},
+			{
+				// The failed create still saved the alert, so Terraform replaces it.
+				Config: config(""),
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
+					plancheck.ExpectResourceAction("logfire_alert.test", plancheck.ResourceActionDestroyBeforeCreate),
+				}},
 			},
 		},
 	})

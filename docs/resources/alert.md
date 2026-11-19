@@ -71,7 +71,8 @@ resource "logfire_alert" "example" {
   active      = true
 }
 
-# Notify about each failing service on its own. Needs an organization with
+# Track each failing service as its own occurrence. A run that opens or closes
+# occurrences sends one notification listing them. Needs an organization with
 # alert instance policies enabled.
 resource "logfire_alert" "per_service" {
   project_id  = logfire_project.example.id
@@ -100,7 +101,7 @@ resource "logfire_alert" "per_service" {
 - `channel_assignments` (Attributes Set) Channels to notify, each with an optional delivery schedule. Set it to `[]` to notify no channel. This is the same type as `alerts.<tier>.channel_assignments` on `logfire_slo`, so one value (for example a `locals` entry) can configure both. (see [below for nested schema](#nestedatt--channel_assignments))
 - `frequency` (String) Evaluation frequency, as a duration from `1m` to `24h` (for example `5m`, `20m`, `1h`). Equivalent spellings are accepted and kept as written.
 - `name` (String) Alert name (unique per project).
-- `notify_when` (String) Notification rule. Must match API enum. `instances_changed` notifies about each result row that opens or closes, and needs `instance_policy`.
+- `notify_when` (String) Notification rule. Must match API enum. `instances_changed` needs `instance_policy`. It sends one notification for each run that opens or closes occurrences, listing them.
 - `project_id` (String) Project ID (UUID) used for alert API paths.
 - `query` (String) SQL / query string used by the alert.
 - `time_window` (String) Lookback window, as a duration from `1m` to `30d` (for example `20m`, `1h30m`, `7d`). The API caps this relative to `frequency` - a longer window requires a less frequent evaluation - and reports that itself. Equivalent spellings are accepted and kept as written.

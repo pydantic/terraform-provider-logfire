@@ -56,7 +56,8 @@ resource "logfire_alert" "example" {
   active      = true
 }
 
-# Notify about each failing service on its own. Needs an organization with
+# Track each failing service as its own occurrence. A run that opens or closes
+# occurrences sends one notification listing them. Needs an organization with
 # alert instance policies enabled.
 resource "logfire_alert" "per_service" {
   project_id  = logfire_project.example.id
