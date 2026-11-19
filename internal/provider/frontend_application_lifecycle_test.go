@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -96,6 +97,11 @@ func TestLifecycleFrontendApplicationUIRename(t *testing.T) {
 					}
 					return nil
 				},
+			},
+			{
+				Config: lifecycleConfig(server.URL, "frontend_application",
+					"project_id = \"project-1\"\nname = \"renamed-in-ui\"\nservice_namespace = \"web\""),
+				ExpectError: regexp.MustCompile("Same-name replacement requires adoption"),
 			},
 			{
 				Config: config("renamed-in-ui"),

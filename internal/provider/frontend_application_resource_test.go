@@ -58,17 +58,20 @@ func TestSameNameIdentityReplacementNeedsAdoption(t *testing.T) {
 	}
 	plan := state
 	plan.ServiceNamespace = types.StringValue("new")
-	if !sameNameIdentityReplacementNeedsAdoption(state, plan) {
+	if !sameNameIdentityReplacementNeedsAdoption(state, plan, nil) {
 		t.Fatal("same-name namespace replacement must require explicit adoption")
 	}
 	plan.AdoptExistingServiceName = types.BoolValue(true)
-	if sameNameIdentityReplacementNeedsAdoption(state, plan) {
+	if sameNameIdentityReplacementNeedsAdoption(state, plan, nil) {
 		t.Fatal("explicit adoption must allow same-name namespace replacement")
 	}
 	plan.AdoptExistingServiceName = types.BoolValue(false)
 	plan.Name = types.StringValue("other")
-	if sameNameIdentityReplacementNeedsAdoption(state, plan) {
+	if sameNameIdentityReplacementNeedsAdoption(state, plan, nil) {
 		t.Fatal("a different name must retain the API collision guard")
+	}
+	if !sameNameIdentityReplacementNeedsAdoption(state, plan, serverNameValue("other")) {
+		t.Fatal("the name Logfire has after a UI rename must require explicit adoption")
 	}
 }
 

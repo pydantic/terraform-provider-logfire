@@ -114,7 +114,9 @@ func (r *FrontendApplicationResource) ModifyPlan(ctx context.Context, req resour
 	if resp.Diagnostics.HasError() || plan.AdoptExistingServiceName.IsUnknown() {
 		return
 	}
-	if sameNameIdentityReplacementNeedsAdoption(state, plan) {
+	serverName, diags := req.Private.GetKey(ctx, serverNameKey)
+	resp.Diagnostics.Append(diags...)
+	if sameNameIdentityReplacementNeedsAdoption(state, plan, serverName) {
 		resp.Diagnostics.AddAttributeError(
 			path.Root("adopt_existing_service_name"),
 			"Same-name replacement requires adoption",
@@ -123,8 +125,14 @@ func (r *FrontendApplicationResource) ModifyPlan(ctx context.Context, req resour
 	}
 }
 
-func sameNameIdentityReplacementNeedsAdoption(state, plan FrontendApplicationModel) bool {
-	if state.Name.IsNull() || state.Name.IsUnknown() || plan.Name.IsNull() || plan.Name.IsUnknown() || state.Name.ValueString() != plan.Name.ValueString() {
+// serverName is the name Logfire reported on the last read, which differs from state after a UI
+// rename. A plan that matches either keeps the name, so it still needs adoption.
+func sameNameIdentityReplacementNeedsAdoption(state, plan FrontendApplicationModel, serverName []byte) bool {
+	if state.Name.IsNull() || state.Name.IsUnknown() || plan.Name.IsNull() || plan.Name.IsUnknown() {
+		return false
+	}
+	planned := plan.Name.ValueString()
+	if state.Name.ValueString() != planned && !bytes.Equal(serverName, serverNameValue(planned)) {
 		return false
 	}
 	identityChanged := !state.ServiceNamespace.Equal(plan.ServiceNamespace) || !state.Environment.Equal(plan.Environment)
