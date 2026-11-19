@@ -52,11 +52,12 @@ type rateLimitedTransport struct {
 }
 
 func (t *rateLimitedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	host := strings.ToLower(req.URL.Host)
 	hostLimitersMu.Lock()
-	limiter := hostLimiters[req.URL.Host]
+	limiter := hostLimiters[host]
 	if limiter == nil {
 		limiter = newRateLimiter(defaultRequestsPerMinute, defaultRequestsPerHour)
-		hostLimiters[req.URL.Host] = limiter
+		hostLimiters[host] = limiter
 	}
 	hostLimitersMu.Unlock()
 	if err := limiter.Wait(req.Context()); err != nil {
