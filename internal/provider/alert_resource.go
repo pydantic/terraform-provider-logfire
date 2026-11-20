@@ -5,14 +5,20 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	stringvalidator "github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	rschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -58,7 +64,15 @@ type AlertModel struct {
 	Active       types.Bool         `tfsdk:"active"`
 	// ChannelAssignments uses the same schema, model and conversion as
 	// `logfire_slo.alerts.<tier>.channel_assignments`.
-	ChannelAssignments types.Set `tfsdk:"channel_assignments"`
+	ChannelAssignments types.Set                 `tfsdk:"channel_assignments"`
+	InstancePolicy     *AlertInstancePolicyModel `tfsdk:"instance_policy"`
+}
+
+type AlertInstancePolicyModel struct {
+	IdentityColumns []types.String `tfsdk:"identity_columns"`
+	PendingRuns     types.Int64    `tfsdk:"pending_runs"`
+	MissingRuns     types.Int64    `tfsdk:"missing_runs"`
+	MissingBehavior types.String   `tfsdk:"missing_behavior"`
 }
 
 func (r *AlertResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -66,7 +80,7 @@ func (r *AlertResource) Metadata(ctx context.Context, req resource.MetadataReque
 }
 
 func (r *AlertResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
-	notification_constraint := []string{"has_matches", "has_matches_changed", "matches_changed", "starts_having_matches"}
+	notification_constraint := []string{"has_matches", "has_matches_changed", "matches_changed", "starts_having_matches", "instances_changed"}
 
 	resp.Schema = rschema.Schema{
 		MarkdownDescription: "Manages a Logfire alert.",
@@ -142,7 +156,7 @@ func (r *AlertResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 			),
 			"notify_when": rschema.StringAttribute{
 				Required:            true,
-				MarkdownDescription: "Notification rule. Must match API enum.",
+				MarkdownDescription: "Notification rule. Must match API enum. `instances_changed` needs `instance_policy`. It sends one notification for each run that opens or closes occurrences, listing them, from Logfire v2026-11-13.01.",
 				Validators: []validator.String{
 					stringvalidator.OneOf(notification_constraint...),
 				},
@@ -151,6 +165,40 @@ func (r *AlertResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 				Optional:            true,
 				Computed:            true,
 				MarkdownDescription: "Whether the alert is active (defaults to true on creation).",
+			},
+			"instance_policy": rschema.SingleNestedAttribute{
+				Optional: true,
+				MarkdownDescription: "Track each result row as its own occurrence, keyed by the identity columns, instead of evaluating the whole result as one. " +
+					"Needs an organization with alert instance policies enabled, otherwise the API answers 403 `alert_instances_not_enabled`. " +
+					"Remove the attribute to evaluate the whole result as one again. " +
+					"The API's deprecated `continuity_runs` is not exposed. A new policy gets the value of `missing_runs`, and a change keeps the stored value unless it is lower than `missing_runs`.",
+				Attributes: map[string]rschema.Attribute{
+					"identity_columns": rschema.ListAttribute{
+						ElementType:         types.StringType,
+						Required:            true,
+						MarkdownDescription: "Result columns whose values identify an occurrence. One to 8 unique names of 1 to 128 characters.",
+						Validators: []validator.List{
+							listvalidator.SizeBetween(1, 8),
+							listvalidator.UniqueValues(),
+							listvalidator.ValueStringsAre(stringvalidator.UTF8LengthBetween(1, 128)),
+						},
+					},
+					"pending_runs": rschema.Int64Attribute{
+						Required:            true,
+						MarkdownDescription: "Consecutive matching runs, 1 to 100, before a new occurrence fires.",
+						Validators:          []validator.Int64{int64validator.Between(1, 100)},
+					},
+					"missing_runs": rschema.Int64Attribute{
+						Required:            true,
+						MarkdownDescription: "Consecutive runs without the occurrence, 1 to 100, before it closes.",
+						Validators:          []validator.Int64{int64validator.Between(1, 100)},
+					},
+					"missing_behavior": rschema.StringAttribute{
+						Required:            true,
+						MarkdownDescription: "The close reason of an occurrence that is missing for `missing_runs` runs. One of `no_longer_matching` or `expire`.",
+						Validators:          []validator.String{stringvalidator.OneOf("no_longer_matching", "expire")},
+					},
+				},
 			},
 		},
 	}
@@ -275,6 +323,46 @@ func parseDurationText(raw string) (time.Duration, error) {
 	return 0, fmt.Errorf("invalid duration: %q", raw)
 }
 
+func alertInstancePolicyToAPI(m *AlertInstancePolicyModel) *logclient.AlertInstancePolicy {
+	if m == nil {
+		return nil
+	}
+	columns := make([]string, len(m.IdentityColumns))
+	for i, column := range m.IdentityColumns {
+		columns[i] = column.ValueString()
+	}
+	return &logclient.AlertInstancePolicy{
+		IdentityColumns: columns,
+		PendingRuns:     m.PendingRuns.ValueInt64(),
+		MissingRuns:     m.MissingRuns.ValueInt64(),
+		MissingBehavior: m.MissingBehavior.ValueString(),
+		ContinuityRuns:  m.MissingRuns.ValueInt64(),
+	}
+}
+
+// addAlertSaveError names the missing opt-in when the API refuses an instance
+// policy, instead of showing its raw problem body.
+func addAlertSaveError(diags *diag.Diagnostics, summary string, err error) {
+	var apiErr *logclient.APIError
+	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusForbidden && strings.Contains(apiErr.Message, "alert_instances_not_enabled") {
+		diags.AddAttributeError(path.Root("instance_policy"), "Alert instance policies are not enabled",
+			"The API refused instance_policy (403 alert_instances_not_enabled): this organization has not enabled instance policies. "+
+				"Ask Logfire support to enable them, or remove instance_policy and use another notify_when value.")
+		return
+	}
+	diags.AddError(summary, err.Error())
+}
+
+// addIgnoredPolicyError reports a Logfire version without instance policies, which saves the
+// alert and drops instance_policy. The caller still saves the alert Logfire returned.
+func addIgnoredPolicyError(diags *diag.Diagnostics, planned *AlertInstancePolicyModel, saved *logclient.AlertRead) {
+	if planned != nil && saved.InstancePolicy == nil {
+		diags.AddAttributeError(path.Root("instance_policy"), "Logfire ignored instance_policy",
+			"This Logfire version does not support alert instance policies, so it saved the alert without one. "+
+				"Upgrade Logfire, or remove instance_policy.")
+	}
+}
+
 func alertModelToCreate(ctx context.Context, m *AlertModel) (logclient.AlertCreate, diag.Diagnostics) {
 	tw, err := parseDurationText(m.TimeWindow.ValueString())
 	if err != nil {
@@ -318,6 +406,7 @@ func alertModelToCreate(ctx context.Context, m *AlertModel) (logclient.AlertCrea
 		Environments:       envs,
 		ChannelAssignments: ch,
 		NotifyWhen:         m.NotifyWhen.ValueString(),
+		InstancePolicy:     alertInstancePolicyToAPI(m.InstancePolicy),
 	}, nil
 }
 
@@ -380,6 +469,19 @@ func alertReadToModel(ctx context.Context, a *logclient.AlertRead, m *AlertModel
 	m.ChannelAssignments = set
 	m.NotifyWhen = types.StringValue(a.NotifyWhen)
 	m.Active = types.BoolValue(a.Active)
+	m.InstancePolicy = nil
+	if p := a.InstancePolicy; p != nil {
+		columns := make([]types.String, len(p.IdentityColumns))
+		for i, column := range p.IdentityColumns {
+			columns[i] = types.StringValue(column)
+		}
+		m.InstancePolicy = &AlertInstancePolicyModel{
+			IdentityColumns: columns,
+			PendingRuns:     types.Int64Value(p.PendingRuns),
+			MissingRuns:     types.Int64Value(p.MissingRuns),
+			MissingBehavior: types.StringValue(p.MissingBehavior),
+		}
+	}
 	return nil
 }
 
@@ -411,7 +513,7 @@ func (r *AlertResource) Create(ctx context.Context, req resource.CreateRequest, 
 
 	out, err := r.client.CreateAlert(ctx, projectID, in)
 	if err != nil {
-		resp.Diagnostics.AddError("Create alert failed", err.Error())
+		addAlertSaveError(&resp.Diagnostics, "Create alert failed", err)
 		return
 	}
 
@@ -430,6 +532,7 @@ func (r *AlertResource) Create(ctx context.Context, req resource.CreateRequest, 
 	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
 		state.ProjectID = plan.ProjectID
 	}
+	addIgnoredPolicyError(&resp.Diagnostics, plan.InstancePolicy, fresh)
 
 	tflog.Trace(ctx, "created alert", map[string]any{"id": state.ID.ValueString(), "project_id": projectID})
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -600,9 +703,27 @@ func (r *AlertResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		payload.NotifyWhen = &v
 	}
 
+	// An unchanged policy is left out so the API keeps it. A removed one is
+	// sent as null.
+	if want := alertInstancePolicyToAPI(plan.InstancePolicy); !reflect.DeepEqual(want, alertInstancePolicyToAPI(state.InstancePolicy)) {
+		// Logfire releases through v2026-11-05.01 use continuity_runs, so a change keeps the stored
+		// value. The API refuses one below missing_runs.
+		if want != nil && state.InstancePolicy != nil {
+			current, _, err := r.client.GetAlert(ctx, projectID, id)
+			if err != nil {
+				resp.Diagnostics.AddError("Read alert failed", err.Error())
+				return
+			}
+			if p := current.InstancePolicy; p != nil && p.ContinuityRuns >= want.MissingRuns {
+				want.ContinuityRuns = p.ContinuityRuns
+			}
+		}
+		payload.InstancePolicy = &want
+	}
+
 	out, err := r.client.UpdateAlert(ctx, projectID, id, payload)
 	if err != nil {
-		resp.Diagnostics.AddError("Update alert failed", err.Error())
+		addAlertSaveError(&resp.Diagnostics, "Update alert failed", err)
 		return
 	}
 
@@ -615,6 +736,7 @@ func (r *AlertResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	if newState.ProjectID.IsNull() || newState.ProjectID.IsUnknown() || newState.ProjectID.ValueString() == "" {
 		newState.ProjectID = state.ProjectID
 	}
+	addIgnoredPolicyError(&resp.Diagnostics, plan.InstancePolicy, out)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &newState)...)
 }
 

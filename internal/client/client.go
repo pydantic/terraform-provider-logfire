@@ -700,6 +700,20 @@ type AlertRead struct {
 	HasErrors          *bool               `json:"has_errors,omitempty"`
 	Result             json.RawMessage     `json:"result,omitempty"`
 	ResultLength       *int                `json:"result_length,omitempty"`
+	// InstancePolicy is nil when the alert evaluates its whole result as one,
+	// and on a Logfire release that predates instance policies.
+	InstancePolicy *AlertInstancePolicy `json:"instance_policy"`
+}
+
+// AlertInstancePolicy makes an alert track each result row as its own
+// occurrence, keyed by the identity columns. The API requires ContinuityRuns
+// but deprecates it and ignores it when it settles occurrences.
+type AlertInstancePolicy struct {
+	IdentityColumns []string `json:"identity_columns"`
+	PendingRuns     int64    `json:"pending_runs"`
+	MissingRuns     int64    `json:"missing_runs"`
+	MissingBehavior string   `json:"missing_behavior"`
+	ContinuityRuns  int64    `json:"continuity_runs"`
 }
 
 // ChannelAssignment is the API's `AlertChannelAssignment`: one channel an
@@ -728,6 +742,8 @@ type AlertCreate struct {
 	Environments       []string            `json:"environments,omitempty"`
 	ChannelAssignments []ChannelAssignment `json:"channel_assignments"`
 	NotifyWhen         string              `json:"notify_when"`
+	// InstancePolicy is left out when nil.
+	InstancePolicy *AlertInstancePolicy `json:"instance_policy,omitempty"`
 }
 
 type AlertUpdate struct {
@@ -742,6 +758,9 @@ type AlertUpdate struct {
 	// ChannelAssignments replaces the alert's channels when set.
 	ChannelAssignments *[]ChannelAssignment `json:"channel_assignments,omitempty"`
 	NotifyWhen         *string              `json:"notify_when,omitempty"`
+	// InstancePolicy replaces the policy when set. A set pointer to nil sends
+	// null, which removes it, and an unset field keeps the current policy.
+	InstancePolicy **AlertInstancePolicy `json:"instance_policy,omitempty"`
 }
 
 func (c *APIClient) alertsBase(projectID string) string {
