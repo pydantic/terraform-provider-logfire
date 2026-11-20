@@ -142,7 +142,7 @@ func (r *DashboardResource) Schema(ctx context.Context, req resource.SchemaReque
 			"managed_allow_edits": rschema.BoolAttribute{
 				Optional:            true,
 				Computed:            true,
-				MarkdownDescription: "Whether the Logfire UI and the Logfire MCP server can edit the dashboard. Defaults to `false` for a new dashboard. A Logfire instance without managed dashboards leaves it unset and ignores a configured value, which gets a warning. A dashboard created by an earlier provider version stays editable until you set the attribute. Removing the attribute keeps the current value. Set it to `true` to allow edits again.",
+				MarkdownDescription: "Whether the Logfire UI and the Logfire MCP server can edit the dashboard. Defaults to `false` for a new dashboard. A Logfire instance without managed dashboards leaves it unset and ignores a configured value. Terraform then warns and plans the value again on every run until Logfire applies it. A dashboard created by an earlier provider version stays editable until you set the attribute. Removing the attribute keeps the current value. Set it to `true` to allow edits again.",
 				PlanModifiers:       []planmodifier.Bool{dashboardAllowEditsDefault{}},
 			},
 		},
@@ -276,7 +276,12 @@ func (r *DashboardResource) Read(ctx context.Context, req resource.ReadRequest, 
 		if name, ok := metadata["name"].(string); ok && name != "" {
 			state.Name = types.StringValue(name)
 		}
-		// Only a dashboard with a manager has the lock. Older backends report neither field.
+	}
+	// Only a dashboard with a manager has the lock. Older backends report neither field. Without
+	// a manager nothing locks the dashboard, so a configured value shows as a change and the
+	// next apply tries to set it again.
+	state.AllowEdits = types.BoolNull()
+	if metadata, ok := definition["metadata"].(map[string]any); ok {
 		allowEdits, ok := metadata["managedAllowEdits"].(bool)
 		if manager, _ := metadata["managedBy"].(string); ok && manager != "" {
 			state.AllowEdits = types.BoolValue(allowEdits)

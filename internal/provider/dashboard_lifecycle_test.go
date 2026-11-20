@@ -17,6 +17,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
 const dashboardLifecycleFile = `{
@@ -371,6 +372,46 @@ func TestLifecycleDashboardOnOlderLogfire(t *testing.T) {
 			{
 				Config: config, ResourceName: address, ImportState: true, ImportStateId: "test/main",
 				ImportStateVerify: true, ImportStateVerifyIgnore: []string{"definition"},
+			},
+		},
+	})
+}
+
+// A lock that Logfire ignored stays a planned change, so the provider sets it once Logfire
+// supports managed dashboards.
+func TestLifecycleDashboardRetriesIgnoredLock(t *testing.T) {
+	t.Parallel()
+	api := &dashboardLifecycleAPIState{olderLogfire: true}
+	server := httptest.NewServer(api)
+	defer server.Close()
+	file := filepath.Join(t.TempDir(), "dashboard.json")
+	if err := os.WriteFile(file, []byte(dashboardLifecycleFile), 0600); err != nil {
+		t.Fatal(err)
+	}
+	config := lifecycleConfig(server.URL, "dashboard", fmt.Sprintf("project_id = \"project-1\"\nname = \"Main\"\nslug = \"main\"\ndefinition = file(%q)\nmanaged_allow_edits = false", file))
+	const address = "logfire_dashboard.test"
+	resource.Test(t, resource.TestCase{
+		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: config, ExpectNonEmptyPlan: true},
+			{
+				PreConfig: func() {
+					api.Lock()
+					defer api.Unlock()
+					api.olderLogfire = false
+				},
+				Config: config,
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr(address, "managed_allow_edits", "false"),
+					func(*terraform.State) error {
+						api.Lock()
+						defer api.Unlock()
+						if api.managedBy == "" || api.allowEdits {
+							return fmt.Errorf("dashboard is not locked: managed_by=%q managed_allow_edits=%v", api.managedBy, api.allowEdits)
+						}
+						return nil
+					},
+				),
 			},
 		},
 	})
