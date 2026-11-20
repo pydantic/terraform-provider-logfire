@@ -6,6 +6,7 @@ FEATURES:
 - Embedders can name their tool with `shim.New(version, shim.WithDashboardManager("Pulumi"))`. `shim.New(version)` is unchanged.
 
 BUG FIXES:
+- `logfire_frontend_application`: renaming an application in the Logfire UI no longer plans a replacement, which revoked its browser token and failed with a 409 because the old name stays reserved. Terraform keeps the configured `name`. Set `name` to the new name to follow the rename without a replacement. Importing reads the current name from Logfire.
 - The provider rate limit applies per Logfire host. Provider configurations that point at different Logfire instances no longer share one request budget.
 - `logfire_schedule` calls the `/api/v1/notification-windows/` routes, because Logfire deprecated `/api/v1/schedules/`. A Logfire instance that only has the old routes still works: the provider falls back to them when the new ones answer 404. No configuration changes.
 

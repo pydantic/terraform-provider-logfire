@@ -35,7 +35,7 @@ output "browser_write_token" {
 
 ### Required
 
-- `name` (String) Immutable application name. Logfire overwrites `service.name` with this value.
+- `name` (String) Application name. Logfire overwrites `service.name` with this value. The API cannot rename an application, so changing this replaces it, unless the new value is its current name in Logfire. After a rename in the Logfire UI, Terraform keeps the configured name and plans no change. Update this value to the new name to follow the rename without a replacement.
 - `project_id` (String) UUID of the project that owns the application.
 
 ### Optional
