@@ -95,12 +95,15 @@ for pr in "$@"; do
   gh pr view "$pr" --json number,url,title,body,baseRefName,headRefOid > "$dir/evidence/pr.json"
   head=$(jq -r .headRefOid "$dir/evidence/pr.json")
   base_ref=$(jq -r .baseRefName "$dir/evidence/pr.json")
-  git -C "$repo" fetch -q origin "pull/$pr/head" "$base_ref"
+  git -C "$repo" fetch -q origin "pull/$pr/head"
   if [ "$(git -C "$repo" rev-parse FETCH_HEAD)" != "$head" ]; then
     printf 'PR %s moved while preparing. Run the script again.\n' "$pr" >&2
     exit 1
   fi
-  base=$(git -C "$repo" merge-base "$head" "origin/$base_ref")
+  # Use the fetched commit, since a single-branch clone has no origin/<base> ref for a
+  # stacked pull request's base.
+  git -C "$repo" fetch -q origin "refs/heads/$base_ref"
+  base=$(git -C "$repo" merge-base "$head" FETCH_HEAD)
   printf '%s\n' "$head" > "$dir/evidence/source-sha.txt"
   printf '%s\n' "$base" > "$dir/evidence/base-sha.txt"
   git -C "$repo" diff --binary "$base" "$head" > "$dir/evidence/pr.diff"
