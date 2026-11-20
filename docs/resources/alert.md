@@ -72,8 +72,8 @@ resource "logfire_alert" "example" {
 }
 
 # Track each failing service as its own occurrence. A run that opens or closes
-# occurrences sends one notification listing them. Needs an organization with
-# alert instance policies enabled.
+# occurrences sends one notification listing them. Needs Logfire v2026-11-13.01 or
+# newer and an organization with alert instance policies enabled.
 resource "logfire_alert" "per_service" {
   project_id  = logfire_project.example.id
   name        = "error-alert-per-service"
@@ -101,7 +101,7 @@ resource "logfire_alert" "per_service" {
 - `channel_assignments` (Attributes Set) Channels to notify, each with an optional delivery schedule. Set it to `[]` to notify no channel. This is the same type as `alerts.<tier>.channel_assignments` on `logfire_slo`, so one value (for example a `locals` entry) can configure both. (see [below for nested schema](#nestedatt--channel_assignments))
 - `frequency` (String) Evaluation frequency, as a duration from `1m` to `24h` (for example `5m`, `20m`, `1h`). Equivalent spellings are accepted and kept as written.
 - `name` (String) Alert name (unique per project).
-- `notify_when` (String) Notification rule. Must match API enum. `instances_changed` needs `instance_policy`. It sends one notification for each run that opens or closes occurrences, listing them.
+- `notify_when` (String) Notification rule. Must match API enum. `instances_changed` needs `instance_policy`. It sends one notification for each run that opens or closes occurrences, listing them, from Logfire v2026-11-13.01.
 - `project_id` (String) Project ID (UUID) used for alert API paths.
 - `query` (String) SQL / query string used by the alert.
 - `time_window` (String) Lookback window, as a duration from `1m` to `30d` (for example `20m`, `1h30m`, `7d`). The API caps this relative to `frequency` - a longer window requires a less frequent evaluation - and reports that itself. Equivalent spellings are accepted and kept as written.
@@ -111,7 +111,7 @@ resource "logfire_alert" "per_service" {
 - `active` (Boolean) Whether the alert is active (defaults to true on creation).
 - `description` (String) Alert description.
 - `environments` (Set of String) Deployment environments to scope the query to. Empty = all environments (no filter).
-- `instance_policy` (Attributes) Track each result row as its own occurrence, keyed by the identity columns, instead of evaluating the whole result as one. Needs an organization with alert instance policies enabled, otherwise the API answers 403 `alert_instances_not_enabled`. Remove the attribute to evaluate the whole result as one again. The API's deprecated `continuity_runs` is not exposed. The provider sends the value of `missing_runs`. (see [below for nested schema](#nestedatt--instance_policy))
+- `instance_policy` (Attributes) Track each result row as its own occurrence, keyed by the identity columns, instead of evaluating the whole result as one. Needs an organization with alert instance policies enabled, otherwise the API answers 403 `alert_instances_not_enabled`. Remove the attribute to evaluate the whole result as one again. The API's deprecated `continuity_runs` is not exposed. A new policy gets the value of `missing_runs`, and a change keeps the stored value unless it is lower than `missing_runs`. (see [below for nested schema](#nestedatt--instance_policy))
 
 ### Read-Only
 

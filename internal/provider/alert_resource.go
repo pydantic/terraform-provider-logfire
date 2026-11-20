@@ -156,7 +156,7 @@ func (r *AlertResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 			),
 			"notify_when": rschema.StringAttribute{
 				Required:            true,
-				MarkdownDescription: "Notification rule. Must match API enum. `instances_changed` needs `instance_policy`. It sends one notification for each run that opens or closes occurrences, listing them.",
+				MarkdownDescription: "Notification rule. Must match API enum. `instances_changed` needs `instance_policy`. It sends one notification for each run that opens or closes occurrences, listing them, from Logfire v2026-11-13.01.",
 				Validators: []validator.String{
 					stringvalidator.OneOf(notification_constraint...),
 				},
@@ -171,7 +171,7 @@ func (r *AlertResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 				MarkdownDescription: "Track each result row as its own occurrence, keyed by the identity columns, instead of evaluating the whole result as one. " +
 					"Needs an organization with alert instance policies enabled, otherwise the API answers 403 `alert_instances_not_enabled`. " +
 					"Remove the attribute to evaluate the whole result as one again. " +
-					"The API's deprecated `continuity_runs` is not exposed. The provider sends the value of `missing_runs`.",
+					"The API's deprecated `continuity_runs` is not exposed. A new policy gets the value of `missing_runs`, and a change keeps the stored value unless it is lower than `missing_runs`.",
 				Attributes: map[string]rschema.Attribute{
 					"identity_columns": rschema.ListAttribute{
 						ElementType:         types.StringType,
@@ -706,6 +706,18 @@ func (r *AlertResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	// An unchanged policy is left out so the API keeps it. A removed one is
 	// sent as null.
 	if want := alertInstancePolicyToAPI(plan.InstancePolicy); !reflect.DeepEqual(want, alertInstancePolicyToAPI(state.InstancePolicy)) {
+		// Logfire releases through v2026-11-05.01 use continuity_runs, so a change keeps the stored
+		// value. The API refuses one below missing_runs.
+		if want != nil && state.InstancePolicy != nil {
+			current, _, err := r.client.GetAlert(ctx, projectID, id)
+			if err != nil {
+				resp.Diagnostics.AddError("Read alert failed", err.Error())
+				return
+			}
+			if p := current.InstancePolicy; p != nil && p.ContinuityRuns >= want.MissingRuns {
+				want.ContinuityRuns = p.ContinuityRuns
+			}
+		}
 		payload.InstancePolicy = &want
 	}
 

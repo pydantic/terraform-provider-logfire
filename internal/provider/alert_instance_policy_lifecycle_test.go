@@ -88,14 +88,15 @@ notify_when = %q
 channel_assignments = []
 %s`, alertPolicyProjectID, name, notifyWhen, policy))
 	}
-	policy := func(missingRuns int) string {
+	policyWith := func(pendingRuns, missingRuns int) string {
 		return fmt.Sprintf(`instance_policy = {
   identity_columns = ["service_name", "trace_id"]
-  pending_runs     = 2
+  pending_runs     = %d
   missing_runs     = %d
   missing_behavior = "expire"
-}`, missingRuns)
+}`, pendingRuns, missingRuns)
 	}
+	policy := func(missingRuns int) string { return policyWith(2, missingRuns) }
 	// lastWrite returns the most recent create or update request body.
 	lastWrite := func() map[string]any {
 		api.Lock()
@@ -142,6 +143,17 @@ channel_assignments = []
 					resource.TestCheckResourceAttr(resourceName, "instance_policy.missing_runs", "3"),
 					policyWrite(`{"continuity_runs":3,"identity_columns":["service_name","trace_id"],"missing_behavior":"expire","missing_runs":3,"pending_runs":2}`),
 				),
+			},
+			{
+				// Older releases use continuity_runs, so a change keeps a value set elsewhere.
+				PreConfig: func() {
+					api.Lock()
+					defer api.Unlock()
+					policy, _ := api.alert["instance_policy"].(map[string]any)
+					policy["continuity_runs"] = 5
+				},
+				Config: config("renamed", "instances_changed", policyWith(4, 3)),
+				Check:  policyWrite(`{"continuity_runs":5,"identity_columns":["service_name","trace_id"],"missing_behavior":"expire","missing_runs":3,"pending_runs":4}`),
 			},
 			{
 				Config: config("renamed", "has_matches", ""),
