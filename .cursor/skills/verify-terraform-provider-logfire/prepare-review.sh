@@ -17,7 +17,7 @@ if [ "$#" -eq 0 ]; then
   printf 'Usage: %s PR_NUMBER...\n' "$0" >&2
   exit 2
 fi
-for tool in git gh go curl unzip shasum; do
+for tool in git gh go curl unzip shasum jq; do
   command -v "$tool" >/dev/null || { printf 'Missing tool: %s\n' "$tool" >&2; exit 1; }
 done
 if [ -n "${PLATFORM_REPO:-}" ] && [ -z "${PLATFORM_REV:-}" ]; then
@@ -91,9 +91,10 @@ fi
 for pr in "$@"; do
   dir="$RUN_DIR/pr-$pr"
   mkdir -p "$dir/evidence" "$dir/scratch"
+  # One read gives the description, head and base, so they always describe the same push.
   gh pr view "$pr" --json number,url,title,body,baseRefName,headRefOid > "$dir/evidence/pr.json"
-  head=$(gh pr view "$pr" --json headRefOid -q .headRefOid)
-  base_ref=$(gh pr view "$pr" --json baseRefName -q .baseRefName)
+  head=$(jq -r .headRefOid "$dir/evidence/pr.json")
+  base_ref=$(jq -r .baseRefName "$dir/evidence/pr.json")
   git -C "$repo" fetch -q origin "pull/$pr/head" "$base_ref"
   if [ "$(git -C "$repo" rev-parse FETCH_HEAD)" != "$head" ]; then
     printf 'PR %s moved while preparing. Run the script again.\n' "$pr" >&2
