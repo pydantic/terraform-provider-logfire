@@ -27,7 +27,8 @@ type spendingLimitsAPI struct {
 	sync.Mutex
 	limits        map[string]logclient.GatewaySpendingLimits
 	requests      map[string]int
-	projectDenied bool
+	projectDenied bool // Logfire refuses the project but still lists it.
+	projectGone   bool // Logfire refuses the project and no longer lists it, as after deletion.
 	routesMissing bool
 }
 
@@ -48,8 +49,17 @@ func newSpendingLimitsAPI(t *testing.T) (*httptest.Server, *spendingLimitsAPI) {
 		}
 		route := r.Method + " " + r.URL.Path
 		api.requests[route]++
+		denied := api.projectDenied || api.projectGone
+		if r.URL.Path == "/api/v1/projects/" && r.Method == http.MethodGet {
+			if api.projectGone {
+				_, _ = w.Write([]byte(`[]`))
+				return
+			}
+			_, _ = w.Write([]byte(`[{"id":"` + spendingLimitsProjectID + `","project_name":"demo"}]`))
+			return
+		}
 		if r.URL.Path == "/api/v1/projects/"+spendingLimitsProjectID+"/" && r.Method == http.MethodGet {
-			if api.projectDenied {
+			if denied {
 				w.WriteHeader(http.StatusForbidden)
 				_, _ = w.Write([]byte(`{"detail":"You do not have permission to access this project"}`))
 				return
@@ -67,7 +77,7 @@ func newSpendingLimitsAPI(t *testing.T) (*httptest.Server, *spendingLimitsAPI) {
 			_, _ = w.Write([]byte(`{"detail":"Not Found"}`))
 			return
 		}
-		if r.URL.Path == spendingLimitsProjectURL && api.projectDenied {
+		if r.URL.Path == spendingLimitsProjectURL && denied {
 			w.WriteHeader(http.StatusForbidden)
 			_, _ = w.Write([]byte(`{"detail":"You do not have permission to access this project"}`))
 			return
@@ -227,6 +237,39 @@ func TestLifecycleGatewayProjectSpendingLimitsProjectUnavailable(t *testing.T) {
 	})
 	api.Lock()
 	defer api.Unlock()
+	if got := api.requests["PATCH "+spendingLimitsProjectURL]; got != 2 {
+		t.Errorf("PATCH requests = %d, want 2 (create and destroy)", got)
+	}
+}
+
+// A project deleted before its limits, as Crossplane may do, leaves nothing to manage, and destroy succeeds.
+func TestLifecycleGatewayProjectSpendingLimitsProjectDeleted(t *testing.T) {
+	t.Parallel()
+	server, api := newSpendingLimitsAPI(t)
+	config := lifecycleConfig(server.URL, "gateway_project_spending_limits",
+		"project_id = \""+spendingLimitsProjectID+"\"\nmonthly_usd = 10")
+	resource.Test(t, resource.TestCase{
+		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: config},
+			{
+				PreConfig: func() {
+					api.Lock()
+					defer api.Unlock()
+					api.projectGone = true
+				},
+				Config:             config,
+				PlanOnly:           true,
+				ExpectNonEmptyPlan: true,
+				ConfigPlanChecks: resource.ConfigPlanChecks{PostApplyPostRefresh: []plancheck.PlanCheck{
+					plancheck.ExpectResourceAction("logfire_gateway_project_spending_limits.test", plancheck.ResourceActionCreate),
+				}},
+			},
+		},
+	})
+	api.Lock()
+	defer api.Unlock()
+	// Destroy still sends its PATCH, and the 403 it gets back means the project is gone.
 	if got := api.requests["PATCH "+spendingLimitsProjectURL]; got != 2 {
 		t.Errorf("PATCH requests = %d, want 2 (create and destroy)", got)
 	}

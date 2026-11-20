@@ -5,6 +5,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -362,18 +363,22 @@ func (r *GatewayProjectSpendingLimitsResource) apply(
 	diags.Append(state.Set(ctx, &model)...)
 }
 
-// classify reports whether a 404 means the project is gone. Otherwise a 404 means
-// the instance predates the spending limits API, and the error carries an upgrade
-// hint. Supported releases answer a deleted project with 403, which is returned
-// unchanged because it cannot be told apart from lost access.
+// classify reports whether an error means the project is gone. Logfire answers a
+// deleted project with 403, and projectMissing tells it apart from lost access.
+// Otherwise a 404 means the instance predates the spending limits API, and the
+// error carries an upgrade hint.
 func (r *GatewayProjectSpendingLimitsResource) classify(
 	ctx context.Context, projectID, method string, err error,
 ) (bool, error) {
-	if !logclient.IsNotFoundError(err) {
+	var apiErr *logclient.APIError
+	if !errors.As(err, &apiErr) || (apiErr.StatusCode != http.StatusNotFound && apiErr.StatusCode != http.StatusForbidden) {
 		return false, err
 	}
 	if projectMissing(ctx, r.client, projectID) {
 		return true, err
+	}
+	if apiErr.StatusCode == http.StatusForbidden {
+		return false, err
 	}
 	return false, logclient.GatewayProjectSpendingLimitsUnavailableError(method, err)
 }
