@@ -4,6 +4,9 @@ FEATURES:
 - `logfire_dashboard` marks each dashboard it writes as managed, so Logfire shows a Managed badge on it. A new dashboard is also locked against edits in the Logfire UI and through the Logfire MCP server. Set the new `managed_allow_edits` attribute to `true` to allow them. An existing dashboard stays editable and gets the marker on its next update. Logfire instances without managed dashboards ignore the marker.
 - Embedders can name their tool with `shim.New(version, shim.WithDashboardManager("Pulumi"))`. `shim.New(version)` is unchanged.
 
+BUG FIXES:
+- The provider rate limit applies per Logfire host. Provider configurations that point at different Logfire instances no longer share one request budget.
+
 ## 0.2.4
 
 FEATURES:
