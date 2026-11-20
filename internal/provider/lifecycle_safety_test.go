@@ -240,6 +240,7 @@ func TestLifecycleEmailRecipients(t *testing.T) {
 			{Config: email(normalized), Check: resource.TestCheckTypeSetElemAttr("logfire_channel.test", "config.recipients.*", " Postmaster@example.com")},
 			{Config: email(normalized), ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}}},
 			{Config: email(`"not-an-address"`), ExpectError: regexp.MustCompile(`must be an email\s+address`)},
+			{Config: email(`"a@example.com\u001f"`), ExpectError: regexp.MustCompile(`without\s+control\s+characters`)},
 			{
 				// Logfire keeps the last address after it unsubscribes, so a rename must not resend it.
 				PreConfig: func() { api.Lock(); api.unsubscribed = "a@example.com"; api.Unlock() },

@@ -141,8 +141,11 @@ func (r *ChannelResource) Schema(ctx context.Context, req resource.SchemaRequest
 						MarkdownDescription: "Email addresses the channel notifies, 1 to 50. Required for `email` channels, which need a Logfire plan with custom email recipients. Logfire normalizes each address, for example by lowercasing its domain. The provider keeps the configured spelling when Logfire stores an equivalent one. A recipient who unsubscribes leaves the channel, and Logfire rejects an update that adds them back until you remove the address from the configuration.",
 						Validators: []validator.Set{
 							setvalidator.SizeBetween(1, 50),
+							// Logfire trims an address with Python's strip(), which also removes
+							// control characters that Go keeps, such as U+001F. Logfire rejects
+							// them inside an address, so no valid address has one.
 							setvalidator.ValueStringsAre(stringvalidator.RegexMatches(
-								regexp.MustCompile(`^.+@.+$`), "must be an email address",
+								regexp.MustCompile(`^[^\p{Cc}]+@[^\p{Cc}]+$`), "must be an email address without control characters",
 							)),
 						},
 					},
