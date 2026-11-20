@@ -71,7 +71,9 @@ jobs:
     name: Terraform Provider Acceptance Tests
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Setup, the 10-minute local suite and the 15-minute live step must fit, or the job
+    # timeout would cut off live acceptance before Terraform's destroy.
+    timeout-minutes: 30
     # Cancelling live acceptance would skip Terraform's destroy and leave resources behind, so
     # a new push waits for the job that runs it instead.
     concurrency:
