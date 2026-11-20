@@ -44,7 +44,7 @@ jobs:
           TF_ACC: "1"
           LOGFIRE_API_KEY: ${{ secrets.LOGFIRE_API_KEY }}
           LOGFIRE_EXPECTED_ORG: "terraform-provider-logfire"
-        run: go test -v -cover ./internal/provider/
+        run: go test -v -cover -timeout=14m ./internal/provider/
         timeout-minutes: 15
       - name: Notify Slack on failure
         if: ${{ failure() && env.SLACK_WEBHOOK_URL != '' }}

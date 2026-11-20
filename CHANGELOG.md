@@ -2,6 +2,7 @@
 
 BUG FIXES:
 - `logfire_frontend_application`: renaming an application in the Logfire UI no longer plans a replacement, which revoked its browser token and failed with a 409 because the old name stays reserved. Terraform keeps the configured `name`. Set `name` to the new name to follow the rename without a replacement. Importing reads the current name from Logfire.
+- The provider rate limit applies per Logfire host. Provider configurations that point at different Logfire instances no longer share one request budget.
 
 ## 0.2.4
 
