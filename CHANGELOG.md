@@ -1,5 +1,8 @@
 ## Unreleased
 
+BUG FIXES:
+- A create that the Logfire public API rate limit refuses is retried after the `Retry-After` delay. The server refuses such a request before it handles it, so the retry cannot create a second resource. Several Terraform runs against one organization share its limit, so this refusal can occur even with the provider's own pacing. Other 429 responses to a create still fail without a retry, as in 0.2.2. Retries stop before the 90-second request timeout.
+
 ## 0.3.0
 
 BREAKING CHANGES:

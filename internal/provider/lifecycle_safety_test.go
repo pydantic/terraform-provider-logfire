@@ -32,8 +32,11 @@ type lifecycleAPI struct {
 	sync.Mutex
 	item         map[string]any
 	failFollowup bool
-	creates      int
-	deletes      int
+	// refuseCreates is the number of later creates that the public API rate limit refuses.
+	refuseCreates int
+	refusals      int
+	creates       int
+	deletes       int
 	// unsubscribed is an address that left the channel. Logfire refuses a config that lists it.
 	unsubscribed string
 }
@@ -102,6 +105,14 @@ func newLifecycleAPI(t *testing.T, kind string) (*httptest.Server, *lifecycleAPI
 		}
 		switch r.Method {
 		case http.MethodPost:
+			if api.refusals < api.refuseCreates {
+				api.refusals++
+				w.Header().Set("X-RateLimit-Resource", "public_api")
+				w.Header().Set("Retry-After", "0")
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = w.Write([]byte(`{"detail":"Rate limit exceeded"}`))
+				return
+			}
 			api.creates++
 			api.item = map[string]any{"id": kind + "-1", "active": true}
 			maps.Copy(api.item, payload)
@@ -325,6 +336,26 @@ func TestLifecyclePartialCreateRecovery(t *testing.T) {
 				t.Fatalf("recovery must update the same resource, then destroy it: creates=%d, deletes=%d, item=%v", api.creates, api.deletes, api.item)
 			}
 		})
+	}
+}
+
+// The public API rate limit refuses a request before the route runs, so the provider retries
+// the create and the apply succeeds with one resource.
+func TestLifecycleCreateAfterRateLimitRefusal(t *testing.T) {
+	t.Parallel()
+	server, api := newLifecycleAPI(t, "channel")
+	api.refuseCreates = 2
+	resource.Test(t, resource.TestCase{
+		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{{
+			Config: lifecycleConfig(server.URL, "channel", "name = \"channel\"\n"+lifecycleWebhook),
+			Check:  resource.TestCheckResourceAttr("logfire_channel.test", "id", "channel-1"),
+		}},
+	})
+	api.Lock()
+	defer api.Unlock()
+	if api.refusals != 2 || api.creates != 1 || api.deletes != 1 {
+		t.Fatalf("refusals=%d, creates=%d, deletes=%d; want 2 refused creates, then one create and its destroy", api.refusals, api.creates, api.deletes)
 	}
 }
 

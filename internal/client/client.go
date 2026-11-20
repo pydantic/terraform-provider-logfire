@@ -29,6 +29,7 @@ const (
 	defaultRequestsPerMinute     = 50
 	defaultRequestsPerHour       = 1000
 	defaultRetryMaxAttempts      = 5
+	maxRateLimitRetryWait        = defaultRequestTimeout
 	defaultRetryBaseDelay        = 500 * time.Millisecond
 	defaultRetryMaxDelay         = 15 * time.Second
 	defaultMaxIdleConns          = 50
@@ -87,10 +88,11 @@ func (t *retryingTransport) RoundTrip(req *http.Request) (*http.Response, error)
 		attempts = 1
 	}
 
+	start := time.Now()
 	var resp *http.Response
 	var err error
-	for attempt := 0; attempt < attempts; attempt++ {
-		if attempt > 0 {
+	for attempt, sent := 0, 0; ; sent++ {
+		if sent > 0 {
 			switch {
 			case req.GetBody != nil:
 				body, getErr := req.GetBody()
@@ -105,9 +107,19 @@ func (t *retryingTransport) RoundTrip(req *http.Request) (*http.Response, error)
 
 		resp, err = t.next.RoundTrip(req)
 
-		retry, delay := t.shouldRetry(req.Context(), resp, err, attempt, attempts)
-		if !retry {
-			return resp, err
+		var delay time.Duration
+		if err == nil && refusedBeforeHandling(resp) {
+			delay = withJitter(max(retryDelay(resp, t.baseDelay, t.maxDelay, 0), t.baseDelay))
+			if !retryFitsBudget(req.Context(), start, delay) {
+				return resp, err
+			}
+		} else {
+			var retry bool
+			retry, delay = t.shouldRetry(req.Context(), resp, err, attempt, attempts)
+			if !retry {
+				return resp, err
+			}
+			attempt++
 		}
 
 		drainResponse(resp)
@@ -116,8 +128,41 @@ func (t *retryingTransport) RoundTrip(req *http.Request) (*http.Response, error)
 			return nil, err
 		}
 	}
+}
 
-	return resp, err
+// refusedBeforeHandling reports whether the Logfire public API rate limit refused the request.
+// The server checks that limit before the route runs, so the request had no effect. A retry is
+// then safe for every method, a create included. Other 429 responses do not carry this header,
+// and the provider cannot tell whether those requests ran.
+func refusedBeforeHandling(resp *http.Response) bool {
+	return resp != nil &&
+		resp.StatusCode == http.StatusTooManyRequests &&
+		resp.Header.Get("X-RateLimit-Resource") == "public_api"
+}
+
+// retryFitsBudget reports whether a wait of delay ends before the request deadline and inside
+// maxRateLimitRetryWait from the first attempt. The second bound applies to a client without a timeout.
+func retryFitsBudget(ctx context.Context, start time.Time, delay time.Duration) bool {
+	end := time.Now().Add(delay)
+	if deadline, ok := ctx.Deadline(); ok && !end.Before(deadline) {
+		return false
+	}
+	return end.Sub(start) <= maxRateLimitRetryWait
+}
+
+// withJitter adds up to a quarter of delay, so concurrent requests that got the same
+// Retry-After do not retry together.
+func withJitter(delay time.Duration) time.Duration {
+	if delay <= 0 {
+		return delay
+	}
+	spread := int64(delay / 4)
+	if spread <= 0 {
+		return delay
+	}
+	jitterMu.Lock()
+	defer jitterMu.Unlock()
+	return delay + time.Duration(jitterRand.Int63n(spread))
 }
 
 func (t *retryingTransport) shouldRetry(ctx context.Context, resp *http.Response, err error, attempt, maxAttempts int) (bool, time.Duration) {
