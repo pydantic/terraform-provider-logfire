@@ -17,17 +17,17 @@ on:
 permissions:
   contents: read
 
-# A new push to a pull request cancels its older run. Every other run has its own group, so
+# A new push to a pull request cancels the older run's jobs, except live acceptance. Each job
+# sets its own group so that one can opt out. Runs outside pull requests use the run ID, so
 # pushes to main always run and finish.
-concurrency:
-  group: tests-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: true
-
 jobs:
   # Ensure project builds before running testing matrix
   build:
     name: Build
     runs-on: ubuntu-latest
+    concurrency:
+      group: tests-build-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: true
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -46,6 +46,9 @@ jobs:
 
   generate:
     runs-on: ubuntu-latest
+    concurrency:
+      group: tests-generate-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -69,6 +72,11 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Cancelling live acceptance would skip Terraform's destroy and leave resources behind, so
+    # a new push waits for the job that runs it instead.
+    concurrency:
+      group: tests-${{ matrix.terraform }}-${{ github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: ${{ matrix.terraform != '1.14.*' }}
     strategy:
       fail-fast: false
       matrix:
