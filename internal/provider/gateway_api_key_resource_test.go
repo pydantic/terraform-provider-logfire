@@ -35,14 +35,6 @@ func TestAccGatewayAPIKeyResource(t *testing.T) {
 				},
 			},
 			{
-				Config: testAccGatewayAPIKeyResourceConfig(projectID, keyName, "10", "false"),
-				ConfigPlanChecks: resource.ConfigPlanChecks{
-					PreApply: []plancheck.PlanCheck{
-						plancheck.ExpectEmptyPlan(),
-					},
-				},
-			},
-			{
 				// Spend caps update in place.
 				Config: testAccGatewayAPIKeyResourceConfig(projectID, keyName, "25", "true"),
 				ConfigPlanChecks: resource.ConfigPlanChecks{

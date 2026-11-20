@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"golang.org/x/time/rate"
 	"io"
 	"math/rand"
 	"net"
@@ -40,21 +41,29 @@ const (
 )
 
 var (
-	defaultLimiter = newRateLimiter(defaultRequestsPerMinute, defaultRequestsPerHour)
+	// Logfire limits API requests per organization on each backend. Every client in the
+	// process shares one limiter per host, so requests to one backend never spend another's.
+	hostLimiters   = map[string]*rateLimiter{}
+	hostLimitersMu sync.Mutex
 	jitterRand     = rand.New(rand.NewSource(time.Now().UnixNano()))
 	jitterMu       sync.Mutex
 )
 
 type rateLimitedTransport struct {
-	next    http.RoundTripper
-	limiter *rateLimiter
+	next http.RoundTripper
 }
 
 func (t *rateLimitedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if t.limiter != nil {
-		if err := t.limiter.Wait(req.Context()); err != nil {
-			return nil, err
-		}
+	host := strings.ToLower(req.URL.Host)
+	hostLimitersMu.Lock()
+	limiter := hostLimiters[host]
+	if limiter == nil {
+		limiter = newRateLimiter(defaultRequestsPerMinute, defaultRequestsPerHour)
+		hostLimiters[host] = limiter
+	}
+	hostLimitersMu.Unlock()
+	if err := limiter.Wait(req.Context()); err != nil {
+		return nil, err
 	}
 	return t.next.RoundTrip(req)
 }
@@ -208,111 +217,32 @@ func retryDelay(resp *http.Response, base, maxDelay time.Duration, attempt int) 
 	return delay/2 + jitter
 }
 
+// rateLimiter holds a per-minute and a per-hour token bucket. Both start full.
+// They refill on demand, so a limiter starts no goroutine and needs no cleanup.
 type rateLimiter struct {
-	perMinute *rateGate
-	perHour   *rateGate
+	perMinute *rate.Limiter
+	perHour   *rate.Limiter
 }
 
 func newRateLimiter(requestsPerMinute, requestsPerHour int) *rateLimiter {
-	if requestsPerMinute <= 0 {
-		requestsPerMinute = 1
-	}
-	if requestsPerHour <= 0 {
-		requestsPerHour = 1
-	}
-
-	minuteInterval := time.Minute / time.Duration(requestsPerMinute)
-	hourInterval := time.Hour / time.Duration(requestsPerHour)
-	minuteBurst := requestsPerMinute
-	hourBurst := requestsPerHour
-
+	requestsPerMinute = max(requestsPerMinute, 1)
+	requestsPerHour = max(requestsPerHour, 1)
 	return &rateLimiter{
-		perMinute: newRateGate(minuteInterval, minuteBurst),
-		perHour:   newRateGate(hourInterval, hourBurst),
+		perMinute: rate.NewLimiter(rate.Every(time.Minute/time.Duration(requestsPerMinute)), requestsPerMinute),
+		perHour:   rate.NewLimiter(rate.Every(time.Hour/time.Duration(requestsPerHour)), requestsPerHour),
 	}
 }
 
 func (l *rateLimiter) Wait(ctx context.Context) error {
-	if err := l.perMinute.take(ctx); err != nil {
+	if err := l.perMinute.Wait(ctx); err != nil {
 		return err
 	}
-	return l.perHour.take(ctx)
-}
-
-func (l *rateLimiter) Close() {
-	if l.perMinute != nil {
-		l.perMinute.stop()
-	}
-	if l.perHour != nil {
-		l.perHour.stop()
-	}
-}
-
-type rateGate struct {
-	tokens chan struct{}
-	ticker *time.Ticker
-	stopCh chan struct{}
-}
-
-func newRateGate(refillInterval time.Duration, burst int) *rateGate {
-	if refillInterval <= 0 {
-		refillInterval = time.Second
-	}
-	if burst <= 0 {
-		burst = 1
-	}
-
-	g := &rateGate{
-		tokens: make(chan struct{}, burst),
-		ticker: time.NewTicker(refillInterval),
-		stopCh: make(chan struct{}),
-	}
-	for i := 0; i < burst; i++ {
-		g.tokens <- struct{}{}
-	}
-
-	go func() {
-		defer g.ticker.Stop()
-		for {
-			select {
-			case <-g.stopCh:
-				return
-			case <-g.ticker.C:
-				select {
-				case g.tokens <- struct{}{}:
-				default:
-				}
-			}
-		}
-	}()
-
-	return g
-}
-
-func (g *rateGate) take(ctx context.Context) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-g.tokens:
-		return nil
-	}
-}
-
-func (g *rateGate) stop() {
-	select {
-	case <-g.stopCh:
-		return
-	default:
-		close(g.stopCh)
-	}
+	return l.perHour.Wait(ctx)
 }
 
 func newDefaultHTTPClient() *http.Client {
 	baseTransport := defaultTransport()
-	limitedTransport := &rateLimitedTransport{
-		next:    baseTransport,
-		limiter: defaultLimiter,
-	}
+	limitedTransport := &rateLimitedTransport{next: baseTransport}
 	return &http.Client{
 		Timeout: defaultRequestTimeout,
 		Transport: &retryingTransport{
