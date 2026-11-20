@@ -6,6 +6,7 @@ package provider
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/acctest"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -19,7 +20,7 @@ func TestAccWriteTokenResource(t *testing.T) {
 	t.Parallel()
 
 	projectName := fmt.Sprintf("acc-write-token-%s", acctest.RandStringFromCharSet(6, acctest.CharSetAlphaNum))
-	expiresAt := "2026-11-30T18:45:00Z"
+	expiresAt := time.Now().UTC().AddDate(0, 1, 0).Format("2006-01-02") + "T23:59:59Z"
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },

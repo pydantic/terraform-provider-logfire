@@ -220,7 +220,7 @@ func TestCreateScheduleMissingRouteHint(t *testing.T) {
 				t.Fatalf("expected EndpointUnavailableError, got %v", err)
 			}
 			message := err.Error()
-			for _, want := range []string{"v2026-09-23.01", "logfire-0.13.47", "/api/v1/schedules/"} {
+			for _, want := range []string{"v2026-09-23.01", "logfire-0.13.47", "/api/v1/notification-windows/"} {
 				if !strings.Contains(message, want) {
 					t.Fatalf("error %q does not mention %q", message, want)
 				}

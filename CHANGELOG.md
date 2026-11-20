@@ -1,8 +1,14 @@
 ## Unreleased
 
 FEATURES:
+- `logfire_dashboard` marks each dashboard it writes as managed, so Logfire shows a Managed badge on it. A new dashboard is also locked against edits in the Logfire UI and through the Logfire MCP server. Set the new `managed_allow_edits` attribute to `true` to allow them. An existing dashboard stays editable and gets the marker on its next update. Logfire instances without managed dashboards ignore the marker.
+- Embedders can name their tool with `shim.New(version, shim.WithDashboardManager("Pulumi"))`. `shim.New(version)` is unchanged.
 - `logfire_channel` supports `email` channels with a new `recipients` attribute, which needs a Logfire plan with custom email recipients. Logfire normalizes addresses, for example by lowercasing the domain. The provider keeps the configured spelling. A rename or deactivation leaves the recipients untouched, so it still works after the last recipient unsubscribes.
 - `logfire_channel`: Opsgenie channels accept a `base_url` attribute for accounts outside the US region, such as `https://api.eu.opsgenie.com`. Omitting it on an existing channel retains the current value, so an update no longer drops a base URL set in the Logfire UI.
+
+BUG FIXES:
+- The provider rate limit applies per Logfire host. Provider configurations that point at different Logfire instances no longer share one request budget.
+- `logfire_schedule` calls the `/api/v1/notification-windows/` routes, because Logfire deprecated `/api/v1/schedules/`. A Logfire instance that only has the old routes still works: the provider falls back to them when the new ones answer 404. No configuration changes.
 
 ## 0.2.4
 
