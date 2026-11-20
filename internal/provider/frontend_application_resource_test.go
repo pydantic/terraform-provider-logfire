@@ -54,7 +54,8 @@ func TestShouldRevokeFrontendApplicationToken(t *testing.T) {
 func TestSameNameIdentityReplacementNeedsAdoption(t *testing.T) {
 	t.Parallel()
 	state := FrontendApplicationModel{
-		Name: types.StringValue("browser"), ServiceNamespace: types.StringValue("old"), Environment: types.StringValue("prod"),
+		ProjectID: types.StringValue("project-1"), Name: types.StringValue("browser"),
+		ServiceNamespace: types.StringValue("old"), Environment: types.StringValue("prod"),
 	}
 	plan := state
 	plan.ServiceNamespace = types.StringValue("new")
@@ -72,6 +73,11 @@ func TestSameNameIdentityReplacementNeedsAdoption(t *testing.T) {
 	}
 	if !sameNameIdentityReplacementNeedsAdoption(state, plan, serverNameValue("other")) {
 		t.Fatal("the name Logfire has after a UI rename must require explicit adoption")
+	}
+	plan.Name = state.Name
+	plan.ProjectID = types.StringValue("other-project")
+	if sameNameIdentityReplacementNeedsAdoption(state, plan, serverNameValue("other")) {
+		t.Fatal("a move to another project cannot collide, so it must not require adoption")
 	}
 }
 

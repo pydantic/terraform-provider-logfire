@@ -126,9 +126,11 @@ func (r *FrontendApplicationResource) ModifyPlan(ctx context.Context, req resour
 }
 
 // serverName is the name Logfire reported on the last read, which differs from state after a UI
-// rename. A plan that matches either keeps the name, so it still needs adoption.
+// rename. A plan that matches either keeps the name, so it still needs adoption. Logfire checks
+// names within one project, so a move to another project never needs it.
 func sameNameIdentityReplacementNeedsAdoption(state, plan FrontendApplicationModel, serverName []byte) bool {
-	if state.Name.IsNull() || state.Name.IsUnknown() || plan.Name.IsNull() || plan.Name.IsUnknown() {
+	if state.Name.IsNull() || state.Name.IsUnknown() || plan.Name.IsNull() || plan.Name.IsUnknown() ||
+		!state.ProjectID.Equal(plan.ProjectID) {
 		return false
 	}
 	planned := plan.Name.ValueString()
