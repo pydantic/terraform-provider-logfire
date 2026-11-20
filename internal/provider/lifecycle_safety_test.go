@@ -214,6 +214,7 @@ func TestLifecycleOpsgenieBaseURL(t *testing.T) {
 					}),
 			},
 			{Config: opsgenie("renamed", "base_url = \"https://api.opsgenie.com \""), ExpectError: regexp.MustCompile(`without\s+spaces`)},
+			{Config: opsgenie("renamed", "base_url = \"https://api.opsgenie.com\u0085\""), ExpectError: regexp.MustCompile(`without\s+spaces`)},
 			{Config: opsgenie("renamed", "base_url = \"https://api.opsgenie.com\""), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.base_url", "https://api.opsgenie.com")},
 		},
 	})
@@ -244,6 +245,8 @@ func TestLifecycleEmailRecipients(t *testing.T) {
 				Check:     resource.TestCheckResourceAttr("logfire_channel.test", "name", "renamed"),
 			},
 			{Config: named("renamed", `"a@example.com"`), ExpectError: regexp.MustCompile("unsubscribed")},
+			// Logfire keeps the case of most mailbox names, so these are two recipients.
+			{Config: named("renamed", `"Ops@example.com", "ops@example.com"`), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.recipients.#", "2")},
 		},
 	})
 }

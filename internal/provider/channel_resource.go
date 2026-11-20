@@ -158,7 +158,7 @@ func (r *ChannelResource) Schema(ctx context.Context, req resource.SchemaRequest
 							// The provider trims the URL it sends, so surrounding spaces would come
 							// back changed and fail the apply.
 							stringvalidator.RegexMatches(
-								regexp.MustCompile(`^https://[^\s\p{Z}]+$`),
+								regexp.MustCompile(`^https://[^\s\p{Z}\x{85}]+$`),
 								"must be an HTTPS URL without spaces",
 							),
 						},
@@ -559,16 +559,31 @@ func reconcileChannelConfigMaskedSecrets(remote, fallback *ChannelConfigModel) *
 			isMaskedPagerdutyRoutingKey,
 		)
 	case "email":
-		for i, stored := range remote.Recipients {
-			for _, configured := range fallback.Recipients {
-				if sameEmail(configured.ValueString(), stored.ValueString()) {
-					remote.Recipients[i] = configured
-				}
-			}
-		}
+		remote.Recipients = keepConfiguredEmails(remote.Recipients, fallback.Recipients)
 	}
 
 	return remote
+}
+
+// keepConfiguredEmails swaps each stored address for the configured spelling Logfire stored it
+// from. Exact matches go first, and each configured address replaces one stored address at most,
+// so two configured spellings that differ only in case stay distinct.
+func keepConfiguredEmails(stored, configured []types.String) []types.String {
+	used := make([]bool, len(configured))
+	matched := make([]bool, len(stored))
+	for i, s := range stored {
+		if j := slices.IndexFunc(configured, func(c types.String) bool { return c.Equal(s) }); j >= 0 && !used[j] {
+			used[j], matched[i] = true, true
+		}
+	}
+	for i, s := range stored {
+		for j, c := range configured {
+			if !matched[i] && !used[j] && sameEmail(c.ValueString(), s.ValueString()) {
+				stored[i], used[j], matched[i] = c, true, true
+			}
+		}
+	}
+	return stored
 }
 
 // sameEmail reports whether Logfire stored the configured address. Logfire trims it, normalizes
