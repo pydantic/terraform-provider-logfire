@@ -272,8 +272,9 @@ type APIClient struct {
 	HTTP    *http.Client
 	token   string
 
-	userAgent string
-	headers   http.Header
+	userAgent        string
+	headers          http.Header
+	dashboardManager string
 
 	orgTokenMu    sync.Mutex
 	orgTokenCache map[string]orgTokenEntry
@@ -345,6 +346,17 @@ func isStatusExpected(statusCode int, expectedStatuses []int) bool {
 
 type Option func(*APIClient)
 
+// WithDashboardManager names the tool recorded as the manager of the
+// dashboards this client writes, such as "Pulumi" or "Crossplane". The
+// default is Terraform.
+func WithDashboardManager(tool string) Option {
+	return func(c *APIClient) {
+		if trimmed := strings.TrimSpace(tool); trimmed != "" {
+			c.dashboardManager = trimmed
+		}
+	}
+}
+
 func WithUserAgent(ua string) Option {
 	return func(c *APIClient) {
 		if trimmed := strings.TrimSpace(ua); trimmed != "" {
@@ -387,6 +399,8 @@ func NewAPIClient(baseURL, token string, httpClient *http.Client, opts ...Option
 		userAgent:     defaultUserAgent,
 		headers:       make(http.Header),
 		orgTokenCache: make(map[string]orgTokenEntry),
+
+		dashboardManager: "terraform",
 	}
 
 	for _, opt := range opts {
@@ -1167,12 +1181,34 @@ type DashboardCreateRequest struct {
 	Name       string          `json:"name"`
 	Slug       string          `json:"slug"`
 	Definition json.RawMessage `json:"definition"`
+	DashboardManager
 }
 
 type DashboardUpdateRequest struct {
 	Name          *string          `json:"name,omitempty"`
 	Definition    *json.RawMessage `json:"definition,omitempty"`
 	ReplaceLayout bool             `json:"-"`
+	DashboardManager
+}
+
+// DashboardManager marks a dashboard as managed by the tool that writes it.
+// Logfire shows the tool on the dashboard and, unless ManagedAllowEdits is
+// set, blocks edits from the UI and the MCP server. The dashboards API stays
+// open to the manager. Backends without managed dashboards ignore these fields.
+type DashboardManager struct {
+	ManagedBy         string  `json:"managed_by,omitempty"`
+	ManagedByName     *string `json:"managed_by_name,omitempty"`
+	ManagedAllowEdits bool    `json:"managed_allow_edits,omitempty"`
+}
+
+// DashboardManager returns the marker for a dashboard this client writes.
+func (c *APIClient) DashboardManager(allowEdits bool) DashboardManager {
+	name := c.dashboardManager
+	m := DashboardManager{ManagedBy: "other", ManagedByName: &name, ManagedAllowEdits: allowEdits}
+	if tool := strings.ToLower(c.dashboardManager); tool == "terraform" || tool == "pulumi" {
+		m.ManagedBy, m.ManagedByName = tool, nil
+	}
+	return m
 }
 
 type DashboardSummary struct {
@@ -1196,6 +1232,9 @@ type Dashboard struct {
 	DashboardName string          `json:"dashboard_name"`
 	DashboardSlug string          `json:"dashboard_slug"`
 	Definition    json.RawMessage `json:"definition"`
+	// Backends without managed dashboards leave these out.
+	ManagedBy         *string `json:"managed_by"`
+	ManagedAllowEdits *bool   `json:"managed_allow_edits"`
 }
 
 type GetDashboardResponse struct {

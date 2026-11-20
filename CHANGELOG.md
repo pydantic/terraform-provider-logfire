@@ -1,5 +1,9 @@
 ## Unreleased
 
+FEATURES:
+- `logfire_dashboard` marks each dashboard it writes as managed, so Logfire shows a Managed badge on it. A new dashboard is also locked against edits in the Logfire UI and through the Logfire MCP server. Set the new `managed_allow_edits` attribute to `true` to allow them. An existing dashboard stays editable and gets the marker on its next update. Logfire instances without managed dashboards ignore the marker.
+- Embedders can name their tool with `shim.New(version, shim.WithDashboardManager("Pulumi"))`. `shim.New(version)` is unchanged.
+
 BUG FIXES:
 - The provider rate limit applies per Logfire host. Provider configurations that point at different Logfire instances no longer share one request budget.
 - `logfire_schedule` calls the `/api/v1/notification-windows/` routes, because Logfire deprecated `/api/v1/schedules/`. A Logfire instance that only has the old routes still works: the provider falls back to them when the new ones answer 404. No configuration changes.

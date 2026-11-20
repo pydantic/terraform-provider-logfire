@@ -50,3 +50,33 @@ func TestUpdateDashboardLayoutReplacementIsOptIn(t *testing.T) {
 		})
 	}
 }
+
+func TestDashboardManagerNamesTheTool(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		tool       string
+		allowEdits bool
+		want       string
+	}{
+		{"", true, `{"name":"Main","slug":"main","definition":{},"managed_by":"terraform","managed_allow_edits":true}`},
+		{"Pulumi", false, `{"name":"Main","slug":"main","definition":{},"managed_by":"pulumi"}`},
+		{"Crossplane", true, `{"name":"Main","slug":"main","definition":{},"managed_by":"other","managed_by_name":"Crossplane","managed_allow_edits":true}`},
+	} {
+		t.Run(tc.tool, func(t *testing.T) {
+			client, err := NewAPIClient("http://localhost", "test", nil, WithDashboardManager(tc.tool))
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, err := json.Marshal(DashboardCreateRequest{
+				Name: "Main", Slug: "main", Definition: json.RawMessage(`{}`),
+				DashboardManager: client.DashboardManager(tc.allowEdits),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(body) != tc.want {
+				t.Fatalf("create body = %s, want %s", body, tc.want)
+			}
+		})
+	}
+}

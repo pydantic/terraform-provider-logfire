@@ -40,11 +40,29 @@ var reservedCustomHeaders = map[string]struct{}{
 	"x-terraform-provider-version": {},
 }
 
-func New(version string) func() provider.Provider {
-	return func() provider.Provider { return &LogfireProvider{version: version} }
+// Option customizes the provider for a tool that embeds it.
+type Option func(*LogfireProvider)
+
+// WithDashboardManager names the tool recorded as the manager of the
+// dashboards the provider writes. The default is Terraform.
+func WithDashboardManager(tool string) Option {
+	return func(p *LogfireProvider) { p.dashboardManager = tool }
 }
 
-type LogfireProvider struct{ version string }
+func New(version string, opts ...Option) func() provider.Provider {
+	return func() provider.Provider {
+		p := &LogfireProvider{version: version}
+		for _, opt := range opts {
+			opt(p)
+		}
+		return p
+	}
+}
+
+type LogfireProvider struct {
+	version          string
+	dashboardManager string
+}
 
 type LogfireProviderModel struct {
 	BaseUrl       types.String `tfsdk:"base_url"`
@@ -181,7 +199,8 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 		api_key,
 		nil,
 		client.WithUserAgent(ua),
-		client.WithAdditionalHeaders(headers))
+		client.WithAdditionalHeaders(headers),
+		client.WithDashboardManager(p.dashboardManager))
 
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid provider configuration", err.Error())

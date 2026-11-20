@@ -17,6 +17,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
 const dashboardLifecycleFile = `{
@@ -39,6 +40,9 @@ const dashboardLifecycleAPI = `{"kind":"Dashboard","metadata":{"name":"Main","pr
 type dashboardLifecycleAPIState struct {
 	sync.Mutex
 	id, name, definition string
+	managedBy            string
+	allowEdits           bool
+	olderLogfire         bool
 	creates              int
 	writes               []string
 	queries              []string
@@ -51,7 +55,11 @@ func (a *dashboardLifecycleAPIState) ServeHTTP(w http.ResponseWriter, req *http.
 	w.Header().Set("Content-Type", "application/json")
 	const base = "/api/v1/projects/project-1/dashboards/"
 	dashboard := func() any {
-		return map[string]any{"id": a.id, "project_id": "project-1", "dashboard_name": a.name, "dashboard_slug": "main", "definition": json.RawMessage(a.definition)}
+		d := map[string]any{"id": a.id, "project_id": "project-1", "dashboard_name": a.name, "dashboard_slug": "main", "definition": json.RawMessage(a.definition)}
+		if a.managedBy != "" {
+			d["managed_by"], d["managed_allow_edits"] = a.managedBy, a.allowEdits
+		}
+		return d
 	}
 	switch {
 	case req.Method == http.MethodGet && req.URL.Path == "/api/v1/projects/":
@@ -78,6 +86,8 @@ func (a *dashboardLifecycleAPIState) ServeHTTP(w http.ResponseWriter, req *http.
 		var payload struct {
 			Name       *string         `json:"name"`
 			Definition json.RawMessage `json:"definition"`
+			ManagedBy  string          `json:"managed_by"`
+			AllowEdits bool            `json:"managed_allow_edits"`
 		}
 		if err := json.Unmarshal(body, &payload); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
@@ -87,6 +97,9 @@ func (a *dashboardLifecycleAPIState) ServeHTTP(w http.ResponseWriter, req *http.
 		a.queries = append(a.queries, req.URL.RawQuery)
 		if payload.Name != nil {
 			a.name = *payload.Name
+		}
+		if !a.olderLogfire {
+			a.managedBy, a.allowEdits = payload.ManagedBy, payload.AllowEdits
 		}
 		if req.Method == http.MethodPost {
 			a.creates++
@@ -99,7 +112,11 @@ func (a *dashboardLifecycleAPIState) ServeHTTP(w http.ResponseWriter, req *http.
 	case req.Method == http.MethodGet && a.id != "" && req.URL.Path == base+a.id+"/":
 		var definition map[string]json.RawMessage
 		_ = json.Unmarshal([]byte(a.definition), &definition)
-		definition["metadata"], _ = json.Marshal(map[string]any{"name": a.name, "project": "test", "version": 8})
+		metadata := map[string]any{"name": a.name, "project": "test", "version": 8}
+		if a.managedBy != "" {
+			metadata["managedBy"], metadata["managedAllowEdits"] = a.managedBy, a.allowEdits
+		}
+		definition["metadata"], _ = json.Marshal(metadata)
 		_ = json.NewEncoder(w).Encode(map[string]any{"dashboard": definition})
 	case req.Method == http.MethodDelete && a.id != "" && req.URL.Path == base+a.id+"/":
 		a.id = ""
@@ -210,7 +227,8 @@ removed {
 				},
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckResourceAttr(address, "id", "dashboard-1"),
-					resource.TestCheckResourceAttr(address, "definition", reexportedAPI)),
+					resource.TestCheckResourceAttr(address, "definition", strings.Replace(reexportedAPI,
+						`"metadata":{`, `"metadata":{"managedAllowEdits":false,"managedBy":"terraform",`, 1))),
 			},
 			{
 				Config: config("Renamed", updated), ConfigPlanChecks: empty,
@@ -245,7 +263,7 @@ removed {
 	if api.creates != 2 || api.id != "" {
 		t.Fatalf("lifecycle left creates=%d, remote ID=%q; want two creates and final deletion", api.creates, api.id)
 	}
-	if len(api.writes) != 6 || api.writes[1] != `{"name":"Renamed"}` || !strings.Contains(api.writes[0], `"largeInteger":9007199254740993`) || !strings.Contains(api.writes[0], `"fraction":0.333333333333333333333333333333333333`) {
+	if len(api.writes) != 6 || api.writes[1] != `{"name":"Renamed","managed_by":"terraform"}` || !strings.HasSuffix(api.writes[0], `"managed_by":"terraform"}`) || !strings.Contains(api.writes[0], `"largeInteger":9007199254740993`) || !strings.Contains(api.writes[0], `"fraction":0.333333333333333333333333333333333333`) {
 		t.Fatalf("unexpected dashboard writes: %v", api.writes)
 	}
 	for i, query := range []string{"", "", "replace_layout=true", "replace_layout=true", "replace_layout=true", ""} {
@@ -266,4 +284,135 @@ removed {
 			t.Fatalf("create %d metadata = %+v, want Main in test", i, metadata)
 		}
 	}
+}
+
+func TestLifecycleDashboardManagedAllowEdits(t *testing.T) {
+	t.Parallel()
+	api := &dashboardLifecycleAPIState{}
+	server := httptest.NewServer(api)
+	defer server.Close()
+	file := filepath.Join(t.TempDir(), "dashboard.json")
+	if err := os.WriteFile(file, []byte(dashboardLifecycleFile), 0600); err != nil {
+		t.Fatal(err)
+	}
+	config := func(extra string) string {
+		return lifecycleConfig(server.URL, "dashboard", fmt.Sprintf("project_id = \"project-1\"\nname = \"Main\"\nslug = \"main\"\ndefinition = file(%q)\n%s", file, extra))
+	}
+	const address = "logfire_dashboard.test"
+	resource.Test(t, resource.TestCase{
+		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: config(""),
+				Check:  resource.TestCheckResourceAttr(address, "managed_allow_edits", "false"),
+			},
+			{
+				Config:           config(""),
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}},
+			},
+			{
+				Config: config("managed_allow_edits = true"),
+				Check:  resource.TestCheckResourceAttr(address, "managed_allow_edits", "true"),
+			},
+			{
+				Config:           config(""),
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}},
+				Check:            resource.TestCheckResourceAttr(address, "managed_allow_edits", "true"),
+			},
+			{
+				PreConfig:        func() { api.Lock(); api.allowEdits = false; api.Unlock() },
+				Config:           config("managed_allow_edits = true"),
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction(address, plancheck.ResourceActionUpdate)}},
+				Check:            resource.TestCheckResourceAttr(address, "managed_allow_edits", "true"),
+			},
+			{
+				Config: fmt.Sprintf("provider \"logfire\" {\nbase_url = %q\napi_key = \"test-token\"\n}\nremoved {\nfrom = %s\nlifecycle { destroy = false }\n}", server.URL, address),
+			},
+			{
+				PreConfig: func() { api.Lock(); api.managedBy = ""; api.Unlock() },
+				Config:    config(""), ResourceName: address,
+				ImportState: true, ImportStateId: "test/main", ImportStatePersist: true,
+			},
+			{
+				Config:           config(""),
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}},
+				Check:            resource.TestCheckNoResourceAttr(address, "managed_allow_edits"),
+			},
+			{
+				Config:           config("managed_allow_edits = true"),
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction(address, plancheck.ResourceActionUpdate)}},
+				Check:            resource.TestCheckResourceAttr(address, "managed_allow_edits", "true"),
+			},
+		},
+	})
+	api.Lock()
+	defer api.Unlock()
+	const allowEdits = `{"managed_by":"terraform","managed_allow_edits":true}`
+	if len(api.writes) != 4 || !strings.HasSuffix(api.writes[0], `"managed_by":"terraform"}`) || api.writes[1] != allowEdits || api.writes[2] != allowEdits || api.writes[3] != allowEdits {
+		t.Fatalf("unexpected dashboard writes: %v", api.writes)
+	}
+}
+
+// A Logfire instance without managed dashboards reports no lock, so create and import agree on null.
+func TestLifecycleDashboardOnOlderLogfire(t *testing.T) {
+	t.Parallel()
+	api := &dashboardLifecycleAPIState{olderLogfire: true}
+	server := httptest.NewServer(api)
+	defer server.Close()
+	file := filepath.Join(t.TempDir(), "dashboard.json")
+	if err := os.WriteFile(file, []byte(dashboardLifecycleFile), 0600); err != nil {
+		t.Fatal(err)
+	}
+	config := lifecycleConfig(server.URL, "dashboard", fmt.Sprintf("project_id = \"project-1\"\nname = \"Main\"\nslug = \"main\"\ndefinition = file(%q)", file))
+	const address = "logfire_dashboard.test"
+	resource.Test(t, resource.TestCase{
+		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: config, Check: resource.TestCheckNoResourceAttr(address, "managed_allow_edits")},
+			{
+				Config: config, ResourceName: address, ImportState: true, ImportStateId: "test/main",
+				ImportStateVerify: true, ImportStateVerifyIgnore: []string{"definition"},
+			},
+		},
+	})
+}
+
+// A lock that Logfire ignored stays a planned change, so the provider sets it once Logfire
+// supports managed dashboards.
+func TestLifecycleDashboardRetriesIgnoredLock(t *testing.T) {
+	t.Parallel()
+	api := &dashboardLifecycleAPIState{olderLogfire: true}
+	server := httptest.NewServer(api)
+	defer server.Close()
+	file := filepath.Join(t.TempDir(), "dashboard.json")
+	if err := os.WriteFile(file, []byte(dashboardLifecycleFile), 0600); err != nil {
+		t.Fatal(err)
+	}
+	config := lifecycleConfig(server.URL, "dashboard", fmt.Sprintf("project_id = \"project-1\"\nname = \"Main\"\nslug = \"main\"\ndefinition = file(%q)\nmanaged_allow_edits = false", file))
+	const address = "logfire_dashboard.test"
+	resource.Test(t, resource.TestCase{
+		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: config, ExpectNonEmptyPlan: true},
+			{
+				PreConfig: func() {
+					api.Lock()
+					defer api.Unlock()
+					api.olderLogfire = false
+				},
+				Config: config,
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr(address, "managed_allow_edits", "false"),
+					func(*terraform.State) error {
+						api.Lock()
+						defer api.Unlock()
+						if api.managedBy == "" || api.allowEdits {
+							return fmt.Errorf("dashboard is not locked: managed_by=%q managed_allow_edits=%v", api.managedBy, api.allowEdits)
+						}
+						return nil
+					},
+				),
+			},
+		},
+	})
 }
