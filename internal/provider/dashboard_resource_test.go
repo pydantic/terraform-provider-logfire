@@ -152,7 +152,7 @@ func testAccDashboardDefinition(widgetText string) string {
 
 func TestWarnIgnoredLock(t *testing.T) {
 	t.Parallel()
-	managed, locked := "terraform", false
+	managed, locked, editable := "terraform", false, true
 	for _, tc := range []struct {
 		name    string
 		planned types.Bool
@@ -161,6 +161,8 @@ func TestWarnIgnoredLock(t *testing.T) {
 	}{
 		{name: "explicit value ignored", planned: types.BoolValue(false), warn: true},
 		{name: "explicit value applied", planned: types.BoolValue(false), out: logclient.Dashboard{ManagedBy: &managed, ManagedAllowEdits: &locked}},
+		// Logfire with managed dashboards turned off returns the setting the dashboard kept.
+		{name: "earlier setting kept", planned: types.BoolValue(false), out: logclient.Dashboard{ManagedBy: &managed, ManagedAllowEdits: &editable}, warn: true},
 		{name: "unset", planned: types.BoolNull()},
 		{name: "new dashboard default", planned: types.BoolUnknown()},
 	} {

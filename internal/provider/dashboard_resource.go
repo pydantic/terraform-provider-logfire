@@ -79,11 +79,13 @@ func dashboardLock(out *logclient.Dashboard) types.Bool {
 	return types.BoolValue(*out.ManagedAllowEdits)
 }
 
-// warnIgnoredLock warns when a configured managed_allow_edits had no effect.
+// warnIgnoredLock warns when Logfire did not apply a configured managed_allow_edits. With managed
+// dashboards turned off, Logfire leaves the lock unset, or returns the setting a dashboard that
+// already had a manager kept.
 func warnIgnoredLock(diags *diag.Diagnostics, planned types.Bool, out *logclient.Dashboard) {
-	if !planned.IsNull() && !planned.IsUnknown() && dashboardLock(out).IsNull() {
+	if !planned.IsNull() && !planned.IsUnknown() && !dashboardLock(out).Equal(planned) {
 		diags.AddAttributeWarning(path.Root("managed_allow_edits"), "Logfire ignored managed_allow_edits",
-			"This Logfire version has no managed dashboards, or has them turned off, so anyone with access can still edit the dashboard.")
+			"This Logfire version has no managed dashboards, or has them turned off, so the dashboard keeps its current edit setting. Terraform plans the value again on the next run.")
 	}
 }
 
@@ -142,7 +144,7 @@ func (r *DashboardResource) Schema(ctx context.Context, req resource.SchemaReque
 			"managed_allow_edits": rschema.BoolAttribute{
 				Optional:            true,
 				Computed:            true,
-				MarkdownDescription: "Whether the Logfire UI and the Logfire MCP server can edit the dashboard. Defaults to `false` for a new dashboard. A Logfire instance without managed dashboards leaves it unset and ignores a configured value. Terraform then warns and plans the value again on every run until Logfire applies it. A dashboard created by an earlier provider version stays editable until you set the attribute. Removing the attribute keeps the current value. Set it to `true` to allow edits again.",
+				MarkdownDescription: "Whether the Logfire UI and the Logfire MCP server can edit the dashboard. Defaults to `false` for a new dashboard. A Logfire instance without managed dashboards, or with them turned off, ignores a configured value. Terraform then warns and plans the value again on every run until Logfire applies it. A dashboard created by an earlier provider version stays editable until you set the attribute. Removing the attribute keeps the current value. Set it to `true` to allow edits again.",
 				PlanModifiers:       []planmodifier.Bool{dashboardAllowEditsDefault{}},
 			},
 		},

@@ -67,7 +67,7 @@ when applying a layout change. Re-export the dashboard to adopt its current layo
 
 ### Optional
 
-- `managed_allow_edits` (Boolean) Whether the Logfire UI and the Logfire MCP server can edit the dashboard. Defaults to `false` for a new dashboard. A Logfire instance without managed dashboards leaves it unset and ignores a configured value. Terraform then warns and plans the value again on every run until Logfire applies it. A dashboard created by an earlier provider version stays editable until you set the attribute. Removing the attribute keeps the current value. Set it to `true` to allow edits again.
+- `managed_allow_edits` (Boolean) Whether the Logfire UI and the Logfire MCP server can edit the dashboard. Defaults to `false` for a new dashboard. A Logfire instance without managed dashboards, or with them turned off, ignores a configured value. Terraform then warns and plans the value again on every run until Logfire applies it. A dashboard created by an earlier provider version stays editable until you set the attribute. Removing the attribute keeps the current value. Set it to `true` to allow edits again.
 
 ### Read-Only
 
