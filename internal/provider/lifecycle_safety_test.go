@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -18,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+	"golang.org/x/net/idna"
 )
 
 func lifecycleConfig(baseURL, kind, body string) string {
@@ -35,6 +37,23 @@ type lifecycleAPI struct {
 	refusals      int
 	creates       int
 	deletes       int
+	// unsubscribed is an address that left the channel. Logfire refuses a config that lists it.
+	unsubscribed string
+}
+
+// normalizeEmail mimics the API's email-validator normalization for the spellings the tests use.
+func normalizeEmail(address string) string {
+	address = strings.TrimSpace(address)
+	at := strings.LastIndex(address, "@")
+	// UTS 46 maps the ideographic full stop to a dot.
+	local, domain := address[:at], strings.ToLower(strings.ReplaceAll(address[at+1:], "\u3002", "."))
+	if strings.EqualFold(local, "postmaster") {
+		local = "postmaster"
+	}
+	if unicodeDomain, err := idna.ToUnicode(domain); err == nil {
+		domain = unicodeDomain
+	}
+	return local + "@" + domain
 }
 
 // Only channel and organization recovery need a stateful local API. Ordinary
@@ -65,6 +84,18 @@ func newLifecycleAPI(t *testing.T, kind string) (*httptest.Server, *lifecycleAPI
 				t.Errorf("request body: %v", err)
 				w.WriteHeader(http.StatusBadRequest)
 				return
+			}
+			if config, ok := payload["config"].(map[string]any); ok && config["type"] == "email" {
+				recipients, _ := config["recipients"].([]any)
+				for i, recipient := range recipients {
+					address, _ := recipient.(string)
+					recipients[i] = normalizeEmail(address)
+					if recipients[i] == api.unsubscribed {
+						w.WriteHeader(http.StatusConflict)
+						_, _ = w.Write([]byte(`{"detail":"unsubscribed from this channel"}`))
+						return
+					}
+				}
 			}
 			if config, ok := payload["config"].(map[string]any); ok && config["type"] == "slack-integration" {
 				if _, present := config["include_agent_prompt"]; !present {
@@ -158,6 +189,107 @@ func TestLifecycleSlackSettings(t *testing.T) {
 	if api.creates != 1 || api.deletes != 1 || api.item != nil {
 		t.Fatalf("channel lifecycle: creates=%d, deletes=%d, item=%v", api.creates, api.deletes, api.item)
 	}
+}
+
+func TestLifecycleOpsgenieBaseURL(t *testing.T) {
+	t.Parallel()
+	server, api := newLifecycleAPI(t, "channel")
+	opsgenie := func(name, baseURL string) string {
+		return lifecycleConfig(server.URL, "channel", fmt.Sprintf("name = %q\nconfig {\ntype = \"opsgenie\"\nauth_key = \"key\"\n%s\n}", name, baseURL))
+	}
+	const eu = "https://api.eu.opsgenie.com"
+	resource.Test(t, resource.TestCase{
+		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: opsgenie("opsgenie", ""), Check: resource.TestCheckNoResourceAttr("logfire_channel.test", "config.base_url")},
+			{
+				PreConfig: func() {
+					api.Lock()
+					defer api.Unlock()
+					config, ok := api.item["config"].(map[string]any)
+					if !ok {
+						t.Fatalf("stored config = %v", api.item["config"])
+					}
+					config["base_url"] = eu
+				},
+				Config: opsgenie("renamed", ""),
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr("logfire_channel.test", "config.base_url", eu),
+					func(*terraform.State) error {
+						api.Lock()
+						defer api.Unlock()
+						config, _ := api.item["config"].(map[string]any)
+						if got := config["base_url"]; got != eu {
+							return fmt.Errorf("base_url after update = %v, want the value set outside Terraform", got)
+						}
+						return nil
+					}),
+			},
+			{Config: opsgenie("renamed", "base_url = \"https://api.opsgenie.com \""), ExpectError: regexp.MustCompile(`without\s+spaces`)},
+			{Config: opsgenie("renamed", "base_url = \"https://api.opsgenie.com\u0085\""), ExpectError: regexp.MustCompile(`without\s+spaces`)},
+			{Config: opsgenie("renamed", "base_url = \"https://api.opsgenie.com\v\""), ExpectError: regexp.MustCompile(`without\s+spaces`)},
+			{Config: opsgenie("renamed", "base_url = \"https://api.opsgenie.com\""), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.base_url", "https://api.opsgenie.com")},
+		},
+	})
+}
+
+func TestLifecycleEmailRecipients(t *testing.T) {
+	t.Parallel()
+	server, api := newLifecycleAPI(t, "channel")
+	named := func(name, recipients string) string {
+		return lifecycleConfig(server.URL, "channel", fmt.Sprintf("name = %q\nconfig {\ntype = \"email\"\nrecipients = [%s]\n}", name, recipients))
+	}
+	email := func(recipients string) string { return named("email", recipients) }
+	const normalized = `"a@Example.com", " Postmaster@example.com", "b@xn--bcher-kva.example\u00a0"`
+	resource.Test(t, resource.TestCase{
+		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: email(`"a@example.com"`), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.recipients.#", "1")},
+			{Config: email(`"a@example.com", "b@example.com"`), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.recipients.#", "2")},
+			{Config: email(`"a@example.com", "b@example.com"`), ResourceName: "logfire_channel.test", ImportState: true, ImportStateVerify: true},
+			// Logfire stores other spellings of these, so each must keep its configured spelling.
+			{Config: email(normalized), Check: resource.TestCheckTypeSetElemAttr("logfire_channel.test", "config.recipients.*", " Postmaster@example.com")},
+			{Config: email(normalized), ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}}},
+			{Config: email(`"not-an-address"`), ExpectError: regexp.MustCompile(`must be an email\s+address`)},
+			{Config: email(`"a@example.com\u001f"`), ExpectError: regexp.MustCompile(`without\s+control\s+characters`)},
+			{
+				// Logfire keeps the last address after it unsubscribes, so a rename must not resend it.
+				PreConfig: func() { api.Lock(); api.unsubscribed = "a@example.com"; api.Unlock() },
+				Config:    named("renamed", normalized),
+				Check:     resource.TestCheckResourceAttr("logfire_channel.test", "name", "renamed"),
+			},
+			{Config: named("renamed", `"a@example.com"`), ExpectError: regexp.MustCompile("unsubscribed")},
+			// Logfire keeps the case of most mailbox names, so these are two recipients.
+			{Config: named("renamed", `"Ops@example.com", "ops@example.com"`), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.recipients.#", "2")},
+			{Config: named("renamed", `"Ops@example.com"`), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.recipients.#", "1")},
+			{
+				// A recipient changed outside Terraform to another mailbox case is drift.
+				PreConfig: func() {
+					api.Lock()
+					defer api.Unlock()
+					config, _ := api.item["config"].(map[string]any)
+					config["recipients"] = []any{"ops@example.com"}
+				},
+				Config:   named("renamed", `"Ops@example.com"`),
+				PlanOnly: true, ExpectNonEmptyPlan: true,
+			},
+			{Config: named("renamed", `"Ops@example.com"`), Check: resource.TestCheckTypeSetElemAttr("logfire_channel.test", "config.recipients.*", "Ops@example.com")},
+		},
+	})
+}
+
+// Logfire maps U+3002 in a domain to a dot, so a create must keep the configured spelling.
+func TestLifecycleEmailRecipientMappedDomain(t *testing.T) {
+	t.Parallel()
+	server, _ := newLifecycleAPI(t, "channel")
+	config := lifecycleConfig(server.URL, "channel", "name = \"email\"\nconfig {\ntype = \"email\"\nrecipients = [\"oncall@example\u3002com\"]\n}")
+	resource.Test(t, resource.TestCase{
+		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: config, Check: resource.TestCheckTypeSetElemAttr("logfire_channel.test", "config.recipients.*", "oncall@example\u3002com")},
+			{Config: config, ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}}},
+		},
+	})
 }
 
 func TestLifecyclePartialCreateRecovery(t *testing.T) {

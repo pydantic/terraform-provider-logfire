@@ -8,10 +8,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"reflect"
 	"regexp"
+	"slices"
 	"strings"
+	"unicode/utf8"
 
 	objectvalidator "github.com/hashicorp/terraform-plugin-framework-validators/objectvalidator"
+	setvalidator "github.com/hashicorp/terraform-plugin-framework-validators/setvalidator"
 	stringvalidator "github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -24,6 +28,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
+	"golang.org/x/net/idna"
+	"golang.org/x/text/unicode/norm"
 )
 
 var _ resource.Resource = &ChannelResource{}
@@ -39,17 +45,18 @@ type ChannelResource struct {
 const maskedChannelSecretPlaceholder = "**********"
 
 type ChannelConfigModel struct {
-	// Email config exists in the API but is not exposed via Terraform yet.
-	Type               types.String `tfsdk:"type"` // webhook | opsgenie | pagerduty | pagerduty-integration | slack-integration
-	Format             types.String `tfsdk:"format"`
-	URL                types.String `tfsdk:"url"`
-	AuthKey            types.String `tfsdk:"auth_key"`
-	RoutingKey         types.String `tfsdk:"routing_key"`
-	Region             types.String `tfsdk:"region"`
-	InstallID          types.String `tfsdk:"install_id"`
-	ChannelID          types.String `tfsdk:"channel_id"`
-	ServiceID          types.String `tfsdk:"service_id"`
-	IncludeAgentPrompt types.Bool   `tfsdk:"include_agent_prompt"`
+	Type               types.String   `tfsdk:"type"` // webhook | email | opsgenie | pagerduty | pagerduty-integration | slack-integration
+	Format             types.String   `tfsdk:"format"`
+	URL                types.String   `tfsdk:"url"`
+	Recipients         []types.String `tfsdk:"recipients"`
+	AuthKey            types.String   `tfsdk:"auth_key"`
+	BaseURL            types.String   `tfsdk:"base_url"`
+	RoutingKey         types.String   `tfsdk:"routing_key"`
+	Region             types.String   `tfsdk:"region"`
+	InstallID          types.String   `tfsdk:"install_id"`
+	ChannelID          types.String   `tfsdk:"channel_id"`
+	ServiceID          types.String   `tfsdk:"service_id"`
+	IncludeAgentPrompt types.Bool     `tfsdk:"include_agent_prompt"`
 }
 
 type ChannelModel struct {
@@ -61,6 +68,7 @@ type ChannelModel struct {
 
 var channelConfigModelToAPIMappers = map[string]func(*ChannelConfigModel) (interface{}, diag.Diagnostics){
 	"webhook":               webhookConfigModelToAPI,
+	"email":                 emailConfigModelToAPI,
 	"opsgenie":              opsgenieConfigModelToAPI,
 	"pagerduty":             pagerdutyConfigModelToAPI,
 	"pagerduty-integration": pagerdutyIntegrationConfigModelToAPI,
@@ -105,9 +113,9 @@ func (r *ChannelResource) Schema(ctx context.Context, req resource.SchemaRequest
 				Attributes: map[string]rschema.Attribute{
 					"type": rschema.StringAttribute{
 						Required:            true,
-						MarkdownDescription: "Channel type (`webhook`, `opsgenie`, `pagerduty`, `pagerduty-integration`, or `slack-integration`).",
+						MarkdownDescription: "Channel type (`webhook`, `email`, `opsgenie`, `pagerduty`, `pagerduty-integration`, or `slack-integration`).",
 						Validators: []validator.String{
-							stringvalidator.OneOf("webhook", "opsgenie", "pagerduty", "pagerduty-integration", "slack-integration"),
+							stringvalidator.OneOf("webhook", "email", "opsgenie", "pagerduty", "pagerduty-integration", "slack-integration"),
 						},
 					},
 					"format": rschema.StringAttribute{
@@ -127,10 +135,38 @@ func (r *ChannelResource) Schema(ctx context.Context, req resource.SchemaRequest
 							),
 						},
 					},
+					"recipients": rschema.SetAttribute{
+						Optional:            true,
+						ElementType:         types.StringType,
+						MarkdownDescription: "Email addresses the channel notifies, 1 to 50. Required for `email` channels, which need a Logfire plan with custom email recipients. Logfire normalizes each address, for example by lowercasing its domain. The provider keeps the configured spelling when Logfire stores an equivalent one. A recipient who unsubscribes leaves the channel, and Logfire rejects an update that adds them back until you remove the address from the configuration.",
+						Validators: []validator.Set{
+							setvalidator.SizeBetween(1, 50),
+							// Logfire trims an address with Python's strip(), which also removes
+							// control characters that Go keeps, such as U+001F. Logfire rejects
+							// them inside an address, so no valid address has one.
+							setvalidator.ValueStringsAre(stringvalidator.RegexMatches(
+								regexp.MustCompile(`^[^\p{Cc}]+@[^\p{Cc}]+$`), "must be an email address without control characters",
+							)),
+						},
+					},
 					"auth_key": rschema.StringAttribute{
 						Optional:            true,
 						Sensitive:           true,
 						MarkdownDescription: "Opsgenie API key.",
+					},
+					"base_url": rschema.StringAttribute{
+						Optional:            true,
+						Computed:            true,
+						MarkdownDescription: "Opsgenie API base URL, for example `https://api.eu.opsgenie.com` for an EU account. Only for `opsgenie` channels. Omitting it on an existing channel retains the current value; set it to `https://api.opsgenie.com` explicitly to return to the default US endpoint.",
+						Validators: []validator.String{
+							// The provider trims the URL it sends, so surrounding spaces would come
+							// back changed and fail the apply. \p{Cc} and \p{Z} cover every character
+							// that Go and Python trim, including a vertical tab and U+0085.
+							stringvalidator.RegexMatches(
+								regexp.MustCompile(`^https://[^\p{Cc}\p{Z}]+$`),
+								"must be an HTTPS URL without spaces or control characters",
+							),
+						},
 					},
 					"routing_key": rschema.StringAttribute{
 						Optional:            true,
@@ -194,27 +230,17 @@ func channelModelToCreate(m *ChannelModel) (logclient.ChannelCreate, diag.Diagno
 
 func channelConfigModelToAPI(m *ChannelConfigModel) (interface{}, diag.Diagnostics) {
 	var diags diag.Diagnostics
-	if m == nil {
-		diags.Append(diag.NewErrorDiagnostic("Invalid channel config", "config block must be provided."))
-		return nil, diags
-	}
-	if m.Type.IsNull() || m.Type.IsUnknown() {
-		diags.Append(diag.NewErrorDiagnostic("Invalid channel config", "config.type must be set."))
-		return nil, diags
-	}
-
 	cfgType := m.Type.ValueString()
-	mapper, ok := channelConfigModelToAPIMappers[cfgType]
-	if ok {
-		return mapper(m)
+	if cfgType != "opsgenie" {
+		diags.Append(disallowConfigString(m.BaseURL, "config.base_url", cfgType)...)
 	}
-	if cfgType == "email" {
-		// Email config exists in API but not exposed in Terraform yet
-		diags.Append(diag.NewErrorDiagnostic("Invalid channel config", "email channels are not yet supported via Terraform."))
+	if cfgType != "email" && len(m.Recipients) > 0 {
+		diags.AddError("Invalid channel config", fmt.Sprintf("config.recipients cannot be set for %s channels.", cfgType))
+	}
+	if diags.HasError() {
 		return nil, diags
 	}
-	diags.Append(diag.NewErrorDiagnostic("Invalid channel config", fmt.Sprintf("unsupported config type %q", cfgType)))
-	return nil, diags
+	return channelConfigModelToAPIMappers[cfgType](m)
 }
 
 type channelConfigString struct {
@@ -247,6 +273,37 @@ func webhookConfigModelToAPI(m *ChannelConfigModel) (interface{}, diag.Diagnosti
 	}, diags
 }
 
+func emailConfigModelToAPI(m *ChannelConfigModel) (interface{}, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	if len(m.Recipients) == 0 {
+		diags.AddError("Invalid channel config", "config.recipients must be set for email channels.")
+	}
+	diags.Append(disallowConfigFields("email",
+		channelConfigString{m.Format, "config.format"},
+		channelConfigString{m.URL, "config.url"},
+		channelConfigString{m.AuthKey, "config.auth_key"},
+		channelConfigString{m.RoutingKey, "config.routing_key"},
+		channelConfigString{m.Region, "config.region"},
+		channelConfigString{m.InstallID, "config.install_id"},
+		channelConfigString{m.ChannelID, "config.channel_id"},
+		channelConfigString{m.ServiceID, "config.service_id"},
+	)...)
+	diags.Append(disallowIncludeAgentPrompt(m.IncludeAgentPrompt, "email")...)
+	if diags.HasError() {
+		return nil, diags
+	}
+	recipients := make([]string, len(m.Recipients))
+	for i, r := range m.Recipients {
+		recipients[i] = r.ValueString()
+	}
+	// Sorted so that Update can compare two configs.
+	slices.Sort(recipients)
+	return &logclient.EmailConfig{
+		ChannelConfigBase: logclient.ChannelConfigBase{Type: "email"},
+		Recipients:        recipients,
+	}, diags
+}
+
 func opsgenieConfigModelToAPI(m *ChannelConfigModel) (interface{}, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	key, keyDiags := requiredConfigString(m.AuthKey, "config.auth_key", "opsgenie")
@@ -267,6 +324,7 @@ func opsgenieConfigModelToAPI(m *ChannelConfigModel) (interface{}, diag.Diagnost
 	return &logclient.OpsgenieConfig{
 		ChannelConfigBase: logclient.ChannelConfigBase{Type: "opsgenie"},
 		AuthKey:           stringPointer(key),
+		BaseURL:           optionalConfigStringPointer(m.BaseURL),
 	}, diags
 }
 
@@ -368,6 +426,7 @@ func channelConfigAPIToModel(cfg interface{}) (*ChannelConfigModel, diag.Diagnos
 		Format:             types.StringNull(),
 		URL:                types.StringNull(),
 		AuthKey:            types.StringNull(),
+		BaseURL:            types.StringNull(),
 		RoutingKey:         types.StringNull(),
 		Region:             types.StringNull(),
 		InstallID:          types.StringNull(),
@@ -377,13 +436,8 @@ func channelConfigAPIToModel(cfg interface{}) (*ChannelConfigModel, diag.Diagnos
 	}
 
 	switch genericCfg.Type {
-	case "webhook", "opsgenie", "pagerduty", "pagerduty-integration", "slack-integration":
+	case "webhook", "email", "opsgenie", "pagerduty", "pagerduty-integration", "slack-integration":
 		populateChannelConfigModel(model, &genericCfg)
-	case "email":
-		// Email channels exist in API but not exposed in Terraform yet
-		return nil, diag.Diagnostics{
-			diag.NewErrorDiagnostic("Unsupported channel config", "email channels are not yet supported via Terraform."),
-		}
 	default:
 		return nil, diag.Diagnostics{
 			diag.NewErrorDiagnostic("Invalid channel config", fmt.Sprintf("unsupported config type %q", genericCfg.Type)),
@@ -395,7 +449,11 @@ func channelConfigAPIToModel(cfg interface{}) (*ChannelConfigModel, diag.Diagnos
 func populateChannelConfigModel(model *ChannelConfigModel, cfg *logclient.ChannelConfig) {
 	setOptionalConfigString(&model.Format, cfg.Format)
 	setOptionalConfigString(&model.URL, cfg.URL)
+	for _, r := range cfg.Recipients {
+		model.Recipients = append(model.Recipients, types.StringValue(r))
+	}
 	setOptionalConfigString(&model.AuthKey, cfg.AuthKey)
+	setOptionalConfigString(&model.BaseURL, cfg.BaseURL)
 	setOptionalConfigString(&model.RoutingKey, cfg.RoutingKey)
 	setOptionalConfigString(&model.Region, cfg.Region)
 	setOptionalConfigString(&model.InstallID, cfg.InstallID)
@@ -505,9 +563,78 @@ func reconcileChannelConfigMaskedSecrets(remote, fallback *ChannelConfigModel) *
 			fallback.RoutingKey,
 			isMaskedPagerdutyRoutingKey,
 		)
+	case "email":
+		remote.Recipients = keepConfiguredEmails(remote.Recipients, fallback.Recipients)
 	}
 
 	return remote
+}
+
+// keepConfiguredEmails swaps each stored address for the configured spelling Logfire stored it
+// from. Exact matches go first, and each configured address replaces one stored address at most,
+// so two configured spellings that differ only in case stay distinct.
+func keepConfiguredEmails(stored, configured []types.String) []types.String {
+	used := make([]bool, len(configured))
+	matched := make([]bool, len(stored))
+	for i, s := range stored {
+		if j := slices.IndexFunc(configured, func(c types.String) bool { return c.Equal(s) }); j >= 0 && !used[j] {
+			used[j], matched[i] = true, true
+		}
+	}
+	for i, s := range stored {
+		for j, c := range configured {
+			if !matched[i] && !used[j] && sameEmail(c.ValueString(), s.ValueString()) {
+				stored[i], used[j], matched[i] = c, true, true
+			}
+		}
+	}
+	return stored
+}
+
+// sameEmail reports whether Logfire stored the configured address. Logfire returns addresses
+// already normalized, so any other difference, such as the case of a mailbox name, is a
+// different recipient.
+func sameEmail(configured, stored string) bool {
+	return canonicalEmail(configured) == stored
+}
+
+// caseInsensitiveMailboxes are the RFC 2142 mailbox names that Logfire lowercases.
+var caseInsensitiveMailboxes = []string{
+	"info", "marketing", "sales", "support", "abuse", "noc", "security", "postmaster",
+	"hostmaster", "usenet", "news", "webmaster", "www", "uucp", "ftp",
+}
+
+// canonicalEmail applies Logfire's normalization, which uses email-validator. It trims the
+// address and normalizes it to NFC. It lowercases a mailbox name from RFC 2142 that was ASCII before NFC. It maps
+// the domain with UTS 46, which lowercases it and maps dots such as U+3002, and writes it in
+// Unicode.
+func canonicalEmail(address string) string {
+	address = strings.TrimSpace(address)
+	// Only a mailbox name that was ASCII before NFC is lowercased.
+	ascii := isASCII(address[:max(strings.LastIndex(address, "@"), 0)])
+	address = norm.NFC.String(address)
+	at := strings.LastIndex(address, "@")
+	if at < 0 {
+		return address
+	}
+	local := address[:at]
+	if lower := strings.ToLower(local); ascii && slices.Contains(caseInsensitiveMailboxes, lower) {
+		local = lower
+	}
+	domain, err := idna.Lookup.ToUnicode(address[at+1:])
+	if err != nil {
+		domain = strings.ToLower(address[at+1:])
+	}
+	return local + "@" + domain
+}
+
+func isASCII(s string) bool {
+	for i := range len(s) {
+		if s[i] >= utf8.RuneSelf {
+			return false
+		}
+	}
+	return true
 }
 
 func preserveMaskedConfigValue(remote, fallback types.String, isMasked func(string) bool) types.String {
@@ -683,16 +810,28 @@ func (r *ChannelResource) Update(ctx context.Context, req resource.UpdateRequest
 	}
 	if plan.Config != nil {
 		config := *plan.Config
-		if config.Type.ValueString() == "slack-integration" && config.IncludeAgentPrompt.IsUnknown() &&
-			state.Config != nil && state.Config.Type.ValueString() == "slack-integration" {
-			config.IncludeAgentPrompt = state.Config.IncludeAgentPrompt
+		if state.Config != nil && state.Config.Type.ValueString() == config.Type.ValueString() {
+			if config.IncludeAgentPrompt.IsUnknown() {
+				config.IncludeAgentPrompt = state.Config.IncludeAgentPrompt
+			}
+			if config.BaseURL.IsUnknown() {
+				config.BaseURL = state.Config.BaseURL
+			}
 		}
 		cfg, diags := channelConfigModelToAPI(&config)
 		resp.Diagnostics.Append(diags...)
 		if resp.Diagnostics.HasError() {
 			return
 		}
-		payload.Config = &cfg
+		// Logfire keeps a config the update leaves out. Resending an unchanged email config fails
+		// after the last recipient unsubscribes, because Logfire keeps that address.
+		var current any
+		if state.Config != nil {
+			current, _ = channelConfigModelToAPI(state.Config)
+		}
+		if !reflect.DeepEqual(cfg, current) {
+			payload.Config = &cfg
+		}
 	}
 
 	out, err := r.client.UpdateChannel(ctx, id, payload)

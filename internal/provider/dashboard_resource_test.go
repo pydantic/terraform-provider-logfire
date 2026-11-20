@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-testing/compare"
 	"github.com/hashicorp/terraform-plugin-testing/helper/acctest"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -17,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/statecheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
+	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
 )
 
 func TestAccDashboardResource(t *testing.T) {
@@ -145,4 +148,28 @@ func testAccDashboardDefinition(widgetText string) string {
     "refreshInterval": "0s"
   }
 }`, widgetText)
+}
+
+func TestWarnIgnoredLock(t *testing.T) {
+	t.Parallel()
+	managed, locked, editable := "terraform", false, true
+	for _, tc := range []struct {
+		name    string
+		planned types.Bool
+		out     logclient.Dashboard
+		warn    bool
+	}{
+		{name: "explicit value ignored", planned: types.BoolValue(false), warn: true},
+		{name: "explicit value applied", planned: types.BoolValue(false), out: logclient.Dashboard{ManagedBy: &managed, ManagedAllowEdits: &locked}},
+		// Logfire with managed dashboards turned off returns the setting the dashboard kept.
+		{name: "earlier setting kept", planned: types.BoolValue(false), out: logclient.Dashboard{ManagedBy: &managed, ManagedAllowEdits: &editable}, warn: true},
+		{name: "unset", planned: types.BoolNull()},
+		{name: "new dashboard default", planned: types.BoolUnknown()},
+	} {
+		var diags diag.Diagnostics
+		warnIgnoredLock(&diags, tc.planned, &tc.out)
+		if got := diags.WarningsCount() == 1; got != tc.warn {
+			t.Errorf("%s: warning = %v, want %v", tc.name, got, tc.warn)
+		}
+	}
 }

@@ -563,3 +563,44 @@ func TestSlackIntegrationChannelConfigValidation(t *testing.T) {
 		}
 	})
 }
+
+func TestChannelConfigRejectsFieldsOfOtherTypes(t *testing.T) {
+	t.Parallel()
+
+	recipients := []types.String{types.StringValue("a@example.com")}
+	euURL := types.StringValue("https://api.eu.opsgenie.com")
+	for name, model := range map[string]*ChannelConfigModel{
+		"email without recipients":      {Type: types.StringValue("email")},
+		"email with url":                {Type: types.StringValue("email"), Recipients: recipients, URL: types.StringValue("https://example.com")},
+		"base_url on webhook":           {Type: types.StringValue("webhook"), Format: types.StringValue("auto"), URL: types.StringValue("https://example.com"), BaseURL: euURL},
+		"recipients on opsgenie":        {Type: types.StringValue("opsgenie"), AuthKey: types.StringValue("key"), Recipients: recipients},
+		"recipients on pagerduty":       {Type: types.StringValue("pagerduty"), RoutingKey: types.StringValue("key"), Recipients: recipients},
+		"base_url on slack-integration": {Type: types.StringValue("slack-integration"), InstallID: types.StringValue("install"), ChannelID: types.StringValue("C1"), BaseURL: euURL},
+	} {
+		if _, diags := channelConfigModelToAPI(model); !diags.HasError() {
+			t.Errorf("%s: expected diagnostics", name)
+		}
+	}
+}
+
+func TestSameEmail(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		configured, stored string
+		same               bool
+	}{
+		{"a@Example.COM", "a@example.com", true},
+		{" Support@example.com", "support@example.com", true},
+		{"oncall@example\u3002com", "oncall@example.com", true},
+		{"b@xn--bcher-kva.example", "b@b\u00fccher.example", true},
+		{"Ops@example.com", "ops@example.com", false},
+		// email-validator lowercases only an ASCII mailbox name. NFC turns the Kelvin sign
+		// (U+212A) into K, which it keeps.
+		{"mar\u212aeting@example.com", "marketing@example.com", false},
+		{"mar\u212aeting@example.com", "marKeting@example.com", true},
+	} {
+		if got := sameEmail(tc.configured, tc.stored); got != tc.same {
+			t.Errorf("sameEmail(%q, %q) = %v; want %v", tc.configured, tc.stored, got, tc.same)
+		}
+	}
+}

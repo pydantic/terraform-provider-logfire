@@ -55,3 +55,24 @@ resource "logfire_alert" "example" {
   notify_when = "has_matches"
   active      = true
 }
+
+# Track each failing service as its own occurrence. A run that opens or closes
+# occurrences sends one notification listing them. Needs Logfire v2026-11-13.01 or
+# newer and an organization with alert instance policies enabled.
+resource "logfire_alert" "per_service" {
+  project_id  = logfire_project.example.id
+  name        = "error-alert-per-service"
+  query       = "select service_name from records where level = 'error' group by service_name"
+  time_window = "1h"
+  frequency   = "15m"
+  channel_assignments = [
+    { channel_id = logfire_channel.example.id },
+  ]
+  notify_when = "instances_changed"
+  instance_policy = {
+    identity_columns = ["service_name"]
+    pending_runs     = 2
+    missing_runs     = 3
+    missing_behavior = "no_longer_matching"
+  }
+}

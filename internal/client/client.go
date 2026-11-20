@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"golang.org/x/time/rate"
 	"io"
 	"math/rand"
 	"net"
@@ -19,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -40,21 +42,29 @@ const (
 )
 
 var (
-	defaultLimiter = newRateLimiter(defaultRequestsPerMinute, defaultRequestsPerHour)
+	// Logfire limits API requests per organization on each backend. Every client in the
+	// process shares one limiter per host, so requests to one backend never spend another's.
+	hostLimiters   = map[string]*rateLimiter{}
+	hostLimitersMu sync.Mutex
 	jitterRand     = rand.New(rand.NewSource(time.Now().UnixNano()))
 	jitterMu       sync.Mutex
 )
 
 type rateLimitedTransport struct {
-	next    http.RoundTripper
-	limiter *rateLimiter
+	next http.RoundTripper
 }
 
 func (t *rateLimitedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if t.limiter != nil {
-		if err := t.limiter.Wait(req.Context()); err != nil {
-			return nil, err
-		}
+	host := strings.ToLower(req.URL.Host)
+	hostLimitersMu.Lock()
+	limiter := hostLimiters[host]
+	if limiter == nil {
+		limiter = newRateLimiter(defaultRequestsPerMinute, defaultRequestsPerHour)
+		hostLimiters[host] = limiter
+	}
+	hostLimitersMu.Unlock()
+	if err := limiter.Wait(req.Context()); err != nil {
+		return nil, err
 	}
 	return t.next.RoundTrip(req)
 }
@@ -252,111 +262,32 @@ func retryDelay(resp *http.Response, base, maxDelay time.Duration, attempt int) 
 	return delay/2 + jitter
 }
 
+// rateLimiter holds a per-minute and a per-hour token bucket. Both start full.
+// They refill on demand, so a limiter starts no goroutine and needs no cleanup.
 type rateLimiter struct {
-	perMinute *rateGate
-	perHour   *rateGate
+	perMinute *rate.Limiter
+	perHour   *rate.Limiter
 }
 
 func newRateLimiter(requestsPerMinute, requestsPerHour int) *rateLimiter {
-	if requestsPerMinute <= 0 {
-		requestsPerMinute = 1
-	}
-	if requestsPerHour <= 0 {
-		requestsPerHour = 1
-	}
-
-	minuteInterval := time.Minute / time.Duration(requestsPerMinute)
-	hourInterval := time.Hour / time.Duration(requestsPerHour)
-	minuteBurst := requestsPerMinute
-	hourBurst := requestsPerHour
-
+	requestsPerMinute = max(requestsPerMinute, 1)
+	requestsPerHour = max(requestsPerHour, 1)
 	return &rateLimiter{
-		perMinute: newRateGate(minuteInterval, minuteBurst),
-		perHour:   newRateGate(hourInterval, hourBurst),
+		perMinute: rate.NewLimiter(rate.Every(time.Minute/time.Duration(requestsPerMinute)), requestsPerMinute),
+		perHour:   rate.NewLimiter(rate.Every(time.Hour/time.Duration(requestsPerHour)), requestsPerHour),
 	}
 }
 
 func (l *rateLimiter) Wait(ctx context.Context) error {
-	if err := l.perMinute.take(ctx); err != nil {
+	if err := l.perMinute.Wait(ctx); err != nil {
 		return err
 	}
-	return l.perHour.take(ctx)
-}
-
-func (l *rateLimiter) Close() {
-	if l.perMinute != nil {
-		l.perMinute.stop()
-	}
-	if l.perHour != nil {
-		l.perHour.stop()
-	}
-}
-
-type rateGate struct {
-	tokens chan struct{}
-	ticker *time.Ticker
-	stopCh chan struct{}
-}
-
-func newRateGate(refillInterval time.Duration, burst int) *rateGate {
-	if refillInterval <= 0 {
-		refillInterval = time.Second
-	}
-	if burst <= 0 {
-		burst = 1
-	}
-
-	g := &rateGate{
-		tokens: make(chan struct{}, burst),
-		ticker: time.NewTicker(refillInterval),
-		stopCh: make(chan struct{}),
-	}
-	for i := 0; i < burst; i++ {
-		g.tokens <- struct{}{}
-	}
-
-	go func() {
-		defer g.ticker.Stop()
-		for {
-			select {
-			case <-g.stopCh:
-				return
-			case <-g.ticker.C:
-				select {
-				case g.tokens <- struct{}{}:
-				default:
-				}
-			}
-		}
-	}()
-
-	return g
-}
-
-func (g *rateGate) take(ctx context.Context) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-g.tokens:
-		return nil
-	}
-}
-
-func (g *rateGate) stop() {
-	select {
-	case <-g.stopCh:
-		return
-	default:
-		close(g.stopCh)
-	}
+	return l.perHour.Wait(ctx)
 }
 
 func newDefaultHTTPClient() *http.Client {
 	baseTransport := defaultTransport()
-	limitedTransport := &rateLimitedTransport{
-		next:    baseTransport,
-		limiter: defaultLimiter,
-	}
+	limitedTransport := &rateLimitedTransport{next: baseTransport}
 	return &http.Client{
 		Timeout: defaultRequestTimeout,
 		Transport: &retryingTransport{
@@ -386,11 +317,16 @@ type APIClient struct {
 	HTTP    *http.Client
 	token   string
 
-	userAgent string
-	headers   http.Header
+	userAgent        string
+	headers          http.Header
+	dashboardManager string
 
 	orgTokenMu    sync.Mutex
 	orgTokenCache map[string]orgTokenEntry
+
+	// legacySchedules is set once the instance has answered on the deprecated
+	// /schedules/ route, so later calls skip the notification windows route.
+	legacySchedules atomic.Bool
 }
 
 type APIError struct {
@@ -455,6 +391,17 @@ func isStatusExpected(statusCode int, expectedStatuses []int) bool {
 
 type Option func(*APIClient)
 
+// WithDashboardManager names the tool recorded as the manager of the
+// dashboards this client writes, such as "Pulumi" or "Crossplane". The
+// default is Terraform.
+func WithDashboardManager(tool string) Option {
+	return func(c *APIClient) {
+		if trimmed := strings.TrimSpace(tool); trimmed != "" {
+			c.dashboardManager = trimmed
+		}
+	}
+}
+
 func WithUserAgent(ua string) Option {
 	return func(c *APIClient) {
 		if trimmed := strings.TrimSpace(ua); trimmed != "" {
@@ -497,6 +444,8 @@ func NewAPIClient(baseURL, token string, httpClient *http.Client, opts ...Option
 		userAgent:     defaultUserAgent,
 		headers:       make(http.Header),
 		orgTokenCache: make(map[string]orgTokenEntry),
+
+		dashboardManager: "terraform",
 	}
 
 	for _, opt := range opts {
@@ -796,6 +745,20 @@ type AlertRead struct {
 	HasErrors          *bool               `json:"has_errors,omitempty"`
 	Result             json.RawMessage     `json:"result,omitempty"`
 	ResultLength       *int                `json:"result_length,omitempty"`
+	// InstancePolicy is nil when the alert evaluates its whole result as one,
+	// and on a Logfire release that predates instance policies.
+	InstancePolicy *AlertInstancePolicy `json:"instance_policy"`
+}
+
+// AlertInstancePolicy makes an alert track each result row as its own
+// occurrence, keyed by the identity columns. The API requires ContinuityRuns
+// but deprecates it and ignores it when it settles occurrences.
+type AlertInstancePolicy struct {
+	IdentityColumns []string `json:"identity_columns"`
+	PendingRuns     int64    `json:"pending_runs"`
+	MissingRuns     int64    `json:"missing_runs"`
+	MissingBehavior string   `json:"missing_behavior"`
+	ContinuityRuns  int64    `json:"continuity_runs"`
 }
 
 // ChannelAssignment is the API's `AlertChannelAssignment`: one channel an
@@ -824,6 +787,8 @@ type AlertCreate struct {
 	Environments       []string            `json:"environments,omitempty"`
 	ChannelAssignments []ChannelAssignment `json:"channel_assignments"`
 	NotifyWhen         string              `json:"notify_when"`
+	// InstancePolicy is left out when nil.
+	InstancePolicy *AlertInstancePolicy `json:"instance_policy,omitempty"`
 }
 
 type AlertUpdate struct {
@@ -838,6 +803,9 @@ type AlertUpdate struct {
 	// ChannelAssignments replaces the alert's channels when set.
 	ChannelAssignments *[]ChannelAssignment `json:"channel_assignments,omitempty"`
 	NotifyWhen         *string              `json:"notify_when,omitempty"`
+	// InstancePolicy replaces the policy when set. A set pointer to nil sends
+	// null, which removes it, and an unset field keeps the current policy.
+	InstancePolicy **AlertInstancePolicy `json:"instance_policy,omitempty"`
 }
 
 func (c *APIClient) alertsBase(projectID string) string {
@@ -906,12 +874,13 @@ type WebhookConfig struct {
 
 type EmailConfig struct {
 	ChannelConfigBase
-	Email *string `json:"email,omitempty"`
+	Recipients []string `json:"recipients"`
 }
 
 type OpsgenieConfig struct {
 	ChannelConfigBase
 	AuthKey *string `json:"auth_key,omitempty"`
+	BaseURL *string `json:"base_url,omitempty"`
 }
 
 type PagerdutyConfig struct {
@@ -938,17 +907,18 @@ type PagerdutyIntegrationConfig struct {
 
 // ChannelConfig represents any channel config (used for unmarshaling).
 type ChannelConfig struct {
-	Type               string  `json:"type"`
-	Format             *string `json:"format,omitempty"`
-	URL                *string `json:"url,omitempty"`
-	Email              *string `json:"email,omitempty"`
-	AuthKey            *string `json:"auth_key,omitempty"`
-	RoutingKey         *string `json:"routing_key,omitempty"`
-	Region             *string `json:"region,omitempty"`
-	InstallID          *string `json:"install_id,omitempty"`
-	ChannelID          *string `json:"channel_id,omitempty"`
-	ServiceID          *string `json:"service_id,omitempty"`
-	IncludeAgentPrompt *bool   `json:"include_agent_prompt,omitempty"`
+	Type               string   `json:"type"`
+	Format             *string  `json:"format,omitempty"`
+	URL                *string  `json:"url,omitempty"`
+	Recipients         []string `json:"recipients,omitempty"`
+	AuthKey            *string  `json:"auth_key,omitempty"`
+	BaseURL            *string  `json:"base_url,omitempty"`
+	RoutingKey         *string  `json:"routing_key,omitempty"`
+	Region             *string  `json:"region,omitempty"`
+	InstallID          *string  `json:"install_id,omitempty"`
+	ChannelID          *string  `json:"channel_id,omitempty"`
+	ServiceID          *string  `json:"service_id,omitempty"`
+	IncludeAgentPrompt *bool    `json:"include_agent_prompt,omitempty"`
 }
 
 type ChannelRead struct {
@@ -1277,12 +1247,34 @@ type DashboardCreateRequest struct {
 	Name       string          `json:"name"`
 	Slug       string          `json:"slug"`
 	Definition json.RawMessage `json:"definition"`
+	DashboardManager
 }
 
 type DashboardUpdateRequest struct {
 	Name          *string          `json:"name,omitempty"`
 	Definition    *json.RawMessage `json:"definition,omitempty"`
 	ReplaceLayout bool             `json:"-"`
+	DashboardManager
+}
+
+// DashboardManager marks a dashboard as managed by the tool that writes it.
+// Logfire shows the tool on the dashboard and, unless ManagedAllowEdits is
+// set, blocks edits from the UI and the MCP server. The dashboards API stays
+// open to the manager. Backends without managed dashboards ignore these fields.
+type DashboardManager struct {
+	ManagedBy         string  `json:"managed_by,omitempty"`
+	ManagedByName     *string `json:"managed_by_name,omitempty"`
+	ManagedAllowEdits bool    `json:"managed_allow_edits,omitempty"`
+}
+
+// DashboardManager returns the marker for a dashboard this client writes.
+func (c *APIClient) DashboardManager(allowEdits bool) DashboardManager {
+	name := c.dashboardManager
+	m := DashboardManager{ManagedBy: "other", ManagedByName: &name, ManagedAllowEdits: allowEdits}
+	if tool := strings.ToLower(c.dashboardManager); tool == "terraform" || tool == "pulumi" {
+		m.ManagedBy, m.ManagedByName = tool, nil
+	}
+	return m
 }
 
 type DashboardSummary struct {
@@ -1306,6 +1298,9 @@ type Dashboard struct {
 	DashboardName string          `json:"dashboard_name"`
 	DashboardSlug string          `json:"dashboard_slug"`
 	Definition    json.RawMessage `json:"definition"`
+	// Backends without managed dashboards leave these out.
+	ManagedBy         *string `json:"managed_by"`
+	ManagedAllowEdits *bool   `json:"managed_allow_edits"`
 }
 
 type GetDashboardResponse struct {
@@ -1592,11 +1587,35 @@ type ScheduleUpdate struct {
 	Windows  *[]ScheduleWindow `json:"windows,omitempty"`
 }
 
-func (c *APIClient) schedulesBase() string {
-	return "/api/v1/schedules/"
-}
-func (c *APIClient) schedulePath(id string) string {
-	return fmt.Sprintf("/api/v1/schedules/%s/", url.PathEscape(id))
+const (
+	notificationWindowsPath = "/api/v1/notification-windows/"
+	legacySchedulesPath     = "/api/v1/schedules/"
+)
+
+// doSchedule calls the notification windows route. An instance that predates
+// that route answers FastAPI's missing-route 404, and doSchedule then calls the
+// deprecated /schedules/ route Logfire served before. A 404 never has an effect,
+// so the second call is safe for every method. A 404 for a missing window is
+// final, so a failed second call cannot hide it. Once the deprecated route has answered, later
+// calls skip the new one. An empty id addresses the collection.
+func (c *APIClient) doSchedule(
+	ctx context.Context, method, id string, in, out any, expected int,
+) (*http.Response, error) {
+	suffix := ""
+	if id != "" {
+		suffix = url.PathEscape(id) + "/"
+	}
+	if !c.legacySchedules.Load() {
+		resp, err := c.doJSON(ctx, method, notificationWindowsPath+suffix, in, out, expected)
+		if !isMissingRoute(err) {
+			return resp, err
+		}
+	}
+	resp, err := c.doJSON(ctx, method, legacySchedulesPath+suffix, in, out, expected)
+	if err == nil {
+		c.legacySchedules.Store(true)
+	}
+	return resp, err
 }
 
 // CreateSchedule is not retried automatically: schedules have no unique
@@ -1604,33 +1623,29 @@ func (c *APIClient) schedulePath(id string) string {
 // second schedule.
 func (c *APIClient) CreateSchedule(ctx context.Context, in ScheduleCreate) (*ScheduleRead, error) {
 	var out ScheduleRead
-	_, err := c.doJSON(disableAutomaticRetries(ctx), http.MethodPost, c.schedulesBase(), in, &out, http.StatusCreated)
+	ctx = disableAutomaticRetries(ctx)
+	_, err := c.doSchedule(ctx, http.MethodPost, "", in, &out, http.StatusCreated)
+	if IsNotFoundError(err) {
+		// Schedules have no list route and unknown ids live under /{id}/, so
+		// a 404 on a create from both routes means the instance predates the
+		// schedules API rather than an unknown schedule.
+		return nil, &EndpointUnavailableError{
+			Method:         http.MethodPost,
+			Path:           notificationWindowsPath,
+			MinimumRelease: "v2026-09-23.01",
+			MinimumChart:   "logfire-0.13.47",
+			BackendVersion: BackendVersionFromError(err),
+		}
+	}
 	if err != nil {
-		return nil, schedulesEndpointUnavailableError(err)
+		return nil, err
 	}
 	return &out, nil
 }
 
-// schedulesEndpointUnavailableError translates a 404 from the schedule
-// collection route into an actionable upgrade hint. Schedules have no list
-// route and unknown ids live under /{id}/, so a 404 on a create means the
-// instance predates the schedules API rather than an unknown schedule.
-func schedulesEndpointUnavailableError(err error) error {
-	if !IsNotFoundError(err) {
-		return err
-	}
-	return &EndpointUnavailableError{
-		Method:         http.MethodPost,
-		Path:           "/api/v1/schedules/",
-		MinimumRelease: "v2026-09-23.01",
-		MinimumChart:   "logfire-0.13.47",
-		BackendVersion: BackendVersionFromError(err),
-	}
-}
-
 func (c *APIClient) GetSchedule(ctx context.Context, id string) (*ScheduleRead, int, error) {
 	var out ScheduleRead
-	resp, err := c.doJSON(ctx, http.MethodGet, c.schedulePath(id), nil, &out, http.StatusOK)
+	resp, err := c.doSchedule(ctx, http.MethodGet, id, nil, &out, http.StatusOK)
 	if err != nil {
 		if resp != nil {
 			return nil, resp.StatusCode, err
@@ -1642,7 +1657,7 @@ func (c *APIClient) GetSchedule(ctx context.Context, id string) (*ScheduleRead, 
 
 func (c *APIClient) UpdateSchedule(ctx context.Context, id string, in ScheduleUpdate) (*ScheduleRead, error) {
 	var out ScheduleRead
-	_, err := c.doJSON(ctx, http.MethodPut, c.schedulePath(id), in, &out, http.StatusOK)
+	_, err := c.doSchedule(ctx, http.MethodPut, id, in, &out, http.StatusOK)
 	if err != nil {
 		return nil, err
 	}
@@ -1650,6 +1665,6 @@ func (c *APIClient) UpdateSchedule(ctx context.Context, id string, in ScheduleUp
 }
 
 func (c *APIClient) DeleteSchedule(ctx context.Context, id string) error {
-	_, err := c.doJSON(ctx, http.MethodDelete, c.schedulePath(id), nil, nil, http.StatusNoContent)
+	_, err := c.doSchedule(ctx, http.MethodDelete, id, nil, nil, http.StatusNoContent)
 	return err
 }

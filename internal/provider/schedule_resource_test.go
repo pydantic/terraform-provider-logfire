@@ -31,13 +31,13 @@ type scheduleTransport struct {
 func (t scheduleTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	status, body := http.StatusOK, t.response
 	switch {
-	case req.Method == http.MethodGet && strings.HasPrefix(req.URL.Path, "/api/v1/schedules/") && req.URL.Path != "/api/v1/schedules/":
+	case req.Method == http.MethodGet && strings.HasPrefix(req.URL.Path, "/api/v1/notification-windows/") && req.URL.Path != "/api/v1/notification-windows/":
 		if t.notFound {
 			status, body = http.StatusNotFound, `{"detail":"No schedule with that ID in this organization."}`
 		}
-	case req.Method == http.MethodPost && req.URL.Path == "/api/v1/schedules/":
+	case req.Method == http.MethodPost && req.URL.Path == "/api/v1/notification-windows/":
 		status = http.StatusCreated
-	case req.Method == http.MethodPut && strings.HasPrefix(req.URL.Path, "/api/v1/schedules/"):
+	case req.Method == http.MethodPut && strings.HasPrefix(req.URL.Path, "/api/v1/notification-windows/"):
 	default:
 		return nil, fmt.Errorf("unexpected request: %s %s", req.Method, req.URL.Path)
 	}

@@ -3,6 +3,23 @@
 BUG FIXES:
 - A create that the Logfire public API rate limit refuses is retried after the `Retry-After` delay. The server refuses such a request before it handles it, so the retry cannot create a second resource. Several Terraform runs against one organization share its limit, so this refusal can occur even with the provider's own pacing. Other 429 responses to a create still fail without a retry, as in 0.2.2. Retries stop before the 90-second request timeout.
 
+## 0.3.0
+
+BREAKING CHANGES:
+- On Logfire instances with managed dashboards enabled, dashboards created or replaced with this provider are locked in the UI and through MCP by default. Set `managed_allow_edits = true` to allow those edits.
+- Go embedders that assign `shim.New` to a function value with its former one-argument signature must wrap `shim.New(version)` in a function of that type. `shim.New` now accepts options.
+
+FEATURES:
+- `logfire_dashboard` marks dashboards with the tool that manages them. Existing dashboards get the marker on their next update. Go embedders can identify their tool with `shim.WithDashboardManager`.
+- `logfire_alert` supports per-occurrence `instance_policy` and grouped `instances_changed` notifications. Grouped notifications require Logfire `v2026-11-13.01` or newer and organization opt-in. New policies set `continuity_runs` from `missing_runs`. Policy edits preserve the stored `continuity_runs` unless it is lower than `missing_runs`.
+- `logfire_channel` supports email recipients on plans with that feature. Renaming or deactivating a channel leaves its recipients in place, including after the last recipient unsubscribes.
+- Opsgenie channels accept a `base_url` for endpoints such as `https://api.eu.opsgenie.com`. Updates preserve the saved URL when the configuration omits it.
+
+BUG FIXES:
+- `logfire_schedule` uses the notification-windows API and falls back to the schedules API on older instances.
+- `logfire_frontend_application` retains its identity and browser token after a UI rename. Set `name` to the current Logfire name to adopt it in place. The API is available in Logfire staging environments.
+- Each Logfire host has its own request budget. Provider configurations pointing to different instances can run independently.
+
 ## 0.2.4
 
 FEATURES:
