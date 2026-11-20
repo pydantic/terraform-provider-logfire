@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	stringvalidator "github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	rschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -37,6 +39,54 @@ type DashboardModel struct {
 	Name       types.String `tfsdk:"name"`
 	Slug       types.String `tfsdk:"slug"`
 	Definition types.String `tfsdk:"definition"`
+	AllowEdits types.Bool   `tfsdk:"managed_allow_edits"`
+}
+
+// dashboardAllowEdits reads managed_allow_edits. Null marks a dashboard from before the
+// attribute, which stays editable.
+func dashboardAllowEdits(v types.Bool) bool { return v.IsNull() || v.ValueBool() }
+
+// dashboardAllowEditsDefault leaves a new dashboard's value to the create response and keeps the
+// stored value of an existing one.
+type dashboardAllowEditsDefault struct{}
+
+func (dashboardAllowEditsDefault) Description(context.Context) string {
+	return "New dashboards default to false. Existing dashboards keep their value."
+}
+
+func (m dashboardAllowEditsDefault) MarkdownDescription(ctx context.Context) string {
+	return m.Description(ctx)
+}
+
+func (dashboardAllowEditsDefault) PlanModifyBool(
+	_ context.Context, req planmodifier.BoolRequest, resp *planmodifier.BoolResponse,
+) {
+	if !req.ConfigValue.IsNull() {
+		return
+	}
+	resp.PlanValue = req.StateValue
+	if req.State.Raw.IsNull() {
+		resp.PlanValue = types.BoolUnknown()
+	}
+}
+
+// dashboardLock reads managed_allow_edits from a write response. It is null when the Logfire
+// version has no managed dashboards or has them turned off.
+func dashboardLock(out *logclient.Dashboard) types.Bool {
+	if out.ManagedBy == nil || *out.ManagedBy == "" || out.ManagedAllowEdits == nil {
+		return types.BoolNull()
+	}
+	return types.BoolValue(*out.ManagedAllowEdits)
+}
+
+// warnIgnoredLock warns when Logfire did not apply a configured managed_allow_edits. With managed
+// dashboards turned off, Logfire leaves the lock unset, or returns the setting a dashboard that
+// already had a manager kept.
+func warnIgnoredLock(diags *diag.Diagnostics, planned types.Bool, out *logclient.Dashboard) {
+	if !planned.IsNull() && !planned.IsUnknown() && !dashboardLock(out).Equal(planned) {
+		diags.AddAttributeWarning(path.Root("managed_allow_edits"), "Logfire ignored managed_allow_edits",
+			"This Logfire version has no managed dashboards, or has them turned off, so the dashboard keeps its current edit setting. Terraform plans the value again on the next run.")
+	}
 }
 
 func (r *DashboardResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -45,7 +95,11 @@ func (r *DashboardResource) Metadata(ctx context.Context, req resource.MetadataR
 
 func (r *DashboardResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = rschema.Schema{
-		MarkdownDescription: "Manages a Logfire dashboard.",
+		MarkdownDescription: "Manages a Logfire dashboard.\n\n" +
+			"The provider marks the dashboard as managed by the tool that applies it, and Logfire shows a Managed badge on it. " +
+			"A new dashboard is also locked against edits in the Logfire UI and through the Logfire MCP server unless `managed_allow_edits` is `true`. " +
+			"The lock does not cover the dashboards API, which the provider uses. " +
+			"A Logfire instance without managed dashboards ignores the marker. An existing dashboard gets the marker on its next update.",
 		Attributes: map[string]rschema.Attribute{
 			"id": rschema.StringAttribute{
 				Computed:            true,
@@ -86,6 +140,12 @@ func (r *DashboardResource) Schema(ctx context.Context, req resource.SchemaReque
 				MarkdownDescription: "Dashboard definition JSON payload.",
 				PlanModifiers:       []planmodifier.String{dashboardDefinitionPlanModifier{}},
 				Validators:          []validator.String{dashboardDefinitionValidator{}},
+			},
+			"managed_allow_edits": rschema.BoolAttribute{
+				Optional:            true,
+				Computed:            true,
+				MarkdownDescription: "Whether the Logfire UI and the Logfire MCP server can edit the dashboard. Defaults to `false` for a new dashboard. A Logfire instance without managed dashboards, or with them turned off, ignores a configured value. Terraform then warns and plans the value again on every run until Logfire applies it. A dashboard created by an earlier provider version stays editable until you set the attribute. Removing the attribute keeps the current value. Set it to `true` to allow edits again.",
+				PlanModifiers:       []planmodifier.Bool{dashboardAllowEditsDefault{}},
 			},
 		},
 	}
@@ -137,6 +197,8 @@ func (r *DashboardResource) Create(ctx context.Context, req resource.CreateReque
 		Name:       plan.Name.ValueString(),
 		Slug:       plan.Slug.ValueString(),
 		Definition: defRaw,
+
+		DashboardManager: r.client.DashboardManager(dashboardAllowEdits(plan.AllowEdits)),
 	}
 
 	out, err := r.client.CreateDashboard(ctx, projectID, payload)
@@ -151,6 +213,11 @@ func (r *DashboardResource) Create(ctx context.Context, req resource.CreateReque
 		return
 	}
 	state.Definition = preserveDashboardDefinition(plan.Definition, state.Definition)
+	state.AllowEdits = plan.AllowEdits
+	if plan.AllowEdits.IsUnknown() {
+		state.AllowEdits = dashboardLock(out)
+	}
+	warnIgnoredLock(&resp.Diagnostics, plan.AllowEdits, out)
 	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
 		state.ProjectID = types.StringValue(projectID)
 	}
@@ -212,6 +279,16 @@ func (r *DashboardResource) Read(ctx context.Context, req resource.ReadRequest, 
 			state.Name = types.StringValue(name)
 		}
 	}
+	// Only a dashboard with a manager has the lock. Older backends report neither field. Without
+	// a manager nothing locks the dashboard, so a configured value shows as a change and the
+	// next apply tries to set it again.
+	state.AllowEdits = types.BoolNull()
+	if metadata, ok := definition["metadata"].(map[string]any); ok {
+		allowEdits, ok := metadata["managedAllowEdits"].(bool)
+		if manager, _ := metadata["managedBy"].(string); ok && manager != "" {
+			state.AllowEdits = types.BoolValue(allowEdits)
+		}
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -247,7 +324,7 @@ func (r *DashboardResource) Update(ctx context.Context, req resource.UpdateReque
 	projectID := state.ProjectID.ValueString()
 	dashboardID := state.ID.ValueString()
 
-	payload := logclient.DashboardUpdateRequest{}
+	payload := logclient.DashboardUpdateRequest{DashboardManager: r.client.DashboardManager(dashboardAllowEdits(plan.AllowEdits))}
 	if !plan.Name.Equal(state.Name) {
 		name := plan.Name.ValueString()
 		payload.Name = &name
@@ -267,9 +344,11 @@ func (r *DashboardResource) Update(ctx context.Context, req resource.UpdateReque
 		payload.ReplaceLayout = true
 	}
 
-	if payload.Name == nil && payload.Definition == nil {
+	// Null and true send the same marker, but a dashboard without the marker still needs the write.
+	if payload.Name == nil && payload.Definition == nil && plan.AllowEdits.Equal(state.AllowEdits) {
 		state.Definition = plan.Definition
 		state.Name = plan.Name
+		state.AllowEdits = plan.AllowEdits
 		resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 		return
 	}
@@ -287,6 +366,8 @@ func (r *DashboardResource) Update(ctx context.Context, req resource.UpdateReque
 		return
 	}
 	newState.Definition = preserveDashboardDefinition(plan.Definition, newState.Definition)
+	newState.AllowEdits = plan.AllowEdits
+	warnIgnoredLock(&resp.Diagnostics, plan.AllowEdits, out)
 	if newState.ProjectID.IsNull() || newState.ProjectID.IsUnknown() || newState.ProjectID.ValueString() == "" {
 		newState.ProjectID = types.StringValue(projectID)
 	}

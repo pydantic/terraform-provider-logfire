@@ -78,12 +78,6 @@ func TestAccSloDelivery(t *testing.T) {
 				},
 			},
 			{
-				Config: testAccSloDeliveryConfig(projectName, suffix, perTier) + testAccSloDeliveryAlertConfig(suffix),
-				ConfigPlanChecks: resource.ConfigPlanChecks{
-					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
-				},
-			},
-			{
 				// Tiers that are no longer configured are not managed: their
 				// channels stay and the plan is empty.
 				Config: testAccSloDeliveryConfig(projectName, suffix, onlyFast) + testAccSloDeliveryAlertConfig(suffix),

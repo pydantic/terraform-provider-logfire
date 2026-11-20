@@ -4,11 +4,14 @@ page_title: "logfire_dashboard Resource - logfire"
 subcategory: ""
 description: |-
   Manages a Logfire dashboard.
+  The provider marks the dashboard as managed by the tool that applies it, and Logfire shows a Managed badge on it. A new dashboard is also locked against edits in the Logfire UI and through the Logfire MCP server unless managed_allow_edits is true. The lock does not cover the dashboards API, which the provider uses. A Logfire instance without managed dashboards ignores the marker. An existing dashboard gets the marker on its next update.
 ---
 
 # logfire_dashboard (Resource)
 
 Manages a Logfire dashboard.
+
+The provider marks the dashboard as managed by the tool that applies it, and Logfire shows a Managed badge on it. A new dashboard is also locked against edits in the Logfire UI and through the Logfire MCP server unless `managed_allow_edits` is `true`. The lock does not cover the dashboards API, which the provider uses. A Logfire instance without managed dashboards ignores the marker. An existing dashboard gets the marker on its next update.
 
 ## Example Usage
 
@@ -61,6 +64,10 @@ when applying a layout change. Re-export the dashboard to adopt its current layo
 - `name` (String) Dashboard display name.
 - `project_id` (String) Project UUID used for API paths.
 - `slug` (String) Dashboard slug used in URLs.
+
+### Optional
+
+- `managed_allow_edits` (Boolean) Whether the Logfire UI and the Logfire MCP server can edit the dashboard. Defaults to `false` for a new dashboard. A Logfire instance without managed dashboards, or with them turned off, ignores a configured value. Terraform then warns and plans the value again on every run until Logfire applies it. A dashboard created by an earlier provider version stays editable until you set the attribute. Removing the attribute keeps the current value. Set it to `true` to allow edits again.
 
 ### Read-Only
 

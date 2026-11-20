@@ -8,7 +8,17 @@ import (
 	"github.com/pydantic/terraform-provider-logfire/internal/provider"
 )
 
+// Option customizes the provider that New returns.
+type Option = provider.Option
+
+// WithDashboardManager names the Go program that embeds the provider, such as
+// the Pulumi bridge. Logfire shows it as the manager of the dashboards the
+// provider writes. The default is Terraform.
+func WithDashboardManager(tool string) Option {
+	return provider.WithDashboardManager(tool)
+}
+
 // New exposes the upstream provider constructor for external consumers.
-func New(version string) func() tfpfprovider.Provider {
-	return provider.New(version)
+func New(version string, opts ...Option) func() tfpfprovider.Provider {
+	return provider.New(version, opts...)
 }

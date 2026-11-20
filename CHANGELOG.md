@@ -2,6 +2,12 @@
 
 FEATURES:
 - `logfire_alert`: the new `instance_policy` attribute tracks each result row as its own occurrence, keyed by identity columns, and `notify_when` accepts `instances_changed`, which sends one notification for each run that opens or closes occurrences. Removing `instance_policy` from the configuration removes the policy. The provider sends the API's deprecated `continuity_runs` with the value of `missing_runs`. An organization without alert instance policies enabled gets an error that names the missing opt-in. A Logfire version without instance policies gets an upgrade error, and the alert it saved stays in state.
+- `logfire_dashboard` marks each dashboard it writes as managed, so Logfire shows a Managed badge on it. A new dashboard is also locked against edits in the Logfire UI and through the Logfire MCP server. Set the new `managed_allow_edits` attribute to `true` to allow them. An existing dashboard stays editable and gets the marker on its next update. Logfire instances without managed dashboards ignore the marker.
+- Embedders can name their tool with `shim.New(version, shim.WithDashboardManager("Pulumi"))`. `shim.New(version)` is unchanged.
+
+BUG FIXES:
+- The provider rate limit applies per Logfire host. Provider configurations that point at different Logfire instances no longer share one request budget.
+- `logfire_schedule` calls the `/api/v1/notification-windows/` routes, because Logfire deprecated `/api/v1/schedules/`. A Logfire instance that only has the old routes still works: the provider falls back to them when the new ones answer 404. No configuration changes.
 
 ## 0.2.4
 
