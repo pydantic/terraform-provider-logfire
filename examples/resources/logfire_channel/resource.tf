@@ -1,3 +1,8 @@
+variable "opsgenie_auth_key" {
+  type      = string
+  sensitive = true
+}
+
 variable "pagerduty_routing_key" {
   type      = string
   sensitive = true
@@ -11,6 +16,27 @@ resource "logfire_channel" "example" {
     type   = "webhook"
     format = "auto"
     url    = "https://example.com/logfire-webhook"
+  }
+}
+
+resource "logfire_channel" "opsgenie_eu" {
+  name   = "opsgenie-eu"
+  active = true
+
+  config {
+    type     = "opsgenie"
+    auth_key = var.opsgenie_auth_key
+    base_url = "https://api.eu.opsgenie.com"
+  }
+}
+
+resource "logfire_channel" "email" {
+  name   = "email-on-call"
+  active = true
+
+  config {
+    type       = "email"
+    recipients = ["oncall@example.com", "sre@example.com"]
   }
 }
 

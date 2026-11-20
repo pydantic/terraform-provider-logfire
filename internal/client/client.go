@@ -829,12 +829,13 @@ type WebhookConfig struct {
 
 type EmailConfig struct {
 	ChannelConfigBase
-	Email *string `json:"email,omitempty"`
+	Recipients []string `json:"recipients"`
 }
 
 type OpsgenieConfig struct {
 	ChannelConfigBase
 	AuthKey *string `json:"auth_key,omitempty"`
+	BaseURL *string `json:"base_url,omitempty"`
 }
 
 type PagerdutyConfig struct {
@@ -861,17 +862,18 @@ type PagerdutyIntegrationConfig struct {
 
 // ChannelConfig represents any channel config (used for unmarshaling).
 type ChannelConfig struct {
-	Type               string  `json:"type"`
-	Format             *string `json:"format,omitempty"`
-	URL                *string `json:"url,omitempty"`
-	Email              *string `json:"email,omitempty"`
-	AuthKey            *string `json:"auth_key,omitempty"`
-	RoutingKey         *string `json:"routing_key,omitempty"`
-	Region             *string `json:"region,omitempty"`
-	InstallID          *string `json:"install_id,omitempty"`
-	ChannelID          *string `json:"channel_id,omitempty"`
-	ServiceID          *string `json:"service_id,omitempty"`
-	IncludeAgentPrompt *bool   `json:"include_agent_prompt,omitempty"`
+	Type               string   `json:"type"`
+	Format             *string  `json:"format,omitempty"`
+	URL                *string  `json:"url,omitempty"`
+	Recipients         []string `json:"recipients,omitempty"`
+	AuthKey            *string  `json:"auth_key,omitempty"`
+	BaseURL            *string  `json:"base_url,omitempty"`
+	RoutingKey         *string  `json:"routing_key,omitempty"`
+	Region             *string  `json:"region,omitempty"`
+	InstallID          *string  `json:"install_id,omitempty"`
+	ChannelID          *string  `json:"channel_id,omitempty"`
+	ServiceID          *string  `json:"service_id,omitempty"`
+	IncludeAgentPrompt *bool    `json:"include_agent_prompt,omitempty"`
 }
 
 type ChannelRead struct {
