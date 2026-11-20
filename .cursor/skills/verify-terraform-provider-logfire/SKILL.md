@@ -180,12 +180,13 @@ PLATFORM_REPO=../platform PLATFORM_REV=origin/main \
 The script completes Launch once for all bundles. It downloads Terraform 1.14.9 and
 1.8.5 and checks their checksums. It exports the platform `api.json`, checks out each
 exact head, and saves the diff against its base. It also compiles the provider and
-its tests into shared Go caches. Give each reviewer only its `brief.md`. The brief
-names the bundle's inputs.
+its tests into shared Go caches. It never runs the pull request's code. Give each
+reviewer only its `brief.md`. The brief names the bundle's inputs.
 
 Keep the reviews independent. Do not pass the author's receipts, test results,
 review threads, other reviewers' findings or your view of the change. Speed them up
 through setup and parallelism instead. After the reviews, run the printed `cleanup.sh`.
+The script also prints it when preparation fails.
 It removes the checkouts, tools and caches and keeps each `evidence` directory.
 
 ## Helpers

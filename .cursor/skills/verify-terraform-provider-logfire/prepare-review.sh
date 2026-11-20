@@ -34,6 +34,22 @@ export GOCACHE="$RUN_DIR/cache/go-build"
 export GOMODCACHE="$RUN_DIR/cache/go-mod"
 export GOLANGCI_LINT_CACHE="$RUN_DIR/cache/golangci-lint"
 
+# Every step that creates something adds its removal here. The script finishes the file
+# on exit, so a failed run still leaves a working cleanup.
+cleanup="$RUN_DIR/cleanup.sh"
+printf '#!/usr/bin/env bash\nset -u\n' > "$cleanup"
+chmod +x "$cleanup"
+finish() {
+  local status=$?
+  # Go stores modules read-only.
+  printf 'chmod -R u+w %q\n' "$RUN_DIR/cache" >> "$cleanup"
+  printf 'rm -rf -- %q %q\n' "$RUN_DIR/tools" "$RUN_DIR/cache" >> "$cleanup"
+  if [ "$status" -ne 0 ]; then
+    printf 'Preparation failed. Cleanup: %s\n' "$cleanup" >&2
+  fi
+}
+trap finish EXIT
+
 install_terraform() {
   local version=$1 os arch archive release dir
   os=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -72,9 +88,6 @@ else
   printf 'No platform revision was selected. Record this gap in the review.\n' > "$RUN_DIR/platform/GAP.txt"
 fi
 
-cleanup="$RUN_DIR/cleanup.sh"
-printf '#!/usr/bin/env bash\nset -u\n' > "$cleanup"
-
 for pr in "$@"; do
   dir="$RUN_DIR/pr-$pr"
   mkdir -p "$dir/evidence" "$dir/scratch"
@@ -90,8 +103,8 @@ for pr in "$@"; do
   printf '%s\n' "$head" > "$dir/evidence/source-sha.txt"
   printf '%s\n' "$base" > "$dir/evidence/base-sha.txt"
   git -C "$repo" diff --binary "$base" "$head" > "$dir/evidence/pr.diff"
-  git -C "$repo" worktree add -q --detach "$dir/src" "$head"
   printf 'git -C %q worktree remove --force %q\n' "$repo" "$dir/src" >> "$cleanup"
+  git -C "$repo" worktree add -q --detach "$dir/src" "$head"
 
   cat > "$dir/env.sh" <<EOF
 # Source this file before reviewing PR $pr.
@@ -109,13 +122,16 @@ export TF_ACC=
 cd $(printf %q "$dir/src")
 EOF
 
-  # Compiles the provider and its tests once, so a review starts with a warm cache.
+  # Compiles the provider and its tests once, so a review starts with a warm cache. It never
+  # runs a test binary: the PR's init functions and TestMain would run with this environment.
   (
     cd "$dir/src"
     go mod download
     (cd tools && go mod download)
     go build ./...
-    go test -count=1 -run '^$' ./... >/dev/null
+    mkdir "$dir/scratch/test-bin"
+    go test -c -o "$dir/scratch/test-bin/" ./... >/dev/null
+    rm -rf -- "$dir/scratch/test-bin"
   )
 
   base_short=$(git -C "$repo" rev-parse --short "$base")
@@ -140,11 +156,6 @@ already done. Save commands, exit codes and results in \`evidence/\`. Report eac
 with how to reproduce it.
 EOF
 done
-
-# Go stores modules read-only.
-printf 'chmod -R u+w %q\n' "$RUN_DIR/cache" >> "$cleanup"
-printf 'rm -rf -- %q %q\n' "$RUN_DIR/tools" "$RUN_DIR/cache" >> "$cleanup"
-chmod +x "$cleanup"
 
 printf 'Prepared %s\n' "$RUN_DIR"
 for pr in "$@"; do
