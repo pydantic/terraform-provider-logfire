@@ -5,18 +5,18 @@ package client
 
 import (
 	"net/http"
+	"runtime"
 	"testing"
 	"time"
 )
 
 func TestNewRateLimiterUsesHourlyBurst(t *testing.T) {
 	rl := newRateLimiter(50, 1000)
-	t.Cleanup(rl.Close)
 
-	if got, want := cap(rl.perMinute.tokens), 50; got != want {
+	if got, want := rl.perMinute.Burst(), 50; got != want {
 		t.Fatalf("per-minute burst = %d; want %d", got, want)
 	}
-	if got, want := cap(rl.perHour.tokens), 1000; got != want {
+	if got, want := rl.perHour.Burst(), 1000; got != want {
 		t.Fatalf("per-hour burst = %d; want %d", got, want)
 	}
 }
@@ -67,4 +67,18 @@ func TestRateLimiterIsPerHost(t *testing.T) {
 	if hostLimiters["a.test"] == nil || hostLimiters["a.test"] == hostLimiters["b.test"] {
 		t.Fatalf("hosts must have separate limiters: %v", hostLimiters)
 	}
+}
+
+// A provider embedded in a long-lived process can see many hosts, so a limiter must not
+// leave goroutines behind.
+func TestRateLimiterStartsNoGoroutines(t *testing.T) {
+	before := runtime.NumGoroutine()
+	limiters := make([]*rateLimiter, 128)
+	for i := range limiters {
+		limiters[i] = newRateLimiter(defaultRequestsPerMinute, defaultRequestsPerHour)
+	}
+	if grown := runtime.NumGoroutine() - before; grown > 4 {
+		t.Fatalf("128 limiters started %d goroutines", grown)
+	}
+	runtime.KeepAlive(limiters)
 }
