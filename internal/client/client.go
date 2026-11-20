@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -276,6 +277,10 @@ type APIClient struct {
 
 	orgTokenMu    sync.Mutex
 	orgTokenCache map[string]orgTokenEntry
+
+	// legacySchedules is set once the instance has answered on the deprecated
+	// /schedules/ route, so later calls skip the notification windows route.
+	legacySchedules atomic.Bool
 }
 
 type APIError struct {
@@ -1477,11 +1482,35 @@ type ScheduleUpdate struct {
 	Windows  *[]ScheduleWindow `json:"windows,omitempty"`
 }
 
-func (c *APIClient) schedulesBase() string {
-	return "/api/v1/schedules/"
-}
-func (c *APIClient) schedulePath(id string) string {
-	return fmt.Sprintf("/api/v1/schedules/%s/", url.PathEscape(id))
+const (
+	notificationWindowsPath = "/api/v1/notification-windows/"
+	legacySchedulesPath     = "/api/v1/schedules/"
+)
+
+// doSchedule calls the notification windows route. An instance that predates
+// that route answers FastAPI's missing-route 404, and doSchedule then calls the
+// deprecated /schedules/ route Logfire served before. A 404 never has an effect,
+// so the second call is safe for every method. A 404 for a missing window is
+// final, so a failed second call cannot hide it. Once the deprecated route has answered, later
+// calls skip the new one. An empty id addresses the collection.
+func (c *APIClient) doSchedule(
+	ctx context.Context, method, id string, in, out any, expected int,
+) (*http.Response, error) {
+	suffix := ""
+	if id != "" {
+		suffix = url.PathEscape(id) + "/"
+	}
+	if !c.legacySchedules.Load() {
+		resp, err := c.doJSON(ctx, method, notificationWindowsPath+suffix, in, out, expected)
+		if !isMissingRoute(err) {
+			return resp, err
+		}
+	}
+	resp, err := c.doJSON(ctx, method, legacySchedulesPath+suffix, in, out, expected)
+	if err == nil {
+		c.legacySchedules.Store(true)
+	}
+	return resp, err
 }
 
 // CreateSchedule is not retried automatically: schedules have no unique
@@ -1489,33 +1518,29 @@ func (c *APIClient) schedulePath(id string) string {
 // second schedule.
 func (c *APIClient) CreateSchedule(ctx context.Context, in ScheduleCreate) (*ScheduleRead, error) {
 	var out ScheduleRead
-	_, err := c.doJSON(disableAutomaticRetries(ctx), http.MethodPost, c.schedulesBase(), in, &out, http.StatusCreated)
+	ctx = disableAutomaticRetries(ctx)
+	_, err := c.doSchedule(ctx, http.MethodPost, "", in, &out, http.StatusCreated)
+	if IsNotFoundError(err) {
+		// Schedules have no list route and unknown ids live under /{id}/, so
+		// a 404 on a create from both routes means the instance predates the
+		// schedules API rather than an unknown schedule.
+		return nil, &EndpointUnavailableError{
+			Method:         http.MethodPost,
+			Path:           notificationWindowsPath,
+			MinimumRelease: "v2026-09-23.01",
+			MinimumChart:   "logfire-0.13.47",
+			BackendVersion: BackendVersionFromError(err),
+		}
+	}
 	if err != nil {
-		return nil, schedulesEndpointUnavailableError(err)
+		return nil, err
 	}
 	return &out, nil
 }
 
-// schedulesEndpointUnavailableError translates a 404 from the schedule
-// collection route into an actionable upgrade hint. Schedules have no list
-// route and unknown ids live under /{id}/, so a 404 on a create means the
-// instance predates the schedules API rather than an unknown schedule.
-func schedulesEndpointUnavailableError(err error) error {
-	if !IsNotFoundError(err) {
-		return err
-	}
-	return &EndpointUnavailableError{
-		Method:         http.MethodPost,
-		Path:           "/api/v1/schedules/",
-		MinimumRelease: "v2026-09-23.01",
-		MinimumChart:   "logfire-0.13.47",
-		BackendVersion: BackendVersionFromError(err),
-	}
-}
-
 func (c *APIClient) GetSchedule(ctx context.Context, id string) (*ScheduleRead, int, error) {
 	var out ScheduleRead
-	resp, err := c.doJSON(ctx, http.MethodGet, c.schedulePath(id), nil, &out, http.StatusOK)
+	resp, err := c.doSchedule(ctx, http.MethodGet, id, nil, &out, http.StatusOK)
 	if err != nil {
 		if resp != nil {
 			return nil, resp.StatusCode, err
@@ -1527,7 +1552,7 @@ func (c *APIClient) GetSchedule(ctx context.Context, id string) (*ScheduleRead, 
 
 func (c *APIClient) UpdateSchedule(ctx context.Context, id string, in ScheduleUpdate) (*ScheduleRead, error) {
 	var out ScheduleRead
-	_, err := c.doJSON(ctx, http.MethodPut, c.schedulePath(id), in, &out, http.StatusOK)
+	_, err := c.doSchedule(ctx, http.MethodPut, id, in, &out, http.StatusOK)
 	if err != nil {
 		return nil, err
 	}
@@ -1535,6 +1560,6 @@ func (c *APIClient) UpdateSchedule(ctx context.Context, id string, in ScheduleUp
 }
 
 func (c *APIClient) DeleteSchedule(ctx context.Context, id string) error {
-	_, err := c.doJSON(ctx, http.MethodDelete, c.schedulePath(id), nil, nil, http.StatusNoContent)
+	_, err := c.doSchedule(ctx, http.MethodDelete, id, nil, nil, http.StatusNoContent)
 	return err
 }
