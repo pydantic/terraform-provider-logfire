@@ -42,7 +42,8 @@ type lifecycleAPI struct {
 func normalizeEmail(address string) string {
 	address = strings.TrimSpace(address)
 	at := strings.LastIndex(address, "@")
-	local, domain := address[:at], strings.ToLower(address[at+1:])
+	// UTS 46 maps the ideographic full stop to a dot.
+	local, domain := address[:at], strings.ToLower(strings.ReplaceAll(address[at+1:], "\u3002", "."))
 	if strings.EqualFold(local, "postmaster") {
 		local = "postmaster"
 	}
@@ -215,6 +216,7 @@ func TestLifecycleOpsgenieBaseURL(t *testing.T) {
 			},
 			{Config: opsgenie("renamed", "base_url = \"https://api.opsgenie.com \""), ExpectError: regexp.MustCompile(`without\s+spaces`)},
 			{Config: opsgenie("renamed", "base_url = \"https://api.opsgenie.com\u0085\""), ExpectError: regexp.MustCompile(`without\s+spaces`)},
+			{Config: opsgenie("renamed", "base_url = \"https://api.opsgenie.com\v\""), ExpectError: regexp.MustCompile(`without\s+spaces`)},
 			{Config: opsgenie("renamed", "base_url = \"https://api.opsgenie.com\""), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.base_url", "https://api.opsgenie.com")},
 		},
 	})
@@ -247,6 +249,33 @@ func TestLifecycleEmailRecipients(t *testing.T) {
 			{Config: named("renamed", `"a@example.com"`), ExpectError: regexp.MustCompile("unsubscribed")},
 			// Logfire keeps the case of most mailbox names, so these are two recipients.
 			{Config: named("renamed", `"Ops@example.com", "ops@example.com"`), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.recipients.#", "2")},
+			{Config: named("renamed", `"Ops@example.com"`), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.recipients.#", "1")},
+			{
+				// A recipient changed outside Terraform to another mailbox case is drift.
+				PreConfig: func() {
+					api.Lock()
+					defer api.Unlock()
+					config, _ := api.item["config"].(map[string]any)
+					config["recipients"] = []any{"ops@example.com"}
+				},
+				Config:   named("renamed", `"Ops@example.com"`),
+				PlanOnly: true, ExpectNonEmptyPlan: true,
+			},
+			{Config: named("renamed", `"Ops@example.com"`), Check: resource.TestCheckTypeSetElemAttr("logfire_channel.test", "config.recipients.*", "Ops@example.com")},
+		},
+	})
+}
+
+// Logfire maps U+3002 in a domain to a dot, so a create must keep the configured spelling.
+func TestLifecycleEmailRecipientMappedDomain(t *testing.T) {
+	t.Parallel()
+	server, _ := newLifecycleAPI(t, "channel")
+	config := lifecycleConfig(server.URL, "channel", "name = \"email\"\nconfig {\ntype = \"email\"\nrecipients = [\"oncall@example\u3002com\"]\n}")
+	resource.Test(t, resource.TestCase{
+		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: config, Check: resource.TestCheckTypeSetElemAttr("logfire_channel.test", "config.recipients.*", "oncall@example\u3002com")},
+			{Config: config, ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}}},
 		},
 	})
 }

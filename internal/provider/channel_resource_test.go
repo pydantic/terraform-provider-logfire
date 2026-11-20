@@ -582,3 +582,25 @@ func TestChannelConfigRejectsFieldsOfOtherTypes(t *testing.T) {
 		}
 	}
 }
+
+func TestSameEmail(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		configured, stored string
+		same               bool
+	}{
+		{"a@Example.COM", "a@example.com", true},
+		{" Support@example.com", "support@example.com", true},
+		{"oncall@example\u3002com", "oncall@example.com", true},
+		{"b@xn--bcher-kva.example", "b@b\u00fccher.example", true},
+		{"Ops@example.com", "ops@example.com", false},
+		// email-validator lowercases only an ASCII mailbox name. NFC turns the Kelvin sign
+		// (U+212A) into K, which it keeps.
+		{"mar\u212aeting@example.com", "marketing@example.com", false},
+		{"mar\u212aeting@example.com", "marKeting@example.com", true},
+	} {
+		if got := sameEmail(tc.configured, tc.stored); got != tc.same {
+			t.Errorf("sameEmail(%q, %q) = %v; want %v", tc.configured, tc.stored, got, tc.same)
+		}
+	}
+}

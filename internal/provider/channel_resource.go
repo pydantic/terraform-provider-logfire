@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	objectvalidator "github.com/hashicorp/terraform-plugin-framework-validators/objectvalidator"
 	setvalidator "github.com/hashicorp/terraform-plugin-framework-validators/setvalidator"
@@ -156,10 +157,11 @@ func (r *ChannelResource) Schema(ctx context.Context, req resource.SchemaRequest
 						MarkdownDescription: "Opsgenie API base URL, for example `https://api.eu.opsgenie.com` for an EU account. Only for `opsgenie` channels. Omitting it on an existing channel retains the current value; set it to `https://api.opsgenie.com` explicitly to return to the default US endpoint.",
 						Validators: []validator.String{
 							// The provider trims the URL it sends, so surrounding spaces would come
-							// back changed and fail the apply.
+							// back changed and fail the apply. \p{Cc} and \p{Z} cover every character
+							// that Go and Python trim, including a vertical tab and U+0085.
 							stringvalidator.RegexMatches(
-								regexp.MustCompile(`^https://[^\s\p{Z}\x{85}]+$`),
-								"must be an HTTPS URL without spaces",
+								regexp.MustCompile(`^https://[^\p{Cc}\p{Z}]+$`),
+								"must be an HTTPS URL without spaces or control characters",
 							),
 						},
 					},
@@ -586,24 +588,50 @@ func keepConfiguredEmails(stored, configured []types.String) []types.String {
 	return stored
 }
 
-// sameEmail reports whether Logfire stored the configured address. Logfire trims it, normalizes
-// it to NFC, writes an IDNA domain in Unicode and lowercases the domain and some mailbox names,
-// such as postmaster.
+// sameEmail reports whether Logfire stored the configured address. Logfire returns addresses
+// already normalized, so any other difference, such as the case of a mailbox name, is a
+// different recipient.
 func sameEmail(configured, stored string) bool {
-	return strings.EqualFold(canonicalEmail(configured), canonicalEmail(stored))
+	return canonicalEmail(configured) == stored
 }
 
+// caseInsensitiveMailboxes are the RFC 2142 mailbox names that Logfire lowercases.
+var caseInsensitiveMailboxes = []string{
+	"info", "marketing", "sales", "support", "abuse", "noc", "security", "postmaster",
+	"hostmaster", "usenet", "news", "webmaster", "www", "uucp", "ftp",
+}
+
+// canonicalEmail applies Logfire's normalization, which uses email-validator. It trims the
+// address and normalizes it to NFC. It lowercases a mailbox name from RFC 2142 that was ASCII before NFC. It maps
+// the domain with UTS 46, which lowercases it and maps dots such as U+3002, and writes it in
+// Unicode.
 func canonicalEmail(address string) string {
-	address = norm.NFC.String(strings.TrimSpace(address))
+	address = strings.TrimSpace(address)
+	// Only a mailbox name that was ASCII before NFC is lowercased.
+	ascii := isASCII(address[:max(strings.LastIndex(address, "@"), 0)])
+	address = norm.NFC.String(address)
 	at := strings.LastIndex(address, "@")
 	if at < 0 {
 		return address
 	}
-	domain, err := idna.ToUnicode(address[at+1:])
-	if err != nil {
-		return address
+	local := address[:at]
+	if lower := strings.ToLower(local); ascii && slices.Contains(caseInsensitiveMailboxes, lower) {
+		local = lower
 	}
-	return address[:at+1] + domain
+	domain, err := idna.Lookup.ToUnicode(address[at+1:])
+	if err != nil {
+		domain = strings.ToLower(address[at+1:])
+	}
+	return local + "@" + domain
+}
+
+func isASCII(s string) bool {
+	for i := range len(s) {
+		if s[i] >= utf8.RuneSelf {
+			return false
+		}
+	}
+	return true
 }
 
 func preserveMaskedConfigValue(remote, fallback types.String, isMasked func(string) bool) types.String {
