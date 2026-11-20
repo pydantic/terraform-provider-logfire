@@ -105,7 +105,7 @@ jobs:
           # Tests skip when it is absent (forks without secrets).
           LOGFIRE_SCOPED_API_KEY: ${{ secrets.LOGFIRE_SCOPED_API_KEY }}
           LOGFIRE_API_KEY_TEST_PROJECT_ID: "e9731857-2b0f-4731-b21d-bbe39cb8540b"
-        run: go test -v -cover ./internal/provider/
+        run: go test -v -cover -timeout=14m ./internal/provider/
         timeout-minutes: 15
       - name: Skip acceptance tests
         if: steps.check-secrets.outputs.skip_tests == 'true'
