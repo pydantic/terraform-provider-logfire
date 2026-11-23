@@ -24,22 +24,22 @@ resource "logfire_organization" "team_a" {
 resource "logfire_group_mappings" "this" {
   mapping = [
     {
+      group_id = "team-a-admins"
+      organization_roles = [
+        { organization = logfire_organization.team_a.name, role = "admin" },
+      ]
+    },
+    {
       group_id = "platform-ops"
       organization_roles = [
         {
-          organization = logfire_organization.team_a.name
+          # The organization and its project must already exist.
+          organization = "platform"
           role         = "guest"
-          # The project must already exist in the organization.
           project_roles = [
             { project = "api", role = "read" },
           ]
         },
-      ]
-    },
-    {
-      group_id = "team-a-admins"
-      organization_roles = [
-        { organization = logfire_organization.team_a.name, role = "admin" },
       ]
     },
   ]
@@ -59,8 +59,11 @@ The mapping applies at each user's next sign-in. For every organization and proj
 that it lists, the sign-in changes or removes the user's access to match the user's
 identity-provider groups. When several groups grant a role in the same scope, the
 most permissive role applies. Membership in a user's own personal organization is
-never removed. Organizations and projects that the mapping does not list stay
-unchanged, and only projects listed in `project_roles` are managed.
+never removed. Organizations that the mapping does not list stay unchanged. In a
+listed organization, sign-in manages only the projects listed in `project_roles`,
+with one exception. When a sign-in removes the user from a listed organization, it
+also removes all of the user's project memberships in that organization, including
+projects that `project_roles` does not list.
 
 ## Role names are not validated
 
@@ -78,6 +81,7 @@ the stored mapping, copy it into the configuration, and apply.
 
 Create and update replace the whole mapping, in the order of the list. The API has
 no version and no lock, so when two writers update the mapping, the last write wins.
+Declare this resource in one Terraform configuration per instance.
 
 Destroy stores an empty mapping. It stops managing the scopes that the mapping
 listed. It does not restore access that earlier sign-ins changed or removed.

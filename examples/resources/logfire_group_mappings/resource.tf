@@ -9,22 +9,22 @@ resource "logfire_organization" "team_a" {
 resource "logfire_group_mappings" "this" {
   mapping = [
     {
+      group_id = "team-a-admins"
+      organization_roles = [
+        { organization = logfire_organization.team_a.name, role = "admin" },
+      ]
+    },
+    {
       group_id = "platform-ops"
       organization_roles = [
         {
-          organization = logfire_organization.team_a.name
+          # The organization and its project must already exist.
+          organization = "platform"
           role         = "guest"
-          # The project must already exist in the organization.
           project_roles = [
             { project = "api", role = "read" },
           ]
         },
-      ]
-    },
-    {
-      group_id = "team-a-admins"
-      organization_roles = [
-        { organization = logfire_organization.team_a.name, role = "admin" },
       ]
     },
   ]
