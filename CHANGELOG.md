@@ -1,5 +1,8 @@
 ## Unreleased
 
+FEATURES:
+- `logfire_group_mappings` manages the identity-provider group mapping of a self-hosted instance, which until now only the Helm value `groupOrganizationMapping` could set. The instance has one mapping, so the resource is a singleton that replaces the whole mapping and keeps its order. Create fails when the instance already stores a mapping, so import it first with ID `instance`. Destroy stores an empty mapping and does not restore access that earlier sign-ins changed or removed. The API does not check role names, so a wrong name gives no error and sign-in skips the role. The resource conflicts with the Helm value, which overrides the API and makes create and update fail. Needs Logfire v2026-07-22.02 or newer (Helm chart logfire-0.13.36 or newer).
+
 BUG FIXES:
 - A create that the Logfire public API rate limit refuses is retried after the `Retry-After` delay. The server refuses such a request before it handles it, so the retry cannot create a second resource. Several Terraform runs against one organization share its limit, so this refusal can occur even with the provider's own pacing. Other 429 responses to a create still fail without a retry, as in 0.2.2. Retries stop before the 90-second request timeout.
 
