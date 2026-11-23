@@ -581,11 +581,17 @@ func (c *APIClient) doJSONAuthorized(ctx context.Context, bearer, method, path s
 		return resp, newAPIError(resp, msg)
 	}
 
-	// Decode response if requested
-	if out != nil {
+	// Decode response if requested. A success with no body would leave out empty, and a list would
+	// then look like an empty collection.
+	if out != nil && resp.StatusCode != http.StatusNoContent {
 		dec := json.NewDecoder(resp.Body)
-		if err := dec.Decode(out); err != nil && err != io.EOF {
-			return resp, fmt.Errorf("decode response: %w", err)
+		if err := dec.Decode(out); err != nil {
+			switch {
+			case errors.Is(err, io.EOF) && resp.StatusCode >= 200 && resp.StatusCode < 300:
+				return resp, fmt.Errorf("decode response: the server answered %d with an empty body", resp.StatusCode)
+			case !errors.Is(err, io.EOF):
+				return resp, fmt.Errorf("decode response: %w", err)
+			}
 		}
 	}
 
