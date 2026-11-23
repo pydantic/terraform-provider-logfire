@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"strings"
 
-	stringvalidator "github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	rschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -17,7 +16,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
@@ -77,13 +75,7 @@ func (r *OrganizationResource) Schema(ctx context.Context, req resource.SchemaRe
 			"name": rschema.StringAttribute{
 				Required:            true,
 				MarkdownDescription: "Organization name/slug.",
-				Validators: []validator.String{
-					stringvalidator.LengthAtLeast(2),
-					stringvalidator.RegexMatches(
-						regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`),
-						"must use lowercase letters, numbers, and internal hyphens (no spaces or uppercase characters)",
-					),
-				},
+				Validators:          organizationNameValidators(),
 			},
 			"display_name": rschema.StringAttribute{
 				Optional:            true,
@@ -204,6 +196,7 @@ func (r *OrganizationResource) Create(ctx context.Context, req resource.CreateRe
 	}
 
 	out, err := r.client.CreateOrganization(ctx, in)
+	r.client.ForgetOrganization(in.OrganizationName)
 	if err != nil {
 		resp.Diagnostics.AddError("Create organization failed", err.Error())
 		return
@@ -364,6 +357,10 @@ func (r *OrganizationResource) Update(ctx context.Context, req resource.UpdateRe
 	// The audience is the organization's current (state) name; a rename is
 	// carried in the payload, not in the audience.
 	out, err := r.client.UpdateOrganizationContext(ctx, state.Name.ValueString(), payload)
+	r.client.ForgetOrganization(state.Name.ValueString())
+	if out != nil {
+		r.client.ForgetOrganization(out.OrganizationName)
+	}
 	if err != nil {
 		resp.Diagnostics.AddError("Update organization failed", err.Error())
 		return
@@ -432,7 +429,9 @@ func (r *OrganizationResource) Delete(ctx context.Context, req resource.DeleteRe
 		return
 	}
 
-	if err := r.client.DeleteOrganizationContext(ctx, state.Name.ValueString()); err != nil {
+	err = r.client.DeleteOrganizationContext(ctx, state.Name.ValueString())
+	r.client.ForgetOrganization(state.Name.ValueString())
+	if err != nil {
 		if logclient.IsNotFoundError(err) {
 			// Vanished between the identity check and the delete: already gone.
 			return

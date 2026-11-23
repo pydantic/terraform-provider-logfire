@@ -137,6 +137,10 @@ func (r *WriteTokenResource) Create(ctx context.Context, req resource.CreateRequ
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
 		return
 	}
+	resp.Diagnostics.Append(saveOrganizationContext(ctx, resp.Private, r.client)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	var plan WriteTokenModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -224,6 +228,9 @@ func (r *WriteTokenResource) Create(ctx context.Context, req resource.CreateRequ
 func (r *WriteTokenResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	if r.client == nil {
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
+		return
+	}
+	if !checkOrganizationForRead(ctx, r.client, req, resp) {
 		return
 	}
 
@@ -326,6 +333,9 @@ func (r *WriteTokenResource) Update(ctx context.Context, req resource.UpdateRequ
 func (r *WriteTokenResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	if r.client == nil {
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
+		return
+	}
+	if !checkOrganizationForDelete(ctx, r.client, req, resp) {
 		return
 	}
 

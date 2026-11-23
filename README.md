@@ -103,6 +103,7 @@ For Logfire SaaS, the provider infers the API endpoint from the region embedded 
 ## Examples
 - `examples/main.tf` contains a SaaS-compatible end-to-end setup (project, channel, alert, dashboard, and read/write tokens).
 - `examples/self-hosted-organization/main.tf` contains the self-hosted-only `logfire_organization` example.
+- `examples/self-hosted-organization-context/main.tf` creates projects and a write token in another organization from one instance-admin key, on a self-hosted instance.
 
 ## Dashboards
 

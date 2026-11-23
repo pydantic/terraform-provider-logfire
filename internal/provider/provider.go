@@ -67,6 +67,7 @@ type LogfireProvider struct {
 type LogfireProviderModel struct {
 	BaseUrl       types.String `tfsdk:"base_url"`
 	ApiKey        types.String `tfsdk:"api_key"`
+	Organization  types.String `tfsdk:"organization"`
 	CustomHeaders types.Map    `tfsdk:"custom_headers"`
 }
 
@@ -87,6 +88,14 @@ func (p *LogfireProvider) Schema(ctx context.Context, req provider.SchemaRequest
 				Optional:            true,
 				Sensitive:           true,
 				MarkdownDescription: "Bearer token. If omitted, the LOGFIRE_API_KEY environment variable is used.",
+			},
+			"organization": schema.StringAttribute{
+				Optional: true,
+				MarkdownDescription: "Name of the organization that organization-scoped resources act in. Self-hosted instances only. " +
+					"The provider exchanges the instance-admin `api_key` for a short-lived token bound to this organization, " +
+					"so one key reaches any organization. If omitted, the provider uses LOGFIRE_ORGANIZATION. " +
+					"If neither is set, resources act in the organization of the `api_key`. " +
+					"The `organization` argument of `logfire_project` overrides this value.",
 			},
 			"custom_headers": schema.MapAttribute{
 				ElementType:         types.StringType,
@@ -125,6 +134,16 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 		)
 	}
 
+	if config.Organization.IsUnknown() {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("organization"),
+			"Unknown Logfire organization",
+			"The provider cannot create the Logfire API client as there is an unknown configuration value for organization. "+
+				"Pass the organization name, which Terraform knows at plan time (for example logfire_organization.x.name), "+
+				"set the value statically in the configuration, or use the LOGFIRE_ORGANIZATION environment variable.",
+		)
+	}
+
 	if config.CustomHeaders.IsUnknown() {
 		resp.Diagnostics.AddAttributeError(
 			path.Root("custom_headers"),
@@ -140,6 +159,7 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 
 	base_url := os.Getenv("LOGFIRE_BASE_URL")
 	api_key := os.Getenv("LOGFIRE_API_KEY")
+	organization := os.Getenv("LOGFIRE_ORGANIZATION")
 
 	if !config.BaseUrl.IsNull() {
 		base_url = config.BaseUrl.ValueString()
@@ -147,6 +167,19 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 
 	if !config.ApiKey.IsNull() {
 		api_key = config.ApiKey.ValueString()
+	}
+
+	if !config.Organization.IsNull() {
+		organization = config.Organization.ValueString()
+	}
+
+	if organization != "" && !organizationNamePattern.MatchString(organization) {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("organization"),
+			"Invalid Logfire organization",
+			fmt.Sprintf("The organization %q (from the provider block or LOGFIRE_ORGANIZATION) is not an organization name. "+
+				"An organization name %s.", organization, organizationNameRule),
+		)
 	}
 
 	if api_key == "" {
@@ -207,8 +240,9 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 		return
 	}
 
-	resp.DataSourceData = apiClient
-	resp.ResourceData = apiClient
+	scoped := apiClient.ForOrganization(organization)
+	resp.DataSourceData = scoped
+	resp.ResourceData = scoped
 	tflog.Info(ctx, "Logfire client configured successfully")
 }
 

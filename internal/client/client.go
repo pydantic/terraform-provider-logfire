@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"golang.org/x/sync/singleflight"
 	"golang.org/x/time/rate"
 	"io"
 	"math/rand"
@@ -317,16 +318,60 @@ type APIClient struct {
 	HTTP    *http.Client
 	token   string
 
+	// organization is the organization this client acts in through the token
+	// exchange. Empty means the credential's own organization.
+	organization string
+
 	userAgent        string
 	headers          http.Header
 	dashboardManager string
 
+	shared *clientShared
+}
+
+// clientShared is the mutable state that a client and every client derived
+// from it with ForOrganization share.
+type clientShared struct {
 	orgTokenMu    sync.Mutex
-	orgTokenCache map[string]orgTokenEntry
+	orgTokenCache map[orgTokenKey]orgTokenEntry
+	// inflight lets concurrent callers share one exchange or one organization list.
+	inflight singleflight.Group
+
+	// organizations is the instance organization list, once listed.
+	organizationsMu sync.Mutex
+	organizations   []OrganizationRead
+	listed          bool
+	listStarted     time.Time
+	// listing admits one organization list at a time.
+	listing chan struct{}
+
+	// own is what the credential itself reported about its organization.
+	// ownKnown is set once the instance answered, including with a refusal.
+	ownMu    sync.Mutex
+	own      *OrganizationRead
+	ownKnown bool
 
 	// legacySchedules is set once the instance has answered on the deprecated
 	// /schedules/ route, so later calls skip the notification windows route.
 	legacySchedules atomic.Bool
+}
+
+// ForOrganization returns a client that acts in the named organization. Its
+// requests carry a short-lived token that the instance-admin credential
+// exchanges for that organization, except on instance routes, which keep the
+// credential. An empty name returns a client for the credential's own
+// organization. The result shares the connection, credential, and token cache
+// with c.
+func (c *APIClient) ForOrganization(name string) *APIClient {
+	derived := *c
+	derived.organization = name
+	return &derived
+}
+
+// Organization returns the organization set by ForOrganization, or an empty
+// string for the credential's own organization.
+func (c *APIClient) Organization() string {
+	return c.organization
 }
 
 type APIError struct {
@@ -438,12 +483,12 @@ func NewAPIClient(baseURL, token string, httpClient *http.Client, opts ...Option
 		return nil, fmt.Errorf("invalid endpoint: %w", err)
 	}
 	apiClient := &APIClient{
-		BaseURL:       u,
-		HTTP:          httpClient,
-		token:         token,
-		userAgent:     defaultUserAgent,
-		headers:       make(http.Header),
-		orgTokenCache: make(map[string]orgTokenEntry),
+		BaseURL:   u,
+		HTTP:      httpClient,
+		token:     token,
+		userAgent: defaultUserAgent,
+		headers:   make(http.Header),
+		shared:    &clientShared{orgTokenCache: make(map[orgTokenKey]orgTokenEntry), listing: make(chan struct{}, 1)},
 
 		dashboardManager: "terraform",
 	}
@@ -455,8 +500,20 @@ func NewAPIClient(baseURL, token string, httpClient *http.Client, opts ...Option
 	return apiClient, nil
 }
 
+// instanceRoutePrefix starts every route that authorizes the instance-admin
+// credential itself. The other routes resolve the organization from the token.
+const instanceRoutePrefix = "/api/v1/instance/"
+
+// doJSON sends the credential on instance routes and on a client without an
+// organization. Otherwise it sends a token exchanged for the client's
+// organization.
 func (c *APIClient) doJSON(ctx context.Context, method, path string, in any, out any, expectedStatus ...int) (*http.Response, error) {
-	return c.doJSONAuthorized(ctx, c.token, method, path, in, out, expectedStatus...)
+	if c.organization == "" || strings.HasPrefix(path, instanceRoutePrefix) {
+		return c.doJSONAuthorized(ctx, c.token, method, path, in, out, expectedStatus...)
+	}
+	return c.withOrganizationContext(ctx, c.organization, organizationContextScopes, func(token string) (*http.Response, error) {
+		return c.doJSONAuthorized(ctx, token, method, path, in, out, expectedStatus...)
+	})
 }
 
 // doJSONAuthorized is doJSON with an explicit bearer token, for calls made with
@@ -503,7 +560,7 @@ func (c *APIClient) doJSONAuthorized(ctx context.Context, bearer, method, path s
 		}
 	}
 
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.guardedHTTP().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("execute request: %w", err)
 	}
@@ -642,6 +699,129 @@ func (c *APIClient) ListOrganizations(ctx context.Context) ([]OrganizationRead, 
 		return nil, err
 	}
 	return out, nil
+}
+
+// Organizations returns the instance organization list. Every client derived
+// with ForOrganization shares one list per process. With relist, the list is
+// fetched after the call began: a list that is in flight already can miss an
+// organization created since, so a relist waits for it and fetches again.
+func (c *APIClient) Organizations(ctx context.Context, relist bool) ([]OrganizationRead, error) {
+	asked := time.Now()
+	select {
+	case c.shared.listing <- struct{}{}:
+		defer func() { <-c.shared.listing }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	c.shared.organizationsMu.Lock()
+	list, listed, started := c.shared.organizations, c.shared.listed, c.shared.listStarted
+	c.shared.organizationsMu.Unlock()
+	if listed && (!relist || !started.Before(asked)) {
+		return list, nil
+	}
+
+	c.shared.organizationsMu.Lock()
+	c.shared.listStarted = time.Now()
+	c.shared.organizationsMu.Unlock()
+	fresh, err := c.ListOrganizations(ctx)
+	if err != nil {
+		return nil, err
+	}
+	c.shared.organizationsMu.Lock()
+	c.shared.organizations, c.shared.listed = fresh, true
+	c.shared.organizationsMu.Unlock()
+	return fresh, nil
+}
+
+// ForgetOrganization drops what this process knows about an organization that
+// Terraform created, renamed, or deleted: its cached tokens and the cached
+// organization list. A token for a deleted organization would otherwise
+// outlive it, and so would the token of an organization created again under
+// the same name.
+func (c *APIClient) ForgetOrganization(name string) {
+	c.shared.orgTokenMu.Lock()
+	for key := range c.shared.orgTokenCache {
+		if key.organization == name {
+			delete(c.shared.orgTokenCache, key)
+		}
+	}
+	c.shared.orgTokenMu.Unlock()
+	c.shared.organizationsMu.Lock()
+	c.shared.listed = false
+	c.shared.organizationsMu.Unlock()
+}
+
+// OwnOrganization reads the organization of the configured credential, with the
+// credential itself and never through the exchange. It returns nil and no error
+// when the instance refuses the credential or has no such route, because a key
+// without organization:read cannot say which organization it belongs to. An
+// error means the instance gave no answer. Every client derived with
+// ForOrganization shares one answer per process, except an error, which is
+// asked again.
+func (c *APIClient) OwnOrganization(ctx context.Context) (*OrganizationRead, error) {
+	c.shared.ownMu.Lock()
+	own, known := c.shared.own, c.shared.ownKnown
+	c.shared.ownMu.Unlock()
+	if known {
+		return own, nil
+	}
+	fresh, err := c.shareFlight(ctx, "\nown-organization", func(ctx context.Context) (any, error) {
+		var out OrganizationRead
+		_, err := c.doJSONAuthorized(ctx, c.token, http.MethodGet, organizationContextPath, nil, &out, http.StatusOK)
+		var read *OrganizationRead
+		switch {
+		case err == nil:
+			read = &out
+		case !isRefusal(err):
+			return nil, err
+		}
+		c.shared.ownMu.Lock()
+		c.shared.own, c.shared.ownKnown = read, true
+		c.shared.ownMu.Unlock()
+		return read, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	own, _ = fresh.(*OrganizationRead)
+	return own, nil
+}
+
+var errFlightAborted = errors.New("the shared request ended without an answer")
+
+// flightTimeout bounds work that callers share. It covers an exchange that is
+// retried once and the rate limiter's wait.
+const flightTimeout = 3 * defaultRequestTimeout
+
+// shareFlight runs fn once for concurrent callers that pass the same key. fn
+// runs on a context that the cancellation of the caller that started it does
+// not end, so one caller that gives up does not fail the others. Each caller
+// still returns as soon as its own context ends.
+func (c *APIClient) shareFlight(ctx context.Context, key string, fn func(context.Context) (any, error)) (any, error) {
+	result := c.shared.inflight.DoChan(key, func() (any, error) {
+		detached, cancel := context.WithTimeout(context.WithoutCancel(ctx), flightTimeout)
+		defer cancel()
+		type outcome struct {
+			value any
+			err   error
+		}
+		done := make(chan outcome, 1)
+		go func() {
+			// A goroutine that exits without returning, such as one that a test ends
+			// with t.Fatal, must still answer the callers that wait for it.
+			out := outcome{err: errFlightAborted}
+			defer func() { done <- out }()
+			out.value, out.err = fn(detached)
+		}()
+		out := <-done
+		return out.value, out.err
+	})
+	select {
+	case r := <-result:
+		return r.Val, r.Err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 type ProjectRead struct {
@@ -1605,7 +1785,7 @@ func (c *APIClient) doSchedule(
 	if id != "" {
 		suffix = url.PathEscape(id) + "/"
 	}
-	if !c.legacySchedules.Load() {
+	if !c.shared.legacySchedules.Load() {
 		resp, err := c.doJSON(ctx, method, notificationWindowsPath+suffix, in, out, expected)
 		if !isMissingRoute(err) {
 			return resp, err
@@ -1613,7 +1793,7 @@ func (c *APIClient) doSchedule(
 	}
 	resp, err := c.doJSON(ctx, method, legacySchedulesPath+suffix, in, out, expected)
 	if err == nil {
-		c.legacySchedules.Store(true)
+		c.shared.legacySchedules.Store(true)
 	}
 	return resp, err
 }

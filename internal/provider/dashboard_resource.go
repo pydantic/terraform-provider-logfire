@@ -168,6 +168,10 @@ func (r *DashboardResource) Create(ctx context.Context, req resource.CreateReque
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
 		return
 	}
+	resp.Diagnostics.Append(saveOrganizationContext(ctx, resp.Private, r.client)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	var plan DashboardModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -235,6 +239,9 @@ func (r *DashboardResource) Read(ctx context.Context, req resource.ReadRequest, 
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
 		return
 	}
+	if !checkOrganizationForRead(ctx, r.client, req, resp) {
+		return
+	}
 
 	var state DashboardModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
@@ -296,6 +303,9 @@ func (r *DashboardResource) Read(ctx context.Context, req resource.ReadRequest, 
 func (r *DashboardResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	if r.client == nil {
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
+		return
+	}
+	if !checkOrganizationForUpdate(ctx, r.client, req, resp) {
 		return
 	}
 
@@ -378,6 +388,9 @@ func (r *DashboardResource) Update(ctx context.Context, req resource.UpdateReque
 func (r *DashboardResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	if r.client == nil {
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
+		return
+	}
+	if !checkOrganizationForDelete(ctx, r.client, req, resp) {
 		return
 	}
 

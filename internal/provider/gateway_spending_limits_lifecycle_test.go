@@ -38,7 +38,7 @@ func newSpendingLimitsAPI(t *testing.T) (*httptest.Server, *spendingLimitsAPI) {
 		limits:   map[string]logclient.GatewaySpendingLimits{},
 		requests: map[string]int{},
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newTestInstance(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		api.Lock()
 		defer api.Unlock()
 		w.Header().Set("Content-Type", "application/json")

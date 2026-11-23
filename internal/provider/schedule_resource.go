@@ -234,6 +234,10 @@ func (r *ScheduleResource) Create(ctx context.Context, req resource.CreateReques
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
 		return
 	}
+	resp.Diagnostics.Append(saveOrganizationContext(ctx, resp.Private, r.client)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	var plan ScheduleModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -271,6 +275,9 @@ func (r *ScheduleResource) Read(ctx context.Context, req resource.ReadRequest, r
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
 		return
 	}
+	if !checkOrganizationForRead(ctx, r.client, req, resp) {
+		return
+	}
 
 	var state ScheduleModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
@@ -302,6 +309,9 @@ func (r *ScheduleResource) Read(ctx context.Context, req resource.ReadRequest, r
 func (r *ScheduleResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	if r.client == nil {
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
+		return
+	}
+	if !checkOrganizationForUpdate(ctx, r.client, req, resp) {
 		return
 	}
 
@@ -347,6 +357,9 @@ func (r *ScheduleResource) Delete(ctx context.Context, req resource.DeleteReques
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
 		return
 	}
+	if !checkOrganizationForDelete(ctx, r.client, req, resp) {
+		return
+	}
 
 	var state ScheduleModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
@@ -386,7 +399,7 @@ func (r *ScheduleResource) ImportState(ctx context.Context, req resource.ImportS
 		if status == 404 {
 			resp.Diagnostics.AddError(
 				"Import schedule failed",
-				fmt.Sprintf("Schedule %q not found in the credential's organization. Import a schedule by its UUID.", id),
+				fmt.Sprintf("Schedule %q not found in %s. Import a schedule by its UUID.", id, searchedOrganization(r.client)),
 			)
 			return
 		}

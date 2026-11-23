@@ -146,11 +146,18 @@ func (r *GatewaySpendingLimitsResource) Configure(
 func (r *GatewaySpendingLimitsResource) Create(
 	ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse,
 ) {
+	resp.Diagnostics.Append(saveOrganizationContext(ctx, resp.Private, r.client)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	r.apply(ctx, req.Plan, &resp.State, &resp.Diagnostics, "Create")
 }
 
 // Read refreshes every window.
 func (r *GatewaySpendingLimitsResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	if !checkOrganizationForRead(ctx, r.client, req, resp) {
+		return
+	}
 	var state GatewaySpendingLimitsModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
@@ -170,6 +177,9 @@ func (r *GatewaySpendingLimitsResource) Read(ctx context.Context, req resource.R
 func (r *GatewaySpendingLimitsResource) Update(
 	ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse,
 ) {
+	if !checkOrganizationForUpdate(ctx, r.client, req, resp) {
+		return
+	}
 	r.apply(ctx, req.Plan, &resp.State, &resp.Diagnostics, "Update")
 }
 
@@ -177,6 +187,9 @@ func (r *GatewaySpendingLimitsResource) Update(
 func (r *GatewaySpendingLimitsResource) Delete(
 	ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse,
 ) {
+	if !checkOrganizationForDelete(ctx, r.client, req, resp) {
+		return
+	}
 	if _, err := r.client.SetGatewayOrganizationSpendingLimits(ctx, logclient.GatewaySpendingLimits{}); err != nil {
 		resp.Diagnostics.AddError("Delete Gateway spending limits failed", err.Error())
 	}
@@ -278,6 +291,10 @@ func (r *GatewayProjectSpendingLimitsResource) Configure(
 func (r *GatewayProjectSpendingLimitsResource) Create(
 	ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse,
 ) {
+	resp.Diagnostics.Append(saveOrganizationContext(ctx, resp.Private, r.client)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	r.apply(ctx, req.Plan, &resp.State, &resp.Diagnostics, "Create")
 }
 
@@ -285,6 +302,9 @@ func (r *GatewayProjectSpendingLimitsResource) Create(
 func (r *GatewayProjectSpendingLimitsResource) Read(
 	ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse,
 ) {
+	if !checkOrganizationForRead(ctx, r.client, req, resp) {
+		return
+	}
 	var state GatewayProjectSpendingLimitsModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
@@ -308,6 +328,9 @@ func (r *GatewayProjectSpendingLimitsResource) Read(
 func (r *GatewayProjectSpendingLimitsResource) Update(
 	ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse,
 ) {
+	if !checkOrganizationForUpdate(ctx, r.client, req, resp) {
+		return
+	}
 	r.apply(ctx, req.Plan, &resp.State, &resp.Diagnostics, "Update")
 }
 
@@ -315,6 +338,9 @@ func (r *GatewayProjectSpendingLimitsResource) Update(
 func (r *GatewayProjectSpendingLimitsResource) Delete(
 	ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse,
 ) {
+	if !checkOrganizationForDelete(ctx, r.client, req, resp) {
+		return
+	}
 	var state GatewayProjectSpendingLimitsModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {

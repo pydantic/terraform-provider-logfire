@@ -6,7 +6,6 @@ package provider
 import (
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -80,7 +79,7 @@ func TestDashboardLifecycleWithMissingID(t *testing.T) {
 			t.Run(operation+"/"+missing.name, func(t *testing.T) {
 				t.Parallel()
 				var requests atomic.Int32
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				server := newTestInstance(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 					requests.Add(1)
 					w.WriteHeader(http.StatusNotFound)
 				}))
@@ -124,7 +123,7 @@ func TestDashboardLifecycleDoesNotAdoptReusedSlug(t *testing.T) {
 	for _, operation := range []string{"read", "update", "delete"} {
 		t.Run(operation, func(t *testing.T) {
 			t.Parallel()
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			server := newTestInstance(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 				switch {
 				case req.Method == http.MethodGet && req.URL.Path == "/api/v1/projects/project-1/":
 					_, _ = w.Write([]byte(`{"project_name":"my-project"}`))

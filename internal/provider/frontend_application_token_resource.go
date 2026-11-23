@@ -89,6 +89,10 @@ func (r *FrontendApplicationTokenResource) Create(ctx context.Context, req resou
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
 		return
 	}
+	resp.Diagnostics.Append(saveOrganizationContext(ctx, resp.Private, r.client)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	var plan FrontendApplicationTokenModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
@@ -139,6 +143,9 @@ func (r *FrontendApplicationTokenResource) Create(ctx context.Context, req resou
 func (r *FrontendApplicationTokenResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	if r.client == nil {
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
+		return
+	}
+	if !checkOrganizationForRead(ctx, r.client, req, resp) {
 		return
 	}
 	var state FrontendApplicationTokenModel
@@ -194,6 +201,9 @@ func (r *FrontendApplicationTokenResource) Update(ctx context.Context, req resou
 func (r *FrontendApplicationTokenResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	if r.client == nil {
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
+		return
+	}
+	if !checkOrganizationForDelete(ctx, r.client, req, resp) {
 		return
 	}
 	var state FrontendApplicationTokenModel

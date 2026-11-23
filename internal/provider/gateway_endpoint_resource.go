@@ -72,6 +72,10 @@ func (r *GatewayEndpointResource) Configure(
 func (r *GatewayEndpointResource) Create(
 	ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse,
 ) {
+	resp.Diagnostics.Append(saveOrganizationContext(ctx, resp.Private, r.client)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	var plan GatewayEndpointModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
@@ -94,6 +98,9 @@ func (r *GatewayEndpointResource) Create(
 
 // Read refreshes the endpoint and its providers.
 func (r *GatewayEndpointResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	if !checkOrganizationForRead(ctx, r.client, req, resp) {
+		return
+	}
 	var state GatewayEndpointModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
@@ -116,6 +123,9 @@ func (r *GatewayEndpointResource) Read(ctx context.Context, req resource.ReadReq
 func (r *GatewayEndpointResource) Update(
 	ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse,
 ) {
+	if !checkOrganizationForUpdate(ctx, r.client, req, resp) {
+		return
+	}
 	var plan, state GatewayEndpointModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
@@ -155,6 +165,9 @@ func (r *GatewayEndpointResource) Update(
 func (r *GatewayEndpointResource) Delete(
 	ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse,
 ) {
+	if !checkOrganizationForDelete(ctx, r.client, req, resp) {
+		return
+	}
 	var state GatewayEndpointModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {

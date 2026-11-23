@@ -73,6 +73,10 @@ func newLifecycleAPI(t *testing.T, kind string) (*httptest.Server, *lifecycleAPI
 			_, _ = w.Write([]byte(`{"access_token":"test-org-token","expires_in":900}`))
 			return
 		}
+		if r.Method == http.MethodGet && r.URL.Path == ownOrganizationPath && itemPath != ownOrganizationPath {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		if r.URL.Path != collection && r.URL.Path != itemPath {
 			t.Errorf("unexpected API request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -400,7 +404,7 @@ func TestLifecycleFailedCreates(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/%d", kind, status), func(t *testing.T) {
 				t.Parallel()
 				var creates atomic.Int32
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				server := newTestInstance(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff/" {
 						_, _ = w.Write([]byte(`{"id":"9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff","project_name":"production"}`))
 						return
@@ -452,7 +456,7 @@ func TestLifecycleDashboardNullDefinition(t *testing.T) {
 func TestLifecycleProjectImportIDCollision(t *testing.T) {
 	t.Parallel()
 	const id = "9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newTestInstance(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/v1/projects/":

@@ -9,6 +9,7 @@ normal provider protocol. Local APIs simulate failures at the HTTP boundary.
 - `local-recovery` retains partial creation state and recovers without duplicate resources.
 - `local-failure` sends one create request after HTTP 429, HTTP 503, or a lost response.
 - `local-validation` rejects a null dashboard and resolves project import IDs correctly.
+- `local-organization-context` creates, refreshes, updates, imports, replaces, and destroys projects in other organizations through the token exchange.
 
 ## How to get to it (user POV)
 
@@ -27,8 +28,9 @@ TF_ACC= TMPDIR="$RUN_DIR/scratch" make test-e2e
 ```
 
 Require `TestLifecycleSlackSettings`, `TestLifecyclePartialCreateRecovery`,
-`TestLifecycleFailedCreates`, `TestLifecycleDashboardNullDefinition`, and
-`TestLifecycleProjectImportIDCollision` to pass. Save the transcript and exit code.
+`TestLifecycleFailedCreates`, `TestLifecycleDashboardNullDefinition`,
+`TestLifecycleProjectImportIDCollision`, and `TestLifecycleProjectOrganizationContext`
+to pass. Save the transcript and exit code.
 The assertions check state values, import results, one create per resource,
 and one final deletion for channel and organization recovery.
 

@@ -141,6 +141,10 @@ func (r *ReadTokenResource) Create(ctx context.Context, req resource.CreateReque
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
 		return
 	}
+	resp.Diagnostics.Append(saveOrganizationContext(ctx, resp.Private, r.client)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	var plan ReadTokenModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -239,6 +243,9 @@ func (r *ReadTokenResource) Create(ctx context.Context, req resource.CreateReque
 func (r *ReadTokenResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	if r.client == nil {
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
+		return
+	}
+	if !checkOrganizationForRead(ctx, r.client, req, resp) {
 		return
 	}
 
@@ -347,6 +354,9 @@ func (r *ReadTokenResource) Update(ctx context.Context, req resource.UpdateReque
 func (r *ReadTokenResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	if r.client == nil {
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
+		return
+	}
+	if !checkOrganizationForDelete(ctx, r.client, req, resp) {
 		return
 	}
 

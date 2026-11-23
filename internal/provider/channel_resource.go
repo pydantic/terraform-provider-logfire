@@ -683,6 +683,10 @@ func (r *ChannelResource) Create(ctx context.Context, req resource.CreateRequest
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
 		return
 	}
+	resp.Diagnostics.Append(saveOrganizationContext(ctx, resp.Private, r.client)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	var plan ChannelModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -739,6 +743,9 @@ func (r *ChannelResource) Read(ctx context.Context, req resource.ReadRequest, re
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
 		return
 	}
+	if !checkOrganizationForRead(ctx, r.client, req, resp) {
+		return
+	}
 
 	var state ChannelModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
@@ -776,6 +783,9 @@ func (r *ChannelResource) Read(ctx context.Context, req resource.ReadRequest, re
 func (r *ChannelResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	if r.client == nil {
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
+		return
+	}
+	if !checkOrganizationForUpdate(ctx, r.client, req, resp) {
 		return
 	}
 
@@ -854,6 +864,9 @@ func (r *ChannelResource) Delete(ctx context.Context, req resource.DeleteRequest
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
 		return
 	}
+	if !checkOrganizationForDelete(ctx, r.client, req, resp) {
+		return
+	}
 
 	var state ChannelModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
@@ -910,6 +923,6 @@ func (r *ChannelResource) ImportState(ctx context.Context, req resource.ImportSt
 	}
 	resp.Diagnostics.AddError(
 		"Import channel failed",
-		fmt.Sprintf("Channel %q not found in the credential's organization by ID or name. List channel IDs with the Logfire API (GET /api/v1/channels/).", rawID),
+		fmt.Sprintf("Channel %q not found in %s by ID or name. List channel IDs with the Logfire API (GET /api/v1/channels/).", rawID, searchedOrganization(r.client)),
 	)
 }

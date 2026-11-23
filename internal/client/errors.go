@@ -42,6 +42,36 @@ func isMissingRoute(err error) bool {
 	return body.Detail == "" || body.Detail == "Not Found"
 }
 
+// isRefusal reports an answer that says the credential cannot use the route:
+// unauthorized, forbidden, or no such route.
+func isRefusal(err error) bool {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	switch apiErr.StatusCode {
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+		return true
+	}
+	return false
+}
+
+// IsExchangeRefusalError reports whether the error proves that the credential
+// cannot be exchanged for the organization: the instance refused it, or it has
+// no token endpoint. A timeout, a 5xx answer, and an OAuth server_error or
+// temporarily_unavailable prove nothing, so they are not refusals.
+func IsExchangeRefusalError(err error) bool {
+	var unavailable *EndpointUnavailableError
+	if errors.As(err, &unavailable) {
+		return true
+	}
+	var oauthErr *OAuthTokenError
+	if errors.As(err, &oauthErr) {
+		return oauthErr.Code != "server_error" && oauthErr.Code != "temporarily_unavailable"
+	}
+	return false
+}
+
 // IsConflictError reports whether the error represents an HTTP 409.
 func IsConflictError(err error) bool {
 	var apiErr *APIError

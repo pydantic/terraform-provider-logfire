@@ -492,6 +492,10 @@ func (r *AlertResource) Create(ctx context.Context, req resource.CreateRequest, 
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
 		return
 	}
+	resp.Diagnostics.Append(saveOrganizationContext(ctx, resp.Private, r.client)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	var plan AlertModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -543,6 +547,9 @@ func (r *AlertResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
 		return
 	}
+	if !checkOrganizationForRead(ctx, r.client, req, resp) {
+		return
+	}
 
 	var state AlertModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
@@ -591,6 +598,9 @@ func (r *AlertResource) Read(ctx context.Context, req resource.ReadRequest, resp
 func (r *AlertResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	if r.client == nil {
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
+		return
+	}
+	if !checkOrganizationForUpdate(ctx, r.client, req, resp) {
 		return
 	}
 
@@ -743,6 +753,9 @@ func (r *AlertResource) Update(ctx context.Context, req resource.UpdateRequest, 
 func (r *AlertResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	if r.client == nil {
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
+		return
+	}
+	if !checkOrganizationForDelete(ctx, r.client, req, resp) {
 		return
 	}
 

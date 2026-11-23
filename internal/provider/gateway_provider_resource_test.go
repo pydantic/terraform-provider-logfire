@@ -29,6 +29,9 @@ type gatewayFailingTransport struct {
 }
 
 func (transport gatewayFailingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Method == http.MethodGet && req.URL.Path == "/api/v1/organization/" {
+		return &http.Response{StatusCode: http.StatusNotFound, Header: make(http.Header), Request: req, Body: http.NoBody}, nil
+	}
 	transport.check(req)
 	return nil, transport.err
 }

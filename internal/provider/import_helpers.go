@@ -5,6 +5,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -47,6 +48,17 @@ func splitImportParts(raw string, allowedCounts ...int) ([]string, error) {
 	return parts, nil
 }
 
+var errProjectNotFound = errors.New("project not found")
+
+// searchedOrganization names the organization that a request of c reads, for
+// the not-found answers of the imports.
+func searchedOrganization(c *client.APIClient) string {
+	if name := c.Organization(); name != "" {
+		return fmt.Sprintf("organization %q", name)
+	}
+	return "the organization of the API key"
+}
+
 func findProjectByNameOrID(ctx context.Context, c *client.APIClient, key string) (string, string, error) {
 	list, err := c.ListProjects(ctx)
 	if err != nil {
@@ -62,5 +74,5 @@ func findProjectByNameOrID(ctx context.Context, c *client.APIClient, key string)
 			return project.ID, project.ProjectName, nil
 		}
 	}
-	return "", "", fmt.Errorf("project %q not found", key)
+	return "", "", fmt.Errorf("project %q not found in %s: %w", key, searchedOrganization(c), errProjectNotFound)
 }

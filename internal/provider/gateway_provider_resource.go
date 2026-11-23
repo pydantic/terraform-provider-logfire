@@ -70,6 +70,10 @@ func (r *GatewayProviderResource) Configure(
 func (r *GatewayProviderResource) Create(
 	ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse,
 ) {
+	resp.Diagnostics.Append(saveOrganizationContext(ctx, resp.Private, r.client)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	var plan GatewayProviderModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
@@ -100,6 +104,9 @@ func (r *GatewayProviderResource) Create(
 
 // Read refreshes public configuration without overwriting the locally retained API key.
 func (r *GatewayProviderResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	if !checkOrganizationForRead(ctx, r.client, req, resp) {
+		return
+	}
 	var state GatewayProviderModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
@@ -122,6 +129,9 @@ func (r *GatewayProviderResource) Read(ctx context.Context, req resource.ReadReq
 func (r *GatewayProviderResource) Update(
 	ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse,
 ) {
+	if !checkOrganizationForUpdate(ctx, r.client, req, resp) {
+		return
+	}
 	var plan, state GatewayProviderModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
@@ -163,6 +173,9 @@ func (r *GatewayProviderResource) Update(
 func (r *GatewayProviderResource) Delete(
 	ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse,
 ) {
+	if !checkOrganizationForDelete(ctx, r.client, req, resp) {
+		return
+	}
 	var state GatewayProviderModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
