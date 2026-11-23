@@ -161,7 +161,8 @@ func unconfirmedDetail(record *organizationRecord, own *logclient.OrganizationRe
 		"and Terraform cannot confirm that it is %q: the key cannot read its own organization (it needs organization:read) "+
 		"or list the instance organizations (it needs instance:admin). Grant the key organization:read, "+
 		"or set the provider organization to %q with an instance-admin key. "+
-		"To manage the resource with this key anyway, remove it from state with terraform state rm and import it again.",
+		"To manage the resource with this key anyway, remove it from state with terraform state rm. The key needs "+
+		"organization:read, or the provider organization set with an instance-admin key, before it can import the resource again.",
 		record.Name, record.Name, record.Name)
 }
 

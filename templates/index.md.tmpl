@@ -49,7 +49,7 @@ Self-hosted Logfire instances expose APIs as they are released, so a feature the
 | `logfire_api_key`, `logfire_gateway_api_key` | v2026-06-09.02 | - |
 | `logfire_organization` create and list, organization import | v2026-06-03.01 | - |
 | `logfire_organization` read, update, delete (including setting `billing_email` at creation) | v2026-06-25.01 | - |
-| Provider `organization` and `logfire_project` `organization` | v2026-06-25.01 | - |
+| Provider `organization`, and `organization` on `logfire_project`, `logfire_organization_member` and `logfire_organization_members` | v2026-06-25.01 | - |
 | `logfire_gateway_provider` | v2026-08-12.01 | logfire-0.13.40 or newer |
 | `logfire_gateway_spending_limits`, `logfire_gateway_project_spending_limits` | v2026-10-16.01 | - |
 | Delegating project-bound scopes (`project:gateway_proxy`, `project:read_otlp`, `project:write_otlp`) from an organization-wide key | v2026-09-14.01 | logfire-0.13.46 or newer |
@@ -57,6 +57,8 @@ Self-hosted Logfire instances expose APIs as they are released, so a feature the
 | `logfire_gateway_provider` with the `azure` vendor | v2026-10-19.01 | - |
 | `logfire_gateway_provider` with the `google-vertex` vendor | v2026-10-29.02 | - |
 | `logfire_gateway_endpoint` | v2026-10-29.02 | - |
+| `logfire_organization_members` | v2026-06-11.01 | - |
+| `logfire_organization_member`, which confirms the organization of its key with `GET /api/v1/organization/` | v2026-06-25.01 | - |
 
 The instance version appears in the Logfire UI and in the `Logfire-Version` response header on releases that report a release tag; builds that report only an image identity are treated as unknown. Charts from logfire-0.13.45 report the release tag the chart was built from.
 
@@ -80,6 +82,8 @@ Each resource states the scopes its calls need. The summary below is the single 
 | `logfire_gateway_endpoint` | `organization:read_gateway` / `organization:write_gateway` (`organization:read` / `organization:write` are also accepted) | Organization-wide key |
 | `logfire_gateway_spending_limits` | `organization:read_gateway` / `organization:write_gateway` (`organization:read` / `organization:write` are also accepted) | Organization-wide key |
 | `logfire_gateway_project_spending_limits` | `organization:read_gateway` / `organization:write_gateway` (`organization:read` / `organization:write` are also accepted) | A key that can reach the project |
+| `logfire_organization_member` | `organization:read_member` / `organization:write_member`, and `organization:read` unless `organization` is set through an instance-admin key | Organization-wide key |
+| `logfire_organization_members` (data source) | `organization:read_member` | Organization-wide key |
 | `logfire_organization` | `organization:admin` | A key created in the admin-panel organization (self-hosted only) |
 | Any resource, when the provider or `logfire_project` sets `organization` | `instance:admin` (`organization:admin` also works) | A key created in the admin-panel organization (self-hosted only). The scopes of the resource do not apply, because the exchanged token holds a fixed set. See "Managing several organizations on a self-hosted instance". |
 
@@ -155,7 +159,7 @@ One instance-admin API key can act in every organization, so you do not need a l
 Two arguments choose the organization.
 
 - The provider `organization` argument, or the `LOGFIRE_ORGANIZATION` environment variable, sets the organization for every resource and data source of that provider. The argument wins over the environment variable, and an empty argument turns the environment variable off.
-- `logfire_project` takes its own `organization` argument, which overrides the provider's. One provider block can then create projects in many organizations, for example with `for_each`.
+- `logfire_project`, `logfire_organization_member`, and the `logfire_organization_members` data source take their own `organization` argument, which overrides the provider's. One provider block can then manage projects and member roles in many organizations, for example with `for_each`.
 
 The key must hold `instance:admin` (`organization:admin` also works) and must belong to the self-hosted admin organization. Any other key fails with an error that names this requirement.
 
@@ -208,12 +212,13 @@ Terraform cannot use `for_each` on provider blocks. Projects therefore take `org
 - `logfire_api_key` and `logfire_gateway_api_key` do not work through an organization. The instance refuses to create an API key for a token without a user and answers `403 This credential cannot create API keys`, whatever the scopes. To create API keys in another organization, use a provider alias whose `api_key` belongs to that organization and holds `organization:create_api_key`. `logfire_write_token` and `logfire_read_token` work through the exchange.
 - For each resource, the provider records the ID and name of its organization in private state. For a resource reached through the exchange, that is the organization of the exchange. For a resource reached with the key itself, it is the organization that the key reports for itself, which needs `organization:read`. Refresh, update, and destroy check the record against the organization list. A key of the recorded organization proves it by reading its own organization, so it does not need `instance:admin`. If it has neither scope, refresh and destroy fail with `cannot confirm`. Grant `organization:read` or set the provider `organization` with an instance-admin key.
 - A resource stays in its organization. If the provider `organization` changes, refresh and destroy fail for the resources of the old organization, and the error names it. Set the provider `organization` back, or remove those resources from state with `terraform state rm` and create or import them in the new organization.
-- Setting the provider `organization` does not move existing projects. A project keeps the organization in its state.
+- Setting the provider `organization` does not move existing projects or members. A project or member keeps the organization in its state.
 - A resource that has no record, because a key without `organization:read` created it or an older provider did, takes on the organization that the provider names. A provider that moves to another organization then reads or changes the resources of that organization with the same address, such as the single `logfire_gateway_spending_limits` of an organization. Refresh once with the original key and `organization:read` before you change the provider `organization`.
 - A project that existed before you set an organization has no record if its key cannot read its own organization. The provider reaches it with the key, and when the key cannot reach it, through the exchange for the organization in its state. The provider then records that organization. If that exchange fails for a reason other than refusing the key, such as a timeout, the refresh fails and the project stays in state.
-- A project that sets no `organization` stays in the organization of its state. If the provider `organization` then names another organization, the plan fails with `Project is in another organization`. Set `organization` on the project to keep it where it is.
-- A project whose `organization` is not known until apply fails the plan with `Organization not known until apply`. A change would replace the project, and Terraform cannot check that the new organization exists before it deletes the project. Apply what produces the organization first with `terraform apply -target`.
-- Changing `organization` on a project replaces it. The plan fails if the new organization does not exist, because the replacement would delete the project before the create fails.
+- A project or member that sets no `organization` stays in the organization of its state. If the provider `organization` then names another organization, the plan fails with `Resource is in another organization`. Set `organization` on the resource to keep it where it is.
+- A project or member whose `organization` is not known until apply fails the plan with `Organization not known until apply`. A change would replace the resource, and Terraform cannot check that the new organization exists before it deletes the resource. Apply what produces the organization first with `terraform apply -target`.
+- Changing `organization` on a project replaces it. The plan fails if the new organization does not exist, because the replacement would delete the project before the create fails. A member is replaced the same way, which removes the user from the old organization first. The plan does not check that the create can succeed.
+- A member is managed only in an organization that the provider can confirm. A key of its own organization needs `organization:read`, so that the provider can name the organization and record it. A key without that scope fails the create and the import before any change, and the error names the scope. An instance-admin key that sets `organization` needs no such scope.
 - If an organization is renamed outside Terraform, projects follow it and refresh updates their `organization`. Set `organization` to the new name in the configuration. A provider that still names the old name fails, and the error gives the new name.
 - To rename an organization that Terraform manages and that a project or a provider alias uses, apply the rename alone first with `terraform apply -target=logfire_organization.team_a`. Then apply the rest. The projects and the resources of the alias follow the organization without a replacement.
 - If an organization is deleted outside Terraform, refresh removes its resources from state, including the resources of a provider alias, and destroy succeeds. A provider alias that takes its `organization` from `logfire_organization` then fails `terraform plan -refresh-only` with `Unknown Logfire organization`, because that mode does not plan the organization again. Run a normal plan or destroy instead.

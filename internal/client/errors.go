@@ -72,6 +72,22 @@ func IsExchangeRefusalError(err error) bool {
 	return false
 }
 
+// apiErrorStatusDetail returns the status and the "detail" text of an API error. A body
+// without a text detail, such as a validation error list, is returned whole.
+func apiErrorStatusDetail(err error) (status int, detail string, ok bool) {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		return 0, "", false
+	}
+	var body struct {
+		Detail string `json:"detail"`
+	}
+	if json.Unmarshal([]byte(apiErr.Message), &body) == nil && body.Detail != "" {
+		return apiErr.StatusCode, body.Detail, true
+	}
+	return apiErr.StatusCode, apiErr.Message, true
+}
+
 // IsConflictError reports whether the error represents an HTTP 409.
 func IsConflictError(err error) bool {
 	var apiErr *APIError

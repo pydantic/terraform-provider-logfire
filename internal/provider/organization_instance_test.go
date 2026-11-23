@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
 )
 
 const projectsCollection = "/api/v1/projects/"
@@ -38,9 +40,12 @@ type projectOrganizationAPI struct {
 	projects       map[string]map[string]map[string]any
 	writeTokens    map[string]map[string]map[string]any
 	spendingLimits map[string]map[string]any
-	nextID         int
-	creates        int
-	deletes        int
+	// members are the members of each organization, keyed by organization ID.
+	members      map[string][]logclient.OrganizationMember
+	memberWrites []string
+	nextID       int
+	creates      int
+	deletes      int
 	// forbidden counts requests for a project that lives in another organization.
 	forbidden int
 	// rawKeyOnlyInstanceAdmin makes the raw key hold only instance:admin, as a
@@ -49,6 +54,8 @@ type projectOrganizationAPI struct {
 	// cannotReadOrganization holds the bearers that lack organization:read, so
 	// they cannot say which organization they belong to.
 	cannotReadOrganization map[string]bool
+	// organizationReadStatus makes every request for the organization of a credential fail with that status.
+	organizationReadStatus int
 	// exchangeFailure is the body of a 400 answer from the token endpoint.
 	exchangeFailure string
 	// organizationListStatus makes the organization list answer with that status.
@@ -70,6 +77,7 @@ func newProjectOrganizationAPI(t *testing.T) (*httptest.Server, *projectOrganiza
 		projects:       map[string]map[string]map[string]any{},
 		writeTokens:    map[string]map[string]map[string]any{},
 		spendingLimits: map[string]map[string]any{},
+		members:        seededMembers(),
 	}
 	server := httptest.NewServer(api)
 	api.baseURL = server.URL
@@ -145,6 +153,8 @@ func (api *projectOrganizationAPI) ServeHTTP(w http.ResponseWriter, r *http.Requ
 		organizationID = api.organizations["admin"]
 	case authorization == "Bearer team-a-key":
 		organizationID = "org-team-a"
+	case authorization == "Bearer team-b-key":
+		organizationID = "org-team-b"
 	case strings.HasPrefix(authorization, "Bearer org-token-"):
 		organizationID = strings.TrimPrefix(authorization, "Bearer org-token-")
 	}
@@ -163,11 +173,17 @@ func (api *projectOrganizationAPI) ServeHTTP(w http.ResponseWriter, r *http.Requ
 	switch {
 	case isOrganizationRead:
 		api.organizationReads++
+		if api.organizationReadStatus != 0 {
+			api.fail(w, api.organizationReadStatus, `{"detail":"organization unavailable"}`)
+			return
+		}
 		if api.cannotReadOrganization[authorization] {
 			api.fail(w, http.StatusForbidden, `{"detail":"This token is missing the required scope: organization:read."}`)
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"id": organizationID, "organization_name": api.organizationName(organizationID)})
+	case strings.HasPrefix(r.URL.Path, "/api/v1/members/"):
+		api.serveMembers(w, r, organizationID)
 	case r.URL.Path == "/api/v1/gateway/spending-limits/":
 		api.serveSpendingLimits(w, r, organizationID)
 	case strings.Contains(r.URL.Path, "/write-tokens/"):
