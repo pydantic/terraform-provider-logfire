@@ -41,8 +41,10 @@ with one exception. When a sign-in or a SCIM update removes the user from a list
 organization, it also removes all of the user's project memberships in that organization, including
 projects that `project_roles` does not list.
 
-Before Logfire v2026-11-11.02, a SCIM update that removes a user from one group can also
-remove access that another of the user's groups still grants. The next sign-in restores it.
+Before Logfire v2026-11-11.02, SCIM updates differ in two ways. Removing a user from one
+group can also remove access that another of the user's groups still grants, until the
+next sign-in restores it. Removing a user from a listed organization leaves the user's
+project memberships in that organization.
 
 ## Role names are not validated
 
