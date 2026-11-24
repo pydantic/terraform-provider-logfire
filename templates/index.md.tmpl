@@ -57,6 +57,7 @@ Self-hosted Logfire instances expose APIs as they are released, so a feature the
 | `logfire_gateway_provider` with the `azure` vendor | v2026-10-19.01 | - |
 | `logfire_gateway_provider` with the `google-vertex` vendor | v2026-10-29.02 | - |
 | `logfire_gateway_endpoint` | v2026-10-29.02 | - |
+| `logfire_group_mappings` | v2026-07-22.02 | logfire-0.13.36 or newer |
 
 The instance version appears in the Logfire UI and in the `Logfire-Version` response header on releases that report a release tag; builds that report only an image identity are treated as unknown. Charts from logfire-0.13.45 report the release tag the chart was built from.
 
@@ -82,6 +83,7 @@ Each resource states the scopes its calls need. The summary below is the single 
 | `logfire_gateway_project_spending_limits` | `organization:read_gateway` / `organization:write_gateway` (`organization:read` / `organization:write` are also accepted) | A key that can reach the project |
 | `logfire_organization` | `organization:admin` | A key created in the admin-panel organization (self-hosted only) |
 | Any resource, when the provider sets `organization`. `logfire_project` also, when it sets `organization`. | `instance:admin` | A key created in the admin-panel organization (self-hosted only). The exchanged token holds a fixed scope set, listed under "Managing several organizations on a self-hosted instance". The `organization` of a project reaches that project only. |
+| `logfire_group_mappings` | `instance:admin` (`organization:admin` is equivalent) | A key created in the admin-panel organization (self-hosted only) |
 
 Two rules decide what a credential can do:
 

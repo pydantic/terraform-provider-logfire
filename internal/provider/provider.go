@@ -358,6 +358,7 @@ func (p *LogfireProvider) Resources(ctx context.Context) []func() resource.Resou
 		NewGatewayProjectSpendingLimitsResource,
 		NewGatewayProviderResource,
 		NewGatewaySpendingLimitsResource,
+		NewGroupMappingsResource,
 		NewOrganizationResource,
 		NewProjectResource,
 		NewReadTokenResource,
