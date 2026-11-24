@@ -193,16 +193,16 @@ func TestIsMaskedPagerdutyRoutingKey(t *testing.T) {
 	}
 }
 
-func TestReconcileChannelConfigMaskedSecrets(t *testing.T) {
+func TestChannelReadKeepsConfiguredSecretsLogfireMasks(t *testing.T) {
 	t.Parallel()
 
 	t.Run("preserves planned webhook url when backend returns masked value", func(t *testing.T) {
 		t.Parallel()
 
-		remote := &ChannelConfigModel{
-			Type:   types.StringValue("webhook"),
-			Format: types.StringValue("auto"),
-			URL:    types.StringValue("https://example.com/**********"),
+		remote := &logclient.WebhookConfig{
+			ChannelConfigBase: logclient.ChannelConfigBase{Type: "webhook"},
+			Format:            stringPtr("auto"),
+			URL:               stringPtr("https://example.com/**********"),
 		}
 		fallback := &ChannelConfigModel{
 			Type:   types.StringValue("webhook"),
@@ -210,7 +210,7 @@ func TestReconcileChannelConfigMaskedSecrets(t *testing.T) {
 			URL:    types.StringValue("https://example.com/webhook/updated"),
 		}
 
-		got := reconcileChannelConfigMaskedSecrets(remote, fallback)
+		got := roundTripChannelConfig(t, remote, fallback)
 		if got.URL.ValueString() != fallback.URL.ValueString() {
 			t.Fatalf("webhook url = %q, want %q", got.URL.ValueString(), fallback.URL.ValueString())
 		}
@@ -219,10 +219,10 @@ func TestReconcileChannelConfigMaskedSecrets(t *testing.T) {
 	t.Run("keeps unmasked webhook url from backend", func(t *testing.T) {
 		t.Parallel()
 
-		remote := &ChannelConfigModel{
-			Type:   types.StringValue("webhook"),
-			Format: types.StringValue("auto"),
-			URL:    types.StringValue("https://example.com/webhook/new"),
+		remote := &logclient.WebhookConfig{
+			ChannelConfigBase: logclient.ChannelConfigBase{Type: "webhook"},
+			Format:            stringPtr("auto"),
+			URL:               stringPtr("https://example.com/webhook/new"),
 		}
 		fallback := &ChannelConfigModel{
 			Type:   types.StringValue("webhook"),
@@ -230,25 +230,25 @@ func TestReconcileChannelConfigMaskedSecrets(t *testing.T) {
 			URL:    types.StringValue("https://example.com/webhook/old"),
 		}
 
-		got := reconcileChannelConfigMaskedSecrets(remote, fallback)
-		if got.URL.ValueString() != remote.URL.ValueString() {
-			t.Fatalf("webhook url = %q, want %q", got.URL.ValueString(), remote.URL.ValueString())
+		got := roundTripChannelConfig(t, remote, fallback)
+		if got.URL.ValueString() != *remote.URL {
+			t.Fatalf("webhook url = %q, want %q", got.URL.ValueString(), *remote.URL)
 		}
 	})
 
 	t.Run("preserves planned opsgenie key when backend returns masked value", func(t *testing.T) {
 		t.Parallel()
 
-		remote := &ChannelConfigModel{
-			Type:    types.StringValue("opsgenie"),
-			AuthKey: types.StringValue("**********2345"),
+		remote := &logclient.OpsgenieConfig{
+			ChannelConfigBase: logclient.ChannelConfigBase{Type: "opsgenie"},
+			AuthKey:           stringPtr("**********2345"),
 		}
 		fallback := &ChannelConfigModel{
 			Type:    types.StringValue("opsgenie"),
 			AuthKey: types.StringValue("GenieKey secret-key-12345"),
 		}
 
-		got := reconcileChannelConfigMaskedSecrets(remote, fallback)
+		got := roundTripChannelConfig(t, remote, fallback)
 		if got.AuthKey.ValueString() != fallback.AuthKey.ValueString() {
 			t.Fatalf("opsgenie key = %q, want %q", got.AuthKey.ValueString(), fallback.AuthKey.ValueString())
 		}
@@ -257,10 +257,10 @@ func TestReconcileChannelConfigMaskedSecrets(t *testing.T) {
 	t.Run("preserves planned pagerduty routing key and remote region", func(t *testing.T) {
 		t.Parallel()
 
-		remote := &ChannelConfigModel{
-			Type:       types.StringValue("pagerduty"),
-			RoutingKey: types.StringValue("**********c2d3"),
-			Region:     types.StringValue("eu"),
+		remote := &logclient.PagerdutyConfig{
+			ChannelConfigBase: logclient.ChannelConfigBase{Type: "pagerduty"},
+			RoutingKey:        stringPtr("**********c2d3"),
+			Region:            stringPtr("eu"),
 		}
 		fallback := &ChannelConfigModel{
 			Type:       types.StringValue("pagerduty"),
@@ -268,12 +268,12 @@ func TestReconcileChannelConfigMaskedSecrets(t *testing.T) {
 			Region:     types.StringValue("us"),
 		}
 
-		got := reconcileChannelConfigMaskedSecrets(remote, fallback)
+		got := roundTripChannelConfig(t, remote, fallback)
 		if got.RoutingKey.ValueString() != fallback.RoutingKey.ValueString() {
 			t.Fatalf("pagerduty routing key = %q, want configured value", got.RoutingKey.ValueString())
 		}
-		if got.Region.ValueString() != remote.Region.ValueString() {
-			t.Fatalf("pagerduty region = %q, want %q", got.Region.ValueString(), remote.Region.ValueString())
+		if got.Region.ValueString() != *remote.Region {
+			t.Fatalf("pagerduty region = %q, want %q", got.Region.ValueString(), *remote.Region)
 		}
 	})
 }
@@ -305,7 +305,7 @@ func TestPagerdutyChannelConfigMapping(t *testing.T) {
 		t.Fatalf("region = %v, want eu", pagerduty.Region)
 	}
 
-	roundTrip := roundTripChannelConfig(t, pagerduty)
+	roundTrip := roundTripChannelConfig(t, pagerduty, nil)
 	if roundTrip.RoutingKey.ValueString() != model.RoutingKey.ValueString() {
 		t.Fatalf("round-trip routing key = %q, want configured value", roundTrip.RoutingKey.ValueString())
 	}
@@ -341,7 +341,7 @@ func TestPagerdutyIntegrationChannelConfigMapping(t *testing.T) {
 		t.Fatalf("service id = %v, want configured value", pagerduty.ServiceID)
 	}
 
-	roundTrip := roundTripChannelConfig(t, pagerduty)
+	roundTrip := roundTripChannelConfig(t, pagerduty, nil)
 	if roundTrip.InstallID.ValueString() != model.InstallID.ValueString() {
 		t.Fatalf("round-trip install id = %q, want configured value", roundTrip.InstallID.ValueString())
 	}
@@ -456,7 +456,7 @@ func TestSlackIntegrationChannelConfigMapping(t *testing.T) {
 		t.Fatalf("include agent prompt = %v, want false", slack.IncludeAgentPrompt)
 	}
 
-	roundTrip := roundTripChannelConfig(t, slack)
+	roundTrip := roundTripChannelConfig(t, slack, nil)
 	if roundTrip.InstallID.ValueString() != model.InstallID.ValueString() {
 		t.Fatalf("round-trip install id = %q, want configured value", roundTrip.InstallID.ValueString())
 	}
@@ -495,7 +495,7 @@ func TestSlackIntegrationChannelConfigOmittedAgentPrompt(t *testing.T) {
 		t.Fatalf("include agent prompt = %v, want omitted (nil)", slack.IncludeAgentPrompt)
 	}
 
-	roundTrip := roundTripChannelConfig(t, slack)
+	roundTrip := roundTripChannelConfig(t, slack, nil)
 	if !roundTrip.IncludeAgentPrompt.IsNull() {
 		t.Fatalf("round-trip include agent prompt = %v, want null", roundTrip.IncludeAgentPrompt)
 	}
@@ -594,8 +594,9 @@ func TestSameEmail(t *testing.T) {
 	}
 }
 
-// roundTripChannelConfig reads a config the way Logfire returns it, as JSON.
-func roundTripChannelConfig(t *testing.T, cfg any) *ChannelConfigModel {
+// roundTripChannelConfig reads a config the way Logfire returns it, as JSON, with prior as the
+// config already in state.
+func roundTripChannelConfig(t *testing.T, cfg any, prior *ChannelConfigModel) *ChannelConfigModel {
 	t.Helper()
 
 	body, err := json.Marshal(cfg)
@@ -606,8 +607,8 @@ func roundTripChannelConfig(t *testing.T, cfg any) *ChannelConfigModel {
 	if err := json.Unmarshal(body, &read.Config); err != nil {
 		t.Fatal(err)
 	}
-	var channel ChannelModel
-	if diags := channelReadToModel(&read, &channel); diags.HasError() {
+	channel, diags := channelReadToModel(&read, prior)
+	if diags.HasError() {
 		t.Fatalf("mapping API to model returned diagnostics: %v", diags)
 	}
 	return channel.Config

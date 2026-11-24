@@ -36,8 +36,6 @@ type ChannelResource struct{ configured }
 const maskedChannelSecretPlaceholder = "**********"
 
 type ChannelConfigModel struct {
-	// Type is webhook, email, opsgenie, pagerduty, pagerduty-integration, or
-	// slack-integration.
 	Type               types.String   `tfsdk:"type"`
 	Format             types.String   `tfsdk:"format"`
 	URL                types.String   `tfsdk:"url"`
@@ -59,13 +57,15 @@ type ChannelModel struct {
 	Config *ChannelConfigModel `tfsdk:"config"`
 }
 
-var channelConfigModelToAPIMappers = map[string]func(*ChannelConfigModel) (any, diag.Diagnostics){
-	"webhook":               webhookConfigModelToAPI,
-	"email":                 emailConfigModelToAPI,
-	"opsgenie":              opsgenieConfigModelToAPI,
-	"pagerduty":             pagerdutyConfigModelToAPI,
-	"pagerduty-integration": pagerdutyIntegrationConfigModelToAPI,
-	"slack-integration":     slackIntegrationConfigModelToAPI,
+// channelConfigFields lists the string config fields each channel type accepts. A true value
+// marks a required field.
+var channelConfigFields = map[string]map[string]bool{
+	"webhook":               {"format": true, "url": true},
+	"email":                 {},
+	"opsgenie":              {"auth_key": true},
+	"pagerduty":             {"routing_key": true, "region": false},
+	"pagerduty-integration": {"install_id": true, "service_id": true},
+	"slack-integration":     {"install_id": true, "channel_id": true},
 }
 
 func (r *ChannelResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -206,158 +206,24 @@ func (r *ChannelResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 func channelConfigModelToAPI(m *ChannelConfigModel) (any, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	cfgType := m.Type.ValueString()
-	if cfgType != "opsgenie" {
-		diags.Append(disallowConfigString(m.BaseURL, "config.base_url", cfgType)...)
+	invalid := func(field, problem string) {
+		diags.AddError(
+			"Invalid channel config",
+			fmt.Sprintf("config.%s %s for %s channels.", field, problem, cfgType),
+		)
+	}
+
+	if cfgType != "opsgenie" && strings.TrimSpace(m.BaseURL.ValueString()) != "" {
+		invalid("base_url", "cannot be set")
 	}
 	if cfgType != "email" && len(m.Recipients) > 0 {
-		diags.AddError(
-			"Invalid channel config",
-			fmt.Sprintf("config.recipients cannot be set for %s channels.", cfgType),
-		)
+		invalid("recipients", "cannot be set")
 	}
 	if diags.HasError() {
 		return nil, diags
 	}
-	return channelConfigModelToAPIMappers[cfgType](m)
-}
 
-func webhookConfigModelToAPI(m *ChannelConfigModel) (any, diag.Diagnostics) {
-	var diags diag.Diagnostics
-	format := requiredConfigString(&diags, m.Format, "config.format", "webhook")
-	webhookURL := requiredConfigString(&diags, m.URL, "config.url", "webhook")
-	diags.Append(disallowConfigFields(m, "webhook", "format", "url")...)
-	if diags.HasError() {
-		return nil, diags
-	}
-	return &logclient.WebhookConfig{
-		ChannelConfigBase: logclient.ChannelConfigBase{Type: "webhook"},
-		Format:            &format,
-		URL:               &webhookURL,
-	}, nil
-}
-
-func emailConfigModelToAPI(m *ChannelConfigModel) (any, diag.Diagnostics) {
-	var diags diag.Diagnostics
-	if len(m.Recipients) == 0 {
-		diags.AddError(
-			"Invalid channel config", "config.recipients must be set for email channels.",
-		)
-	}
-	diags.Append(disallowConfigFields(m, "email")...)
-	if diags.HasError() {
-		return nil, diags
-	}
-	recipients := make([]string, len(m.Recipients))
-	for i, r := range m.Recipients {
-		recipients[i] = r.ValueString()
-	}
-	// Sorted so that Update can compare two configs.
-	slices.Sort(recipients)
-	return &logclient.EmailConfig{
-		ChannelConfigBase: logclient.ChannelConfigBase{Type: "email"},
-		Recipients:        recipients,
-	}, nil
-}
-
-func opsgenieConfigModelToAPI(m *ChannelConfigModel) (any, diag.Diagnostics) {
-	var diags diag.Diagnostics
-	key := requiredConfigString(&diags, m.AuthKey, "config.auth_key", "opsgenie")
-	diags.Append(disallowConfigFields(m, "opsgenie", "auth_key")...)
-	if diags.HasError() {
-		return nil, diags
-	}
-	return &logclient.OpsgenieConfig{
-		ChannelConfigBase: logclient.ChannelConfigBase{Type: "opsgenie"},
-		AuthKey:           &key,
-		BaseURL:           terraformStringPointer(m.BaseURL),
-	}, nil
-}
-
-func pagerdutyConfigModelToAPI(m *ChannelConfigModel) (any, diag.Diagnostics) {
-	var diags diag.Diagnostics
-	routingKey := requiredConfigString(&diags, m.RoutingKey, "config.routing_key", "pagerduty")
-	diags.Append(disallowConfigFields(m, "pagerduty", "routing_key", "region")...)
-	if diags.HasError() {
-		return nil, diags
-	}
-	return &logclient.PagerdutyConfig{
-		ChannelConfigBase: logclient.ChannelConfigBase{Type: "pagerduty"},
-		RoutingKey:        &routingKey,
-		Region:            terraformStringPointer(m.Region),
-	}, nil
-}
-
-func pagerdutyIntegrationConfigModelToAPI(m *ChannelConfigModel) (any, diag.Diagnostics) {
-	var diags diag.Diagnostics
-	const channelType = "pagerduty-integration"
-	installID := requiredConfigString(&diags, m.InstallID, "config.install_id", channelType)
-	serviceID := requiredConfigString(&diags, m.ServiceID, "config.service_id", channelType)
-	diags.Append(disallowConfigFields(m, channelType, "install_id", "service_id")...)
-	if diags.HasError() {
-		return nil, diags
-	}
-	return &logclient.PagerdutyIntegrationConfig{
-		ChannelConfigBase: logclient.ChannelConfigBase{Type: channelType},
-		InstallID:         &installID,
-		ServiceID:         &serviceID,
-	}, nil
-}
-
-func slackIntegrationConfigModelToAPI(m *ChannelConfigModel) (any, diag.Diagnostics) {
-	var diags diag.Diagnostics
-	const channelType = "slack-integration"
-	installID := requiredConfigString(&diags, m.InstallID, "config.install_id", channelType)
-	channelID := requiredConfigString(&diags, m.ChannelID, "config.channel_id", channelType)
-	diags.Append(disallowConfigFields(
-		m, channelType, "install_id", "channel_id", "include_agent_prompt",
-	)...)
-	if diags.HasError() {
-		return nil, diags
-	}
-	cfg := &logclient.SlackIntegrationConfig{
-		ChannelConfigBase: logclient.ChannelConfigBase{Type: channelType},
-		InstallID:         &installID,
-		ChannelID:         &channelID,
-	}
-	if !m.IncludeAgentPrompt.IsUnknown() {
-		cfg.IncludeAgentPrompt = m.IncludeAgentPrompt.ValueBoolPointer()
-	}
-	return cfg, nil
-}
-
-func requiredConfigString(diags *diag.Diagnostics, val types.String, fieldName, channelType string) string {
-	if val.IsNull() {
-		diags.AddError(
-			"Invalid channel config",
-			fmt.Sprintf("%s must be set for %s channels.", fieldName, channelType),
-		)
-		return ""
-	}
-	v := strings.TrimSpace(val.ValueString())
-	if v == "" {
-		diags.AddError(
-			"Invalid channel config",
-			fmt.Sprintf("%s cannot be empty for %s channels.", fieldName, channelType),
-		)
-	}
-	return v
-}
-
-func disallowConfigString(val types.String, fieldName, channelType string) diag.Diagnostics {
-	if strings.TrimSpace(val.ValueString()) == "" {
-		return nil
-	}
-	return diag.Diagnostics{diag.NewErrorDiagnostic(
-		"Invalid channel config",
-		fmt.Sprintf("%s cannot be set for %s channels.", fieldName, channelType),
-	)}
-}
-
-// disallowConfigFields rejects every config field of the channel type except
-// the allowed ones, named without the "config." prefix.
-func disallowConfigFields(m *ChannelConfigModel, channelType string, allowed ...string) diag.Diagnostics {
-	var diags diag.Diagnostics
-	for _, field := range []struct {
+	fields := []struct {
 		name  string
 		value types.String
 	}{
@@ -369,33 +235,92 @@ func disallowConfigFields(m *ChannelConfigModel, channelType string, allowed ...
 		{"install_id", m.InstallID},
 		{"channel_id", m.ChannelID},
 		{"service_id", m.ServiceID},
-	} {
-		if !slices.Contains(allowed, field.name) {
-			diags.Append(disallowConfigString(field.value, "config."+field.name, channelType)...)
+	}
+	rules := channelConfigFields[cfgType]
+	for _, f := range fields {
+		if !rules[f.name] {
+			continue
+		}
+		if f.value.IsNull() {
+			invalid(f.name, "must be set")
+		} else if strings.TrimSpace(f.value.ValueString()) == "" {
+			invalid(f.name, "cannot be empty")
 		}
 	}
-	if !m.IncludeAgentPrompt.IsNull() && !m.IncludeAgentPrompt.IsUnknown() &&
-		!slices.Contains(allowed, "include_agent_prompt") {
-		diags.AddError(
-			"Invalid channel config",
-			fmt.Sprintf("config.include_agent_prompt cannot be set for %s channels.", channelType),
-		)
+	if cfgType == "email" && len(m.Recipients) == 0 {
+		invalid("recipients", "must be set")
 	}
-	return diags
+	for _, f := range fields {
+		if _, ok := rules[f.name]; !ok && strings.TrimSpace(f.value.ValueString()) != "" {
+			invalid(f.name, "cannot be set")
+		}
+	}
+	if cfgType != "slack-integration" && !m.IncludeAgentPrompt.IsNull() && !m.IncludeAgentPrompt.IsUnknown() {
+		invalid("include_agent_prompt", "cannot be set")
+	}
+	if diags.HasError() {
+		return nil, diags
+	}
+
+	base := logclient.ChannelConfigBase{Type: cfgType}
+	switch cfgType {
+	case "webhook":
+		return &logclient.WebhookConfig{
+			ChannelConfigBase: base,
+			Format:            terraformStringPointer(m.Format),
+			URL:               terraformStringPointer(m.URL),
+		}, nil
+	case "email":
+		recipients := make([]string, len(m.Recipients))
+		for i, r := range m.Recipients {
+			recipients[i] = r.ValueString()
+		}
+		// Sorted so that Update can compare two configs.
+		slices.Sort(recipients)
+		return &logclient.EmailConfig{ChannelConfigBase: base, Recipients: recipients}, nil
+	case "opsgenie":
+		return &logclient.OpsgenieConfig{
+			ChannelConfigBase: base,
+			AuthKey:           terraformStringPointer(m.AuthKey),
+			BaseURL:           terraformStringPointer(m.BaseURL),
+		}, nil
+	case "pagerduty":
+		return &logclient.PagerdutyConfig{
+			ChannelConfigBase: base,
+			RoutingKey:        terraformStringPointer(m.RoutingKey),
+			Region:            terraformStringPointer(m.Region),
+		}, nil
+	case "pagerduty-integration":
+		return &logclient.PagerdutyIntegrationConfig{
+			ChannelConfigBase: base,
+			InstallID:         terraformStringPointer(m.InstallID),
+			ServiceID:         terraformStringPointer(m.ServiceID),
+		}, nil
+	case "slack-integration":
+		cfg := &logclient.SlackIntegrationConfig{
+			ChannelConfigBase: base,
+			InstallID:         terraformStringPointer(m.InstallID),
+			ChannelID:         terraformStringPointer(m.ChannelID),
+		}
+		if !m.IncludeAgentPrompt.IsUnknown() {
+			cfg.IncludeAgentPrompt = m.IncludeAgentPrompt.ValueBoolPointer()
+		}
+		return cfg, nil
+	}
+	panic("unsupported channel type " + cfgType)
 }
 
-func channelReadToModel(c *logclient.ChannelRead, m *ChannelModel) diag.Diagnostics {
+// channelReadToModel maps a channel returned by Logfire to its model. Logfire masks secrets, so
+// where the prior config holds the same secret unmasked, the prior value is kept.
+func channelReadToModel(c *logclient.ChannelRead, prior *ChannelConfigModel) (ChannelModel, diag.Diagnostics) {
 	cfg := c.Config
-	if _, ok := channelConfigModelToAPIMappers[cfg.Type]; !ok {
-		return diag.Diagnostics{diag.NewErrorDiagnostic(
+	if _, ok := channelConfigFields[cfg.Type]; !ok {
+		return ChannelModel{}, diag.Diagnostics{diag.NewErrorDiagnostic(
 			"Invalid channel config", fmt.Sprintf("unsupported config type %q", cfg.Type),
 		)}
 	}
 
-	m.ID = types.StringValue(c.ID)
-	m.Name = types.StringValue(c.Label)
-	m.Active = types.BoolValue(c.Active)
-	m.Config = &ChannelConfigModel{
+	config := &ChannelConfigModel{
 		Type:               types.StringValue(cfg.Type),
 		Format:             types.StringPointerValue(cfg.Format),
 		URL:                types.StringPointerValue(cfg.URL),
@@ -409,50 +334,50 @@ func channelReadToModel(c *logclient.ChannelRead, m *ChannelModel) diag.Diagnost
 		IncludeAgentPrompt: types.BoolPointerValue(cfg.IncludeAgentPrompt),
 	}
 	for _, r := range cfg.Recipients {
-		m.Config.Recipients = append(m.Config.Recipients, types.StringValue(r))
-	}
-	return nil
-}
-
-func reconcileChannelConfigMaskedSecrets(remote, fallback *ChannelConfigModel) *ChannelConfigModel {
-	if remote == nil || fallback == nil || !remote.Type.Equal(fallback.Type) {
-		return remote
+		config.Recipients = append(config.Recipients, types.StringValue(r))
 	}
 
-	switch remote.Type.ValueString() {
-	case "webhook":
-		remote.URL = preserveMaskedConfigValue(remote.URL, fallback.URL, isMaskedWebhookURL)
-	case "opsgenie":
-		remote.AuthKey = preserveMaskedConfigValue(remote.AuthKey, fallback.AuthKey, isMaskedSecret)
-	case "pagerduty":
-		remote.RoutingKey = preserveMaskedConfigValue(
-			remote.RoutingKey, fallback.RoutingKey, isMaskedSecret,
-		)
-	case "email":
-		// Swap each stored address for the configured spelling Logfire stored it from.
-		// Exact matches go first, and each configured address replaces one stored address
-		// at most, so two configured spellings that differ only in case stay distinct.
-		stored, configured := remote.Recipients, fallback.Recipients
-		used := make([]bool, len(configured))
-		matched := make([]bool, len(stored))
-		for i, s := range stored {
-			j := slices.IndexFunc(configured, func(c types.String) bool { return c.Equal(s) })
-			if j >= 0 && !used[j] {
-				used[j], matched[i] = true, true
+	if prior != nil && prior.Type.Equal(config.Type) {
+		switch cfg.Type {
+		case "webhook":
+			config.URL = preserveMaskedConfigValue(config.URL, prior.URL, isMaskedWebhookURL)
+		case "opsgenie":
+			config.AuthKey = preserveMaskedConfigValue(config.AuthKey, prior.AuthKey, isMaskedSecret)
+		case "pagerduty":
+			config.RoutingKey = preserveMaskedConfigValue(
+				config.RoutingKey, prior.RoutingKey, isMaskedSecret,
+			)
+		case "email":
+			// Swap each stored address for the configured spelling Logfire stored it from.
+			// Exact matches go first, and each configured address replaces one stored address
+			// at most, so two configured spellings that differ only in case stay distinct.
+			stored, configured := config.Recipients, prior.Recipients
+			used := make([]bool, len(configured))
+			matched := make([]bool, len(stored))
+			for i, s := range stored {
+				j := slices.IndexFunc(configured, func(c types.String) bool { return c.Equal(s) })
+				if j >= 0 && !used[j] {
+					used[j], matched[i] = true, true
+				}
 			}
-		}
-		for i, s := range stored {
-			for j, c := range configured {
-				// Logfire returns addresses already normalized, so any other difference,
-				// such as the case of a mailbox name, is a different recipient.
-				if !matched[i] && !used[j] && canonicalEmail(c.ValueString()) == s.ValueString() {
-					stored[i], used[j], matched[i] = c, true, true
+			for i, s := range stored {
+				for j, c := range configured {
+					// Logfire returns addresses already normalized, so any other difference,
+					// such as the case of a mailbox name, is a different recipient.
+					if !matched[i] && !used[j] && canonicalEmail(c.ValueString()) == s.ValueString() {
+						stored[i], used[j], matched[i] = c, true, true
+					}
 				}
 			}
 		}
 	}
 
-	return remote
+	return ChannelModel{
+		ID:     types.StringValue(c.ID),
+		Name:   types.StringValue(c.Label),
+		Active: types.BoolValue(c.Active),
+		Config: config,
+	}, nil
 }
 
 // caseInsensitiveMailboxes are the RFC 2142 mailbox names that Logfire lowercases.
@@ -492,9 +417,6 @@ func preserveMaskedConfigValue(remote, fallback types.String, isMasked func(stri
 	if fallback.IsNull() {
 		return remote
 	}
-	if remote.IsNull() {
-		return fallback
-	}
 	if v := strings.TrimSpace(remote.ValueString()); v == "" || isMasked(v) {
 		return fallback
 	}
@@ -503,11 +425,8 @@ func preserveMaskedConfigValue(remote, fallback types.String, isMasked func(stri
 
 func isMaskedWebhookURL(v string) bool {
 	parsed, err := url.Parse(strings.TrimSpace(v))
-	if err != nil {
-		return false
-	}
-
-	return parsed.Scheme != "" &&
+	return err == nil &&
+		parsed.Scheme != "" &&
 		parsed.Host != "" &&
 		parsed.Path == "/"+maskedChannelSecretPlaceholder &&
 		parsed.RawQuery == "" &&
@@ -516,9 +435,8 @@ func isMaskedWebhookURL(v string) bool {
 
 func isMaskedSecret(v string) bool {
 	v = strings.TrimSpace(v)
-	return v == maskedChannelSecretPlaceholder ||
-		(strings.HasPrefix(v, maskedChannelSecretPlaceholder) &&
-			len(v) == len(maskedChannelSecretPlaceholder)+4)
+	return strings.HasPrefix(v, maskedChannelSecretPlaceholder) &&
+		(len(v) == len(maskedChannelSecretPlaceholder) || len(v) == len(maskedChannelSecretPlaceholder)+4)
 }
 
 func (r *ChannelResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -543,16 +461,12 @@ func (r *ChannelResource) Create(ctx context.Context, req resource.CreateRequest
 		return
 	}
 
-	var state ChannelModel
-	if diags := channelReadToModel(out, &state); diags.HasError() {
-		resp.Diagnostics.Append(diags...)
+	state, diags := channelReadToModel(out, plan.Config)
+	resp.Diagnostics.Append(diags...)
+	if diags.HasError() {
 		return
 	}
-	state.Config = reconcileChannelConfigMaskedSecrets(state.Config, plan.Config)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
 
 	if desired := plan.Active.ValueBool(); desired != out.Active {
 		payload := logclient.ChannelUpdate{Active: logclient.NullableFieldValue(desired)}
@@ -566,11 +480,11 @@ func (r *ChannelResource) Create(ctx context.Context, req resource.CreateRequest
 			))
 			return
 		}
-		if diags := channelReadToModel(updated, &state); diags.HasError() {
-			resp.Diagnostics.Append(diags...)
+		state, diags = channelReadToModel(updated, plan.Config)
+		resp.Diagnostics.Append(diags...)
+		if diags.HasError() {
 			return
 		}
-		state.Config = reconcileChannelConfigMaskedSecrets(state.Config, plan.Config)
 		resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 	}
 
@@ -583,7 +497,6 @@ func (r *ChannelResource) Read(ctx context.Context, req resource.ReadRequest, re
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	priorConfig := state.Config
 
 	out, status, err := r.client.GetChannel(ctx, state.ID.ValueString())
 	if err != nil {
@@ -595,12 +508,11 @@ func (r *ChannelResource) Read(ctx context.Context, req resource.ReadRequest, re
 		return
 	}
 
-	if diags := channelReadToModel(out, &state); diags.HasError() {
-		resp.Diagnostics.Append(diags...)
+	state, diags := channelReadToModel(out, state.Config)
+	resp.Diagnostics.Append(diags...)
+	if diags.HasError() {
 		return
 	}
-	state.Config = reconcileChannelConfigMaskedSecrets(state.Config, priorConfig)
-
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -646,12 +558,11 @@ func (r *ChannelResource) Update(ctx context.Context, req resource.UpdateRequest
 		return
 	}
 
-	var newState ChannelModel
-	if diags := channelReadToModel(out, &newState); diags.HasError() {
-		resp.Diagnostics.Append(diags...)
+	newState, diags := channelReadToModel(out, plan.Config)
+	resp.Diagnostics.Append(diags...)
+	if diags.HasError() {
 		return
 	}
-	newState.Config = reconcileChannelConfigMaskedSecrets(newState.Config, plan.Config)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &newState)...)
 }
 
@@ -662,8 +573,7 @@ func (r *ChannelResource) Delete(ctx context.Context, req resource.DeleteRequest
 		return
 	}
 
-	err := r.client.DeleteChannel(ctx, state.ID.ValueString())
-	if err != nil && !logclient.IsNotFoundError(err) {
+	if err := r.client.DeleteChannel(ctx, state.ID.ValueString()); err != nil && !logclient.IsNotFoundError(err) {
 		resp.Diagnostics.AddError("Delete channel failed", err.Error())
 	}
 }
@@ -696,15 +606,15 @@ func (r *ChannelResource) ImportState(ctx context.Context, req resource.ImportSt
 			return c.Label == rawID
 		})
 	}
-	if i >= 0 {
-		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), channels[i].ID)...)
+	if i < 0 {
+		resp.Diagnostics.AddError(
+			"Import channel failed",
+			fmt.Sprintf(
+				"Channel %q not found in the credential's organization by ID or name. "+
+					"List channel IDs with the Logfire API (GET /api/v1/channels/).", rawID,
+			),
+		)
 		return
 	}
-	resp.Diagnostics.AddError(
-		"Import channel failed",
-		fmt.Sprintf(
-			"Channel %q not found in the credential's organization by ID or name. "+
-				"List channel IDs with the Logfire API (GET /api/v1/channels/).", rawID,
-		),
-	)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), channels[i].ID)...)
 }
