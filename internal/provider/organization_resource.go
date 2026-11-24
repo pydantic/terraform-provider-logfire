@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"strings"
 
-	stringvalidator "github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	rschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -17,7 +16,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
@@ -77,13 +75,7 @@ func (r *OrganizationResource) Schema(ctx context.Context, req resource.SchemaRe
 			"name": rschema.StringAttribute{
 				Required:            true,
 				MarkdownDescription: "Organization name/slug.",
-				Validators: []validator.String{
-					stringvalidator.LengthAtLeast(2),
-					stringvalidator.RegexMatches(
-						regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`),
-						"must use lowercase letters, numbers, and internal hyphens (no spaces or uppercase characters)",
-					),
-				},
+				Validators:          organizationNameValidators(),
 			},
 			"display_name": rschema.StringAttribute{
 				Optional:            true,

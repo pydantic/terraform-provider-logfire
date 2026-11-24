@@ -3,12 +3,12 @@
 page_title: "logfire_project Resource - logfire"
 subcategory: ""
 description: |-
-  Manages a Logfire project. The credential creates the project in its own organization and must hold organization:create_project.
+  Manages a Logfire project. By default the credential creates the project in its own organization and must hold organization:create_project. On a self-hosted instance, an instance-admin credential creates the project in another organization with the organization argument or the provider organization.
 ---
 
 # logfire_project (Resource)
 
-Manages a Logfire project. The credential creates the project in its own organization and must hold `organization:create_project`.
+Manages a Logfire project. By default the credential creates the project in its own organization and must hold `organization:create_project`. On a self-hosted instance, an instance-admin credential creates the project in another organization with the `organization` argument or the provider `organization`.
 
 ## Example Usage
 
@@ -29,12 +29,13 @@ resource "logfire_project" "example" {
 ### Optional
 
 - `description` (String) Project description.
+- `organization` (String) Organization name. Defaults to the provider `organization`, else the organization of the provider credential. Setting it acts in that organization through the instance-admin token exchange (self-hosted only). Changing it replaces the project, unless the new name belongs to the same organization, which Terraform checks by `organization_id`. After an organization is renamed, a refresh updates this value.
 - `visibility` (String) Project visibility (`public` or `private`).
 
 ### Read-Only
 
 - `id` (String) Opaque backend project ID (not the slug).
-- `organization` (String) Organization name. Computed from the API and cannot be set.
+- `organization_id` (String) ID of the organization that the project is in. Set when the project is in a named organization, through the `organization` argument or the provider `organization`. Null for a project in the organization of the credential.
 
 ## Import
 

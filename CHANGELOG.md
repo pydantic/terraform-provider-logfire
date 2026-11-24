@@ -1,5 +1,12 @@
 ## Unreleased
 
+FEATURES:
+- The provider takes an `organization` argument, with `LOGFIRE_ORGANIZATION` as the fallback. On a self-hosted instance, one instance-admin API key then acts in any organization: the provider exchanges the key for a short-lived token for that organization, as `logfire_organization` already does. Without an organization, nothing changes. Needs Logfire v2026-06-25.01 or newer.
+- `logfire_project` takes an optional `organization` that overrides the provider's, and exposes `organization_id`. Changing `organization` replaces the project unless the new name is the same organization under another name. A replacement into an organization that does not exist fails at plan. After an organization is renamed, a refresh updates the project's `organization`. After it is deleted, a refresh removes the project from state.
+- An organization name must use lowercase letters, numbers, and internal hyphens.
+- Concurrent requests for one organization share one token exchange, so a large apply stays within the token endpoint limit of 20 a minute and 100 an hour per address. The provider asks for a 15-minute token and accepts the shorter maximum lifetime of an instance. A key that is not an instance-admin key gets an error that names the requirement, including for `logfire_organization`. A missing token endpoint is reported as an old instance and no longer reads as a missing resource.
+- Changing the provider `organization` does not move existing resources. Terraform sees them as missing and plans to create them in the newly targeted organization, and a singleton such as `logfire_gateway_spending_limits` applies to that organization. `logfire_api_key` and `logfire_gateway_api_key` do not work through an organization, because the exchanged token has no user.
+
 BUG FIXES:
 - A 2xx answer with an empty body, on a route whose body the provider reads, is now an error. A list route that answered 200 with no body used to read as an empty list, and a refresh then dropped every resource in it.
 - A create that the Logfire public API rate limit refuses is retried after the `Retry-After` delay. The server refuses such a request before it handles it, so the retry cannot create a second resource. Several Terraform runs against one organization share its limit, so this refusal can occur even with the provider's own pacing. Other 429 responses to a create still fail without a retry, as in 0.2.2. Retries stop before the 90-second request timeout.

@@ -13,6 +13,7 @@ sections for API behavior that the local checks cannot settle or when requested.
 | Projects, dashboards, channels, alerts and SLOs | [Managed resources](managed-resources.md) | Local tests, optional real API acceptance |
 | API keys, read/write tokens and telemetry access | [Credentials and telemetry](credentials.md) | Local tests, optional real API and MCP query |
 | Self-hosted organizations | [Organization lifecycle](organizations.md) | Local tests, optional real admin API |
+| Acting in other self-hosted organizations from one instance-admin key | [Organization context](organization-context.md) | Local tests, optional real admin API |
 
 Gateway provider protocol checks and PagerDuty lookup tests do not prove external
 provider connectivity. Frontend application acceptance requires the staging-only
