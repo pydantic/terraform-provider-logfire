@@ -24,7 +24,7 @@ each organization-scoped route in the selected `api.json`.
 
 ```bash
 TF_ACC= TMPDIR="$RUN_DIR/scratch" go test -v -count=1 \
-  -run 'TestOrganizationClient|TestConcurrentRequests|TestRejectedToken|TestCreateWaits|TestExchange|TestLifecycleProject|TestProject(Organization|Plan)' \
+  -run 'TestOrganizationClient|TestConcurrentRequests|TestRejectedToken|TestCreateWaits|TestExchange|TestFreedOrganizationName|TestLifecycleProject|TestProject(Organization|Plan|Import)|TestAPIKey(s|Operations)RefuseAnOrganization' \
   ./internal/client/ ./internal/provider/
 ```
 

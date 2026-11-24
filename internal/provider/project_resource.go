@@ -550,8 +550,16 @@ func (r *ProjectResource) ModifyPlan(ctx context.Context, req resource.ModifyPla
 			"Moving the project to organization %q replaces it, but the provider cannot act in that organization: %v", name, err))
 		return
 	}
-	var projectName types.String
+	var projectID, projectName types.String
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("id"), &projectID)...)
 	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root("name"), &projectName)...)
+	// A project with a null organization_id is in the key's organization, so a
+	// name for that organization, its own or a new one after a rename, is no move.
+	for _, p := range existing {
+		if p.ID == projectID.ValueString() {
+			return
+		}
+	}
 	for _, p := range existing {
 		if knownString(projectName) && p.ProjectName == projectName.ValueString() {
 			resp.Diagnostics.AddError("Cannot move the project", fmt.Sprintf(

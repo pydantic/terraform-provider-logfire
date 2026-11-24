@@ -420,6 +420,45 @@ func TestLifecycleProjectMoveFailsAtPlanOnANameTaken(t *testing.T) {
 	}
 }
 
+// A project with a null organization_id is in the key's organization. After that
+// organization is renamed, a plan without refresh still holds the old name, so the
+// new name looks like a move. The plan finds the project in that organization and
+// updates in place, instead of reporting its own name as taken.
+func TestProjectPlanForTheKeysRenamedOrganizationIsNoMove(t *testing.T) {
+	api := newOrganizationInstance(t)
+	api.projects["project-1"] = &testProject{ID: "project-1", Name: "svc", Visibility: "public", OrganizationID: "org-admin"}
+	api.rename("admin", "admin-2")
+	c, err := logclient.NewAPIClient(api.URL, testAPIKey, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := t.Context()
+	r := &ProjectResource{client: c}
+	var schemaResp resource.SchemaResponse
+	r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
+	sch := schemaResp.Schema
+	model := func(organization string) ProjectModel {
+		return ProjectModel{
+			ID:           types.StringValue("project-1"),
+			Organization: types.StringValue(organization),
+			Name:         types.StringValue("svc"),
+			Visibility:   types.StringValue("public"),
+		}
+	}
+	state := tfsdk.State{Schema: sch, Raw: tftypes.NewValue(sch.Type().TerraformType(ctx), nil)}
+	plan := tfsdk.Plan{Schema: sch, Raw: tftypes.NewValue(sch.Type().TerraformType(ctx), nil)}
+	diags := state.Set(ctx, model("admin"))
+	diags.Append(plan.Set(ctx, model("admin-2"))...)
+	if diags.HasError() {
+		t.Fatal(diags)
+	}
+	resp := &resource.ModifyPlanResponse{Plan: plan}
+	r.ModifyPlan(ctx, resource.ModifyPlanRequest{State: state, Plan: plan}, resp)
+	if resp.Diagnostics.HasError() || len(resp.RequiresReplace) != 0 {
+		t.Errorf("diagnostics = %v, requires replace = %v, want an update in place", resp.Diagnostics, resp.RequiresReplace)
+	}
+}
+
 func TestLifecycleProjectFollowsAnOrganizationRename(t *testing.T) {
 	api := newOrganizationInstance(t, "team-a")
 	const address = "logfire_project.svc"
