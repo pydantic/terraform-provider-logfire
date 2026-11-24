@@ -56,9 +56,7 @@ func (r *OrganizationResource) Schema(_ context.Context, _ resource.SchemaReques
 			"id": rschema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "Organization UUID assigned by the backend.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"name": rschema.StringAttribute{
 				Required:            true,
@@ -69,9 +67,7 @@ func (r *OrganizationResource) Schema(_ context.Context, _ resource.SchemaReques
 				Optional:            true,
 				Computed:            true,
 				MarkdownDescription: "Display name shown in the UI.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"billing_email": rschema.StringAttribute{
 				Optional:            true,
@@ -82,33 +78,25 @@ func (r *OrganizationResource) Schema(_ context.Context, _ resource.SchemaReques
 				Optional:            true,
 				Computed:            true,
 				MarkdownDescription: "Organization GitHub handle.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"location": rschema.StringAttribute{
 				Optional:            true,
 				Computed:            true,
 				MarkdownDescription: "Organization location.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"avatar": rschema.StringAttribute{
 				Optional:            true,
 				Computed:            true,
 				MarkdownDescription: "Avatar URL.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"description": rschema.StringAttribute{
 				Optional:            true,
 				Computed:            true,
 				MarkdownDescription: "Organization description.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"has_admin_panel": rschema.BoolAttribute{
 				Computed:            true,
@@ -125,9 +113,7 @@ func (r *OrganizationResource) Schema(_ context.Context, _ resource.SchemaReques
 			"created_at": rschema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "Timestamp when the organization was created.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"updated_at": rschema.StringAttribute{
 				Computed:            true,
@@ -138,9 +124,7 @@ func (r *OrganizationResource) Schema(_ context.Context, _ resource.SchemaReques
 				Computed:            true,
 				Default:             booldefault.StaticBool(true),
 				MarkdownDescription: "Prevents accidental destroy when true (defaults to true). Set to false and apply before deleting this resource.",
-				PlanModifiers: []planmodifier.Bool{
-					boolplanmodifier.UseStateForUnknown(),
-				},
+				PlanModifiers:       []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
 			},
 		},
 	}
@@ -244,9 +228,7 @@ func (r *OrganizationResource) Update(ctx context.Context, req resource.UpdateRe
 	}
 	if out.ID != state.ID.ValueString() {
 		resp.Diagnostics.AddError("Update organization failed", fmt.Sprintf(
-			"the update applied to organization id %s, but state holds id %s. "+
-				"Refusing to record the change; re-import the intended organization "+
-				"to re-bind state.", out.ID, state.ID.ValueString()))
+			"the update applied to organization id %s, but state holds id %s. Refusing to record the change; re-import the intended organization to re-bind state.", out.ID, state.ID.ValueString()))
 		return
 	}
 
@@ -267,9 +249,7 @@ func (r *OrganizationResource) Delete(ctx context.Context, req resource.DeleteRe
 	if state.DeletionProtection.IsNull() || state.DeletionProtection.ValueBool() {
 		resp.Diagnostics.AddError(
 			"Organization deletion is protected",
-			"This resource has `deletion_protection = true`. Set "+
-				"`deletion_protection = false` and apply once before destroying "+
-				"the organization.",
+			"This resource has `deletion_protection = true`. Set `deletion_protection = false` and apply once before destroying the organization.",
 		)
 		return
 	}
@@ -366,8 +346,7 @@ func (r *OrganizationResource) verifiedOrganization(ctx context.Context, diags *
 	}
 	if current.ID != state.ID.ValueString() {
 		diags.AddError(summary, fmt.Sprintf(
-			"the organization at name %q has id %s, but state holds id %s. "+
-				"The name was reused by a different organization; %s",
+			"the organization at name %q has id %s, but state holds id %s. The name was reused by a different organization; %s",
 			state.Name.ValueString(), current.ID, state.ID.ValueString(), tail))
 		return nil, false
 	}
@@ -394,8 +373,7 @@ func (r *OrganizationResource) appendOrganizationContextError(ctx context.Contex
 	list, listErr := r.client.ListOrganizations(ctx)
 	if listErr != nil {
 		diags.AddError(summary, fmt.Sprintf(
-			"token exchange rejected the organization audience (%v) and the "+
-				"follow-up organization list failed: %v", exchangeCause(err), listErr))
+			"token exchange rejected the organization audience (%v) and the follow-up organization list failed: %v", exchangeCause(err), listErr))
 		return false
 	}
 	i := slices.IndexFunc(list, func(o logclient.OrganizationRead) bool {
@@ -406,16 +384,11 @@ func (r *OrganizationResource) appendOrganizationContextError(ctx context.Contex
 		// The organization exists under its state name, so the exchange failure
 		// is an audience/base-URL mismatch.
 		diags.AddError(summary, fmt.Sprintf(
-			"the organization exists, but the token exchange rejected its audience: %v. "+
-				"Check that the provider base_url matches the instance's configured "+
-				"frontend host.", exchangeCause(err)))
+			"the organization exists, but the token exchange rejected its audience: %v. Check that the provider base_url matches the instance's configured frontend host.", exchangeCause(err)))
 		return false
 	case i >= 0:
 		diags.AddError(summary, fmt.Sprintf(
-			"the organization was renamed outside Terraform and is now %q. "+
-				"The organization API addresses organizations by name, so re-import "+
-				"the resource with the new name to re-sync state: "+
-				"terraform import logfire_organization.<address> %q",
+			"the organization was renamed outside Terraform and is now %q. The organization API addresses organizations by name, so re-import the resource with the new name to re-sync state: terraform import logfire_organization.<address> %q",
 			list[i].OrganizationName, list[i].OrganizationName))
 		return false
 	}
@@ -426,9 +399,7 @@ func (r *OrganizationResource) appendOrganizationContextError(ctx context.Contex
 		return true
 	}
 	diags.AddError(summary, fmt.Sprintf(
-		"the state's organization name now belongs to a different organization "+
-			"(id %s). Refusing to operate on it; re-import the intended organization "+
-			"to re-bind state.", list[i].ID))
+		"the state's organization name now belongs to a different organization (id %s). Refusing to operate on it; re-import the intended organization to re-bind state.", list[i].ID))
 	return false
 }
 

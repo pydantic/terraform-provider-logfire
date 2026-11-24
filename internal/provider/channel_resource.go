@@ -79,16 +79,12 @@ func (r *ChannelResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 			"id": rschema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "Channel ID.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"name": rschema.StringAttribute{
 				Required:            true,
 				MarkdownDescription: "Channel name.",
-				Validators: []validator.String{
-					stringvalidator.LengthAtLeast(1),
-				},
+				Validators:          []validator.String{stringvalidator.LengthAtLeast(1)},
 			},
 			"active": rschema.BoolAttribute{
 				Optional:            true,
@@ -100,9 +96,7 @@ func (r *ChannelResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 		Blocks: map[string]rschema.Block{
 			"config": rschema.SingleNestedBlock{
 				MarkdownDescription: "Required channel configuration.",
-				Validators: []validator.Object{
-					objectvalidator.IsRequired(),
-				},
+				Validators:          []validator.Object{objectvalidator.IsRequired()},
 				Attributes: map[string]rschema.Attribute{
 					"type": rschema.StringAttribute{
 						Required:            true,
@@ -176,9 +170,7 @@ func (r *ChannelResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 					"region": rschema.StringAttribute{
 						Optional:            true,
 						MarkdownDescription: "PagerDuty account region (`us` or `eu`). When omitted, Logfire uses the US Events API endpoint. Only for `pagerduty` channels; a `pagerduty-integration` channel takes its region from the connected account.",
-						Validators: []validator.String{
-							stringvalidator.OneOf("us", "eu"),
-						},
+						Validators:          []validator.String{stringvalidator.OneOf("us", "eu")},
 					},
 					"install_id": rschema.StringAttribute{
 						Optional:            true,
@@ -473,10 +465,7 @@ func (r *ChannelResource) Create(ctx context.Context, req resource.CreateRequest
 		updated, err := r.client.UpdateChannel(ctx, out.ID, payload)
 		if err != nil {
 			resp.Diagnostics.AddError("Create channel failed", fmt.Sprintf(
-				"setting active flag: %v. The created channel %q is saved in state and "+
-					"Terraform will mark it tainted. After fixing the error and verifying the "+
-					"saved channel, untaint this resource before applying again to update it "+
-					"without replacement.", err, state.ID.ValueString(),
+				"setting active flag: %v. The created channel %q is saved in state and Terraform will mark it tainted. After fixing the error and verifying the saved channel, untaint this resource before applying again to update it without replacement.", err, state.ID.ValueString(),
 			))
 			return
 		}
@@ -587,8 +576,7 @@ func (r *ChannelResource) ImportState(ctx context.Context, req resource.ImportSt
 	if rawID == "" {
 		resp.Diagnostics.AddError(
 			"Missing import ID",
-			`Expected a non-empty ID. Use either the channel UUID or the channel name (label). `+
-				`Example: terraform import logfire_channel.prod "alerts-webhook"`,
+			`Expected a non-empty ID. Use either the channel UUID or the channel name (label). Example: terraform import logfire_channel.prod "alerts-webhook"`,
 		)
 		return
 	}
@@ -610,8 +598,7 @@ func (r *ChannelResource) ImportState(ctx context.Context, req resource.ImportSt
 		resp.Diagnostics.AddError(
 			"Import channel failed",
 			fmt.Sprintf(
-				"Channel %q not found in the credential's organization by ID or name. "+
-					"List channel IDs with the Logfire API (GET /api/v1/channels/).", rawID,
+				"Channel %q not found in the credential's organization by ID or name. List channel IDs with the Logfire API (GET /api/v1/channels/).", rawID,
 			),
 		)
 		return

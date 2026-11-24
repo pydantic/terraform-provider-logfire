@@ -79,9 +79,7 @@ func warnIgnoredLock(diags *diag.Diagnostics, planned types.Bool, out *logclient
 		diags.AddAttributeWarning(
 			path.Root("managed_allow_edits"),
 			"Logfire ignored managed_allow_edits",
-			"This Logfire version has no managed dashboards, or has them turned off, "+
-				"so the dashboard keeps its current edit setting. Terraform plans the "+
-				"value again on the next run.",
+			"This Logfire version has no managed dashboards, or has them turned off, so the dashboard keeps its current edit setting. Terraform plans the value again on the next run.",
 		)
 	}
 }
@@ -97,36 +95,24 @@ func (r *DashboardResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 			"id": rschema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "Dashboard UUID assigned by the backend.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"project_id": rschema.StringAttribute{
 				Required:            true,
 				MarkdownDescription: "Project UUID used for API paths.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
-				Validators: []validator.String{
-					stringvalidator.LengthAtLeast(1),
-				},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+				Validators:          []validator.String{stringvalidator.LengthAtLeast(1)},
 			},
 			"name": rschema.StringAttribute{
 				Required:            true,
 				MarkdownDescription: "Dashboard display name.",
-				Validators: []validator.String{
-					stringvalidator.LengthAtLeast(1),
-				},
+				Validators:          []validator.String{stringvalidator.LengthAtLeast(1)},
 			},
 			"slug": rschema.StringAttribute{
 				Required:            true,
 				MarkdownDescription: "Dashboard slug used in URLs.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
-				Validators: []validator.String{
-					stringvalidator.LengthAtLeast(1),
-				},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+				Validators:          []validator.String{stringvalidator.LengthAtLeast(1)},
 			},
 			"definition": rschema.StringAttribute{
 				Required:            true,
@@ -254,8 +240,7 @@ func (r *DashboardResource) Update(ctx context.Context, req resource.UpdateReque
 	if state.ID.ValueString() == "" {
 		resp.Diagnostics.AddError(
 			"Missing dashboard ID",
-			"The dashboard state has no ID. Import the intended dashboard to restore "+
-				"its identity before updating or deleting it.",
+			"The dashboard state has no ID. Import the intended dashboard to restore its identity before updating or deleting it.",
 		)
 		return
 	}
@@ -322,8 +307,7 @@ func (r *DashboardResource) Delete(ctx context.Context, req resource.DeleteReque
 	if state.ID.ValueString() == "" {
 		resp.Diagnostics.AddError(
 			"Missing dashboard ID",
-			"The dashboard state has no ID. Import the intended dashboard to restore "+
-				"its identity before updating or deleting it.",
+			"The dashboard state has no ID. Import the intended dashboard to restore its identity before updating or deleting it.",
 		)
 		return
 	}
@@ -341,8 +325,7 @@ func (r *DashboardResource) ImportState(ctx context.Context, req resource.Import
 	if rawID == "" {
 		resp.Diagnostics.AddError(
 			"Missing import ID",
-			`Expected a non-empty ID. Use either "project_id/dashboard_id/slug" or `+
-				`"project_name/dashboard_slug" (also accepts "," or "|").`,
+			`Expected a non-empty ID. Use either "project_id/dashboard_id/slug" or "project_name/dashboard_slug" (also accepts "," or "|").`,
 		)
 		return
 	}
@@ -351,8 +334,7 @@ func (r *DashboardResource) ImportState(ctx context.Context, req resource.Import
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Invalid import ID",
-			`Expected "project_id/dashboard_id/slug" or "project_name/dashboard_slug" `+
-				`(also accepts comma or pipe separators).`,
+			`Expected "project_id/dashboard_id/slug" or "project_name/dashboard_slug" (also accepts comma or pipe separators).`,
 		)
 		return
 	}
@@ -418,8 +400,7 @@ func (r *DashboardResource) ImportState(ctx context.Context, req resource.Import
 	if providedSlug != "" && providedSlug != summary.DashboardSlug {
 		resp.Diagnostics.AddWarning(
 			"Import dashboard",
-			fmt.Sprintf("provided slug %q does not match dashboard slug %q; "+
-				"using the dashboard found in the API", providedSlug, summary.DashboardSlug),
+			fmt.Sprintf("provided slug %q does not match dashboard slug %q; using the dashboard found in the API", providedSlug, summary.DashboardSlug),
 		)
 	}
 

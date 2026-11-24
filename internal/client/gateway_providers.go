@@ -122,8 +122,7 @@ func (c *APIClient) FindGatewayProviderBySlug(ctx context.Context, slug string) 
 	}
 	return nil, &APIError{
 		StatusCode: http.StatusNotFound,
-		Message: fmt.Sprintf("Gateway provider with slug %q not found in the "+
-			"credential's organization", slug),
+		Message:    fmt.Sprintf("Gateway provider with slug %q not found in the credential's organization", slug),
 	}
 }
 

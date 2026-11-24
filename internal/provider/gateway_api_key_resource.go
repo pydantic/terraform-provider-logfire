@@ -54,9 +54,7 @@ func (r *GatewayAPIKeyResource) Schema(ctx context.Context, req resource.SchemaR
 	useState := []planmodifier.String{stringplanmodifier.UseStateForUnknown()}
 	nonEmpty := []validator.String{stringvalidator.LengthAtLeast(1)}
 	limit := func(window string) rschema.Int64Attribute {
-		return spendingLimitAttribute(fmt.Sprintf("Maximum gateway spend in "+
-			"whole US dollars per %s. Null means no limit. Can be updated in "+
-			"place; setting it to null clears it.", window))
+		return spendingLimitAttribute(fmt.Sprintf("Maximum gateway spend in whole US dollars per %s. Null means no limit. Can be updated in place; setting it to null clears it.", window))
 	}
 	resp.Schema = rschema.Schema{
 		MarkdownDescription: "Manages a project-scoped AI Gateway API key (`project:gateway_proxy` scope). Do not confuse this with `logfire_gateway_provider`, which configures an upstream LLM provider credential. The provider credential needs `organization:create_api_key` plus `project:gateway_proxy` delegation; a project-scoped operator key for this is minted from the organization-level API keys page with the project selected.",
@@ -74,10 +72,8 @@ func (r *GatewayAPIKeyResource) Schema(ctx context.Context, req resource.SchemaR
 			"project_id": rschema.StringAttribute{
 				Required:            true,
 				MarkdownDescription: "UUID of the project the key proxies for. Gateway keys always require a project. Changing it replaces the key.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
-				Validators: nonEmpty,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+				Validators:          nonEmpty,
 			},
 			"description": rschema.StringAttribute{
 				Optional:            true,
@@ -87,12 +83,8 @@ func (r *GatewayAPIKeyResource) Schema(ctx context.Context, req resource.SchemaR
 			"expires_at": rschema.StringAttribute{
 				Optional:            true,
 				MarkdownDescription: "Optional RFC3339 expiration timestamp (for example `2026-12-31T23:59:59Z`). If omitted, the key does not expire. Changing it replaces the key.",
-				Validators: []validator.String{
-					newOptionalRFC3339Validator(),
-				},
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
+				Validators:          []validator.String{newOptionalRFC3339Validator()},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 			"spending_limit_daily":   limit("day"),
 			"spending_limit_weekly":  limit("week"),
@@ -154,9 +146,7 @@ func gatewayAPIKeyView(m *GatewayAPIKeyModel) *APIKeyModel {
 // scope, since this resource cannot manage it.
 func gatewayAPIKeyToModel(read *logclient.APIKeyRead, token types.String) (GatewayAPIKeyModel, error) {
 	if !slices.Contains(read.Scopes, GatewayProxyScope) {
-		return GatewayAPIKeyModel{}, fmt.Errorf("API key %q does not carry "+
-			"the %q scope and cannot be managed by logfire_gateway_api_key; "+
-			"use logfire_api_key instead", read.ID, GatewayProxyScope)
+		return GatewayAPIKeyModel{}, fmt.Errorf("API key %q does not carry the %q scope and cannot be managed by logfire_gateway_api_key; use logfire_api_key instead", read.ID, GatewayProxyScope)
 	}
 	key := apiKeyToModel(read, token)
 	var settings GatewaySettingsModel
@@ -282,9 +272,7 @@ func (r *GatewayAPIKeyResource) ImportState(ctx context.Context, req resource.Im
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Invalid import ID format",
-			`Expected the gateway API key UUID. Example: terraform import `+
-				`logfire_gateway_api_key.key `+
-				`"9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff"`,
+			`Expected the gateway API key UUID. Example: terraform import logfire_gateway_api_key.key "9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff"`,
 		)
 		return
 	}

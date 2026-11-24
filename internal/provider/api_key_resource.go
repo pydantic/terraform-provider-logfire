@@ -52,9 +52,7 @@ func spendingLimitAttribute(description string) rschema.Int64Attribute {
 	return rschema.Int64Attribute{
 		Optional:            true,
 		MarkdownDescription: description,
-		Validators: []validator.Int64{
-			int64validator.Between(0, logclient.GatewaySpendingLimitMaxUSD),
-		},
+		Validators:          []validator.Int64{int64validator.Between(0, logclient.GatewaySpendingLimitMaxUSD)},
 	}
 }
 
@@ -83,12 +81,8 @@ func (r *APIKeyResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				ElementType:         types.StringType,
 				Required:            true,
 				MarkdownDescription: "OAuth scopes granted to the key (for example `project:write_otlp`). Changing scopes replaces the key: scopes cannot be updated in place.",
-				PlanModifiers: []planmodifier.Set{
-					setplanmodifier.RequiresReplace(),
-				},
-				Validators: []validator.Set{
-					setvalidator.SizeAtLeast(1),
-				},
+				PlanModifiers:       []planmodifier.Set{setplanmodifier.RequiresReplace()},
+				Validators:          []validator.Set{setvalidator.SizeAtLeast(1)},
 			},
 			"project_id": rschema.StringAttribute{
 				Optional:            true,
@@ -104,10 +98,8 @@ func (r *APIKeyResource) Schema(ctx context.Context, req resource.SchemaRequest,
 			"expires_at": rschema.StringAttribute{
 				Optional:            true,
 				MarkdownDescription: "Optional RFC3339 expiration timestamp (for example `2026-12-31T23:59:59Z`). If omitted, the key does not expire. Changing it replaces the key: expiry cannot be updated in place (an expired key cannot be re-enabled; create a new key instead).",
-				Validators: []validator.String{
-					newOptionalRFC3339Validator(),
-				},
-				PlanModifiers: replace,
+				Validators:          []validator.String{newOptionalRFC3339Validator()},
+				PlanModifiers:       replace,
 			},
 			"gateway": rschema.SingleNestedAttribute{
 				Optional:            true,
@@ -141,9 +133,7 @@ func (r *APIKeyResource) Schema(ctx context.Context, req resource.SchemaRequest,
 			"all_projects": rschema.BoolAttribute{
 				Computed:            true,
 				MarkdownDescription: "True for org-wide keys with no project scope.",
-				PlanModifiers: []planmodifier.Bool{
-					boolplanmodifier.UseStateForUnknown(),
-				},
+				PlanModifiers:       []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
 			},
 			"active": rschema.BoolAttribute{
 				Computed:            true,
@@ -180,8 +170,7 @@ func (r *APIKeyResource) ValidateConfig(ctx context.Context, req resource.Valida
 		resp.Diagnostics.AddAttributeError(
 			path.Root("project_id"),
 			"Missing project scope",
-			fmt.Sprintf("Scopes %q require a specific project_id and cannot "+
-				"be combined with an org-wide key.", missing),
+			fmt.Sprintf("Scopes %q require a specific project_id and cannot be combined with an org-wide key.", missing),
 		)
 	}
 	if config.Gateway == nil {
@@ -191,8 +180,7 @@ func (r *APIKeyResource) ValidateConfig(ctx context.Context, req resource.Valida
 		resp.Diagnostics.AddAttributeError(
 			path.Root("gateway"),
 			"Unexpected gateway settings",
-			fmt.Sprintf("The gateway block configures the %q scope, which is "+
-				"not in scopes. Add it or remove the block.", GatewayProxyScope),
+			fmt.Sprintf("The gateway block configures the %q scope, which is not in scopes. Add it or remove the block.", GatewayProxyScope),
 		)
 	}
 	// An empty block carries no settings and reads back as null, which would
@@ -324,8 +312,7 @@ func (r *APIKeyResource) ImportState(ctx context.Context, req resource.ImportSta
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Invalid import ID format",
-			`Expected the API key UUID. Example: terraform import `+
-				`logfire_api_key.key "9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff"`,
+			`Expected the API key UUID. Example: terraform import logfire_api_key.key "9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff"`,
 		)
 		return
 	}

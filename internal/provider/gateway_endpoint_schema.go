@@ -31,9 +31,7 @@ func (r *GatewayEndpointResource) Schema(ctx context.Context, req resource.Schem
 			"id": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "Endpoint UUID.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"slug": schema.StringAttribute{
 				Required:            true,
@@ -42,19 +40,14 @@ func (r *GatewayEndpointResource) Schema(ctx context.Context, req resource.Schem
 					stringvalidator.LengthBetween(1, 64),
 					stringvalidator.RegexMatches(
 						regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`),
-						"must start with a letter or digit and contain only "+
-							"letters, digits, dots, underscores, or hyphens"),
+						"must start with a letter or digit and contain only letters, digits, dots, underscores, or hyphens"),
 				},
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
+				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 			"description": schema.StringAttribute{
 				Optional:            true,
 				MarkdownDescription: "Endpoint description.",
-				Validators: []validator.String{
-					stringvalidator.LengthAtMost(1000),
-				},
+				Validators:          []validator.String{stringvalidator.LengthAtMost(1000)},
 			},
 			"providers": schema.SetNestedAttribute{
 				Required:            true,
@@ -74,9 +67,7 @@ func (r *GatewayEndpointResource) Schema(ctx context.Context, req resource.Schem
 						"priority": schema.Int64Attribute{
 							Optional:            true,
 							MarkdownDescription: "The Gateway tries providers with a higher priority first. Providers with the same priority are tried in a random order that follows their weights. Defaults to 0.",
-							Validators: []validator.Int64{
-								int64validator.Between(0, math.MaxInt32),
-							},
+							Validators:          []validator.Int64{int64validator.Between(0, math.MaxInt32)},
 						},
 						"weight": schema.Float64Attribute{
 							Optional:            true,
@@ -92,9 +83,7 @@ func (r *GatewayEndpointResource) Schema(ctx context.Context, req resource.Schem
 			"created_at": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "Timestamp when the endpoint was created.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 		},
 	}
@@ -109,8 +98,7 @@ func (r *GatewayEndpointResource) ValidateConfig(ctx context.Context, req resour
 	if v := description.ValueString(); strings.TrimSpace(v) != v {
 		resp.Diagnostics.AddAttributeError(path.Root("description"),
 			"Invalid description",
-			"description must not start or end with whitespace, "+
-				"because Logfire trims it.")
+			"description must not start or end with whitespace, because Logfire trims it.")
 	}
 	var set types.Set
 	resp.Diagnostics.Append(
@@ -147,8 +135,7 @@ func (r *GatewayEndpointResource) ValidateConfig(ctx context.Context, req resour
 			if !(w > 0) || f == 0 || math.IsInf(f, 0) {
 				resp.Diagnostics.AddAttributeError(path.Root("providers"),
 					"Invalid weight",
-					"weight must be a positive finite number that fits in "+
-						"a 32-bit float.")
+					"weight must be a positive finite number that fits in a 32-bit float.")
 			}
 		}
 		activeUnknown = activeUnknown || p.Active.IsUnknown()

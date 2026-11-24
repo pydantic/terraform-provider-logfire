@@ -39,24 +39,18 @@ func (d *PagerDutyServiceDataSource) Schema(_ context.Context, _ datasource.Sche
 			"account_subdomain": schema.StringAttribute{
 				Required:            true,
 				MarkdownDescription: "PagerDuty account subdomain, such as `acme` from `acme.pagerduty.com`.",
-				Validators: []validator.String{
-					stringvalidator.LengthBetween(1, 255),
-				},
+				Validators:          []validator.String{stringvalidator.LengthBetween(1, 255)},
 			},
 			"region": schema.StringAttribute{
 				Optional:            true,
 				Computed:            true,
 				MarkdownDescription: "PagerDuty account region (`us` or `eu`). Defaults to `us`.",
-				Validators: []validator.String{
-					stringvalidator.OneOf("us", "eu"),
-				},
+				Validators:          []validator.String{stringvalidator.OneOf("us", "eu")},
 			},
 			"pagerduty_service_id": schema.StringAttribute{
 				Required:            true,
 				MarkdownDescription: "PagerDuty's service ID, such as `PABC123`.",
-				Validators: []validator.String{
-					stringvalidator.LengthBetween(1, 255),
-				},
+				Validators:          []validator.String{stringvalidator.LengthBetween(1, 255)},
 			},
 			"install_id": schema.StringAttribute{
 				Computed:            true,

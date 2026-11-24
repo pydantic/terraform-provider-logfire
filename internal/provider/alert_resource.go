@@ -78,26 +78,18 @@ func (r *AlertResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			"id": rschema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "Alert ID.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"project_id": rschema.StringAttribute{
 				Required:            true,
 				MarkdownDescription: "Project ID (UUID) used for alert API paths.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
-				Validators: []validator.String{
-					stringvalidator.LengthAtLeast(1),
-				},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+				Validators:          []validator.String{stringvalidator.LengthAtLeast(1)},
 			},
 			"name": rschema.StringAttribute{
 				Required:            true,
 				MarkdownDescription: "Alert name (unique per project).",
-				Validators: []validator.String{
-					stringvalidator.LengthAtLeast(1),
-				},
+				Validators:          []validator.String{stringvalidator.LengthAtLeast(1)},
 			},
 			"description": rschema.StringAttribute{
 				Optional:            true,
@@ -126,9 +118,7 @@ func (r *AlertResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			"watermark": rschema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "Provider-managed watermark (lateness tolerance) sent to the API.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"environments": rschema.SetAttribute{
 				ElementType:         types.StringType,
@@ -136,10 +126,7 @@ func (r *AlertResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				MarkdownDescription: "Deployment environments to scope the query to. Empty = all environments (no filter).",
 			},
 			"channel_assignments": channelAssignmentsAttribute(
-				"Channels to notify, each with an optional delivery schedule. Set it to "+
-					"`[]` to notify no channel. This is the same type as "+
-					"`alerts.<tier>.channel_assignments` on `logfire_slo`, so one value "+
-					"(for example a `locals` entry) can configure both.",
+				"Channels to notify, each with an optional delivery schedule. Set it to `[]` to notify no channel. This is the same type as `alerts.<tier>.channel_assignments` on `logfire_slo`, so one value (for example a `locals` entry) can configure both.",
 				channelAssignmentsRequired,
 			),
 			"notify_when": rschema.StringAttribute{
@@ -186,9 +173,7 @@ func (r *AlertResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 					"missing_behavior": rschema.StringAttribute{
 						Required:            true,
 						MarkdownDescription: "The close reason of an occurrence that is missing for `missing_runs` runs. One of `no_longer_matching` or `expire`.",
-						Validators: []validator.String{
-							stringvalidator.OneOf("no_longer_matching", "expire"),
-						},
+						Validators:          []validator.String{stringvalidator.OneOf("no_longer_matching", "expire")},
 					},
 				},
 			},
@@ -313,9 +298,7 @@ func addAlertSaveError(diags *diag.Diagnostics, summary string, err error) {
 		diags.AddAttributeError(
 			path.Root("instance_policy"),
 			"Alert instance policies are not enabled",
-			"The API refused instance_policy (403 alert_instances_not_enabled): this "+
-				"organization has not enabled instance policies. Ask Logfire support to "+
-				"enable them, or remove instance_policy and use another notify_when value.",
+			"The API refused instance_policy (403 alert_instances_not_enabled): this organization has not enabled instance policies. Ask Logfire support to enable them, or remove instance_policy and use another notify_when value.",
 		)
 		return
 	}
@@ -330,8 +313,7 @@ func addIgnoredPolicyError(diags *diag.Diagnostics, planned *AlertInstancePolicy
 		diags.AddAttributeError(
 			path.Root("instance_policy"),
 			"Logfire ignored instance_policy",
-			"This Logfire version does not support alert instance policies, so it saved "+
-				"the alert without one. Upgrade Logfire, or remove instance_policy.",
+			"This Logfire version does not support alert instance policies, so it saved the alert without one. Upgrade Logfire, or remove instance_policy.",
 		)
 	}
 }
@@ -603,8 +585,7 @@ func (r *AlertResource) ImportState(ctx context.Context, req resource.ImportStat
 	if rawID == "" {
 		resp.Diagnostics.AddError(
 			"Missing import ID",
-			`Expected a non-empty ID. Use either "project_id/alert_id" or `+
-				`"project_name/alert_name" (also accepts "," or "|").`,
+			`Expected a non-empty ID. Use either "project_id/alert_id" or "project_name/alert_name" (also accepts "," or "|").`,
 		)
 		return
 	}
@@ -613,8 +594,7 @@ func (r *AlertResource) ImportState(ctx context.Context, req resource.ImportStat
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Invalid import ID",
-			`Expected "project_id/alert_id" or "project_name/alert_name" `+
-				`(also accepts "project,alert" or "project|alert").`,
+			`Expected "project_id/alert_id" or "project_name/alert_name" (also accepts "project,alert" or "project|alert").`,
 		)
 		return
 	}

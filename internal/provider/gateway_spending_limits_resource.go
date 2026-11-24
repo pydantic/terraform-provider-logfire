@@ -47,9 +47,7 @@ func gatewaySpendingLimitsWindowAttributes() map[string]schema.Attribute {
 			Optional: true,
 			MarkdownDescription: "The " + name + " limit in whole US dollars. " +
 				start + " Omit it to have no " + name + " limit.",
-			Validators: []validator.Int64{
-				int64validator.Between(1, gatewaySpendingLimitMaxUSD),
-			},
+			Validators: []validator.Int64{int64validator.Between(1, gatewaySpendingLimitMaxUSD)},
 		}
 	}
 	return map[string]schema.Attribute{
@@ -93,9 +91,7 @@ func (r *GatewaySpendingLimitsResource) Schema(ctx context.Context, req resource
 		Computed: true,
 		MarkdownDescription: "Always `" + gatewayOrganizationSpendingLimitsID +
 			"`.",
-		PlanModifiers: []planmodifier.String{
-			stringplanmodifier.UseStateForUnknown(),
-		},
+		PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 	}
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Manages the AI Gateway spending limits of the organization. An organization limit caps the Gateway spend of every project and credential in the organization. " +
@@ -145,8 +141,7 @@ func (r *GatewaySpendingLimitsResource) ImportState(ctx context.Context, req res
 	rawID := strings.TrimSpace(req.ID)
 	if rawID != gatewayOrganizationSpendingLimitsID {
 		resp.Diagnostics.AddError("Invalid import ID",
-			`Expected "`+gatewayOrganizationSpendingLimitsID+`". `+
-				`Example: terraform import logfire_gateway_spending_limits.this "`+
+			`Expected "`+gatewayOrganizationSpendingLimitsID+`". Example: terraform import logfire_gateway_spending_limits.this "`+
 				gatewayOrganizationSpendingLimitsID+`"`)
 		return
 	}
@@ -191,9 +186,7 @@ func (r *GatewayProjectSpendingLimitsResource) Schema(ctx context.Context, req r
 	attributes["id"] = schema.StringAttribute{
 		Computed:            true,
 		MarkdownDescription: "The project UUID.",
-		PlanModifiers: []planmodifier.String{
-			stringplanmodifier.UseStateForUnknown(),
-		},
+		PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 	}
 	attributes["project_id"] = schema.StringAttribute{
 		Required:            true,
@@ -202,9 +195,7 @@ func (r *GatewayProjectSpendingLimitsResource) Schema(ctx context.Context, req r
 			stringvalidator.RegexMatches(lowercaseUUIDPattern,
 				"must be a lowercase project UUID"),
 		},
-		PlanModifiers: []planmodifier.String{
-			stringplanmodifier.RequiresReplace(),
-		},
+		PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
 	}
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Manages the AI Gateway spending limits of one project. When the project goes over a limit, the Gateway blocks every credential in the project until the window resets. " +
@@ -267,8 +258,7 @@ func (r *GatewayProjectSpendingLimitsResource) ImportState(ctx context.Context, 
 	rawID := strings.TrimSpace(req.ID)
 	if !lowercaseUUIDPattern.MatchString(rawID) {
 		resp.Diagnostics.AddError("Invalid import ID",
-			"Expected the lowercase project UUID. Example: terraform import "+
-				"logfire_gateway_project_spending_limits.this "+
+			"Expected the lowercase project UUID. Example: terraform import logfire_gateway_project_spending_limits.this "+
 				`"018f45c0-3cab-7b2f-a8f7-8a0b55a7ed00"`)
 		return
 	}

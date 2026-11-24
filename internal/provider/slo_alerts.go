@@ -73,13 +73,7 @@ func sloAlertsAttribute() rschema.SingleNestedAttribute {
 				severity + "`). Omit it to leave that alert's channels as they are.",
 			Attributes: map[string]rschema.Attribute{
 				"channel_assignments": channelAssignmentsAttribute(
-					"Channels of this tier's alert, each with an optional delivery "+
-						"schedule. The provider writes the value to the alert on create, "+
-						"and on update when it differs from what the alert has. It is "+
-						"read back from the alert, so a change made on the Logfire "+
-						"alerts page shows as drift. Set it to `[]` to remove every "+
-						"channel. It is the same type as "+
-						"`logfire_alert.channel_assignments`.",
+					"Channels of this tier's alert, each with an optional delivery schedule. The provider writes the value to the alert on create, and on update when it differs from what the alert has. It is read back from the alert, so a change made on the Logfire alerts page shows as drift. Set it to `[]` to remove every channel. It is the same type as `logfire_alert.channel_assignments`.",
 					channelAssignmentsOptionalComputed,
 				),
 				"alert_id": rschema.StringAttribute{
@@ -358,10 +352,7 @@ func sloDeliveryApplied(sent *logclient.SloAlertsDelivery, got *logclient.SloTie
 	return diag.Diagnostics{diag.NewAttributeErrorDiagnostic(
 		path.Root("alerts"),
 		"Logfire release too old for SLO channel assignments",
-		cause+" Setting SLO channels per tier alert needs "+sloDeliveryRelease+". "+
-			"The SLO was saved, but its alerts do not have the configured channels. "+
-			"Upgrade Logfire and apply again, or remove `alerts` from the "+
-			"configuration until then.",
+		cause+" Setting SLO channels per tier alert needs "+sloDeliveryRelease+". The SLO was saved, but its alerts do not have the configured channels. Upgrade Logfire and apply again, or remove `alerts` from the configuration until then.",
 	)}
 }
 

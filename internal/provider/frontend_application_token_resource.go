@@ -149,8 +149,7 @@ func (r *FrontendApplicationTokenResource) Create(ctx context.Context, req resou
 		token = findActiveFrontendToken(tokens, plan.AdoptTokenID.ValueString())
 		if token == nil {
 			resp.Diagnostics.AddError("Read frontend application token failed",
-				"The API did not return the selected token as an active token "+
-					"for this application.")
+				"The API did not return the selected token as an active token for this application.")
 			return
 		}
 	}
@@ -217,9 +216,7 @@ func (r *FrontendApplicationTokenResource) Delete(ctx context.Context, req resou
 	if logclient.IsConflictError(err) {
 		resp.Diagnostics.AddError(
 			"Cannot revoke the last frontend application token",
-			"Set revoke_on_destroy to false and apply that change before "+
-				"destroying the token resource with its application. Application "+
-				"deletion revokes all attached tokens. API response: "+err.Error(),
+			"Set revoke_on_destroy to false and apply that change before destroying the token resource with its application. Application deletion revokes all attached tokens. API response: "+err.Error(),
 		)
 	} else if err != nil && !logclient.IsNotFoundError(err) {
 		resp.Diagnostics.AddError("Revoke frontend application token failed", err.Error())
@@ -234,9 +231,7 @@ func (r *FrontendApplicationTokenResource) ImportState(ctx context.Context, req 
 	parts, err := splitImportParts(strings.TrimSpace(req.ID), 3)
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid import ID format",
-			`Expected "project_id/application_id/token_id". Example: `+
-				`terraform import logfire_frontend_application_token.token `+
-				`"project-id/application-id/token-id"`)
+			`Expected "project_id/application_id/token_id". Example: terraform import logfire_frontend_application_token.token "project-id/application-id/token-id"`)
 		return
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("project_id"), parts[0])...)

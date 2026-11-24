@@ -68,9 +68,7 @@ func (r *ScheduleResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			"id": rschema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "Schedule ID.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"label": rschema.StringAttribute{
 				Required:            true,
@@ -306,9 +304,7 @@ func (r *ScheduleResource) ImportState(ctx context.Context, req resource.ImportS
 	if id == "" {
 		resp.Diagnostics.AddError(
 			"Missing import ID",
-			`Expected the schedule UUID. Example: `+
-				`terraform import logfire_schedule.office_hours `+
-				`"9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff"`,
+			`Expected the schedule UUID. Example: terraform import logfire_schedule.office_hours "9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff"`,
 		)
 		return
 	}
@@ -319,8 +315,7 @@ func (r *ScheduleResource) ImportState(ctx context.Context, req resource.ImportS
 			resp.Diagnostics.AddError(
 				"Import schedule failed",
 				fmt.Sprintf(
-					"Schedule %q not found in the credential's organization. "+
-						"Import a schedule by its UUID.", id,
+					"Schedule %q not found in the credential's organization. Import a schedule by its UUID.", id,
 				),
 			)
 			return

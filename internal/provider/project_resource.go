@@ -48,25 +48,19 @@ func (r *ProjectResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 			"id": rschema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "Opaque backend project ID (not the slug).",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"organization": rschema.StringAttribute{
 				Optional:            true,
 				Computed:            true,
 				MarkdownDescription: "Organization name. Defaults to the provider `organization`, else the organization of the provider credential. Setting it acts in that organization through the instance-admin token exchange (self-hosted only). Changing it replaces the project when the new name is another existing organization than `organization_id`. Logfire cannot move a project between organizations, so a replacement deletes the project with all its data and creates an empty project. Set `lifecycle { prevent_destroy = true }` to block it. A new name for the same organization, a name that is not known yet, or a name the instance does not list yet updates in place. After an organization is renamed, a refresh updates this value.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
-				Validators: organizationNameValidators(),
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+				Validators:          organizationNameValidators(),
 			},
 			"organization_id": rschema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "ID of the organization that the project is in. Set when the project is in a named organization, through the `organization` argument or the provider `organization`. Null for a project in the organization of the credential.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"name": rschema.StringAttribute{
 				Required:            true,
@@ -75,29 +69,22 @@ func (r *ProjectResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 					stringvalidator.LengthAtLeast(2),
 					stringvalidator.RegexMatches(
 						regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`),
-						"must use lowercase letters, numbers, and internal hyphens "+
-							"(no spaces or uppercase characters)",
+						"must use lowercase letters, numbers, and internal hyphens (no spaces or uppercase characters)",
 					),
 				},
 			},
 			"description": rschema.StringAttribute{
 				Optional:            true,
 				MarkdownDescription: "Project description.",
-				Validators: []validator.String{
-					stringvalidator.LengthAtLeast(1),
-				},
+				Validators:          []validator.String{stringvalidator.LengthAtLeast(1)},
 			},
 			"visibility": rschema.StringAttribute{
 				Optional:            true,
 				Computed:            true,
 				MarkdownDescription: "Project visibility (`public` or `private`).",
 				Default:             stringdefault.StaticString("public"),
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
-				Validators: []validator.String{
-					stringvalidator.OneOf("public", "private"),
-				},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+				Validators:          []validator.String{stringvalidator.OneOf("public", "private")},
 			},
 		},
 	}
@@ -273,8 +260,7 @@ func (r *ProjectResource) ImportState(ctx context.Context, req resource.ImportSt
 	if rawID == "" {
 		resp.Diagnostics.AddError(
 			"Missing import ID",
-			`Expected a non-empty ID. Use either the project UUID or the `+
-				`"organization/name" shorthand.`,
+			`Expected a non-empty ID. Use either the project UUID or the "organization/name" shorthand.`,
 		)
 		return
 	}
@@ -283,8 +269,7 @@ func (r *ProjectResource) ImportState(ctx context.Context, req resource.ImportSt
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Invalid import ID format",
-			`Expected "organization/name" (also accepts "organization,name" or `+
-				`"organization|name"), or a single project UUID/name. Example:`+"\n"+
+			`Expected "organization/name" (also accepts "organization,name" or "organization|name"), or a single project UUID/name. Example:`+"\n"+
 				`terraform import logfire_project.prod "acme/prod-logs"`,
 		)
 		return
@@ -304,8 +289,7 @@ func (r *ProjectResource) ImportState(ctx context.Context, req resource.ImportSt
 		switch {
 		case errors.As(err, &notFound):
 			resp.Diagnostics.AddError("Import project failed", fmt.Sprintf(
-				"Project %q not found. Use the project UUID or the "+
-					"\"organization/name\" shorthand.", rawID))
+				"Project %q not found. Use the project UUID or the \"organization/name\" shorthand.", rawID))
 			return
 		case err != nil:
 			resp.Diagnostics.AddError("Import project failed", err.Error())
@@ -368,8 +352,7 @@ func (r *ProjectResource) findProject(ctx context.Context, org, name string) (st
 	if len(candidates) > 1 && ownListed && errors.As(lastErr, &adminRequired) {
 		// The key's own list has no match, so the missing instance-admin right
 		// matters only if org is not the key's own organization.
-		return "", nil, fmt.Errorf("project %q was not found with this key; "+
-			"if %q is another organization, an instance-admin key is needed", name, org)
+		return "", nil, fmt.Errorf("project %q was not found with this key; if %q is another organization, an instance-admin key is needed", name, org)
 	}
 	if lastErr != nil {
 		// When the key's own list failed too, its error, such as a missing
@@ -418,8 +401,7 @@ func (r *ProjectResource) ModifyPlan(ctx context.Context, req resource.ModifyPla
 	existing, err := r.client.ForOrganization(name).ListProjects(ctx)
 	if err != nil {
 		resp.Diagnostics.AddError("Cannot move the project", fmt.Sprintf(
-			"Moving the project to organization %q replaces it, but the provider "+
-				"cannot act in that organization: %v", name, err))
+			"Moving the project to organization %q replaces it, but the provider cannot act in that organization: %v", name, err))
 		return
 	}
 	// A project with a null organization_id is in the key's organization, so a
@@ -433,8 +415,7 @@ func (r *ProjectResource) ModifyPlan(ctx context.Context, req resource.ModifyPla
 	}
 	if nameTaken {
 		resp.Diagnostics.AddError("Cannot move the project", fmt.Sprintf(
-			"Organization %q already has a project named %q, so the replacement "+
-				"would delete this project and then fail to create it.",
+			"Organization %q already has a project named %q, so the replacement would delete this project and then fail to create it.",
 			name, plan.Name.ValueString()))
 		return
 	}

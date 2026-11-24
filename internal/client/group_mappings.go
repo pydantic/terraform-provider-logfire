@@ -61,9 +61,7 @@ type groupMappingsAnswer struct {
 }
 
 func errGroupMappingsMissing(method string) error {
-	return fmt.Errorf("the answer to %s %s has no group_organization_mapping, "+
-		"so it did not come from the Logfire API. Check that base_url reaches "+
-		"the instance without a proxy or redirect that rewrites it",
+	return fmt.Errorf("the answer to %s %s has no group_organization_mapping, so it did not come from the Logfire API. Check that base_url reaches the instance without a proxy or redirect that rewrites it",
 		method, groupMappingsPath)
 }
 
@@ -93,12 +91,7 @@ func (c *APIClient) GetGroupMappings(ctx context.Context) (*GroupMappingsRead, e
 			groupMappingsMinimumChart)
 	}
 	if out.APIMappingStatus == "" {
-		return nil, fmt.Errorf("this Logfire instance does not report "+
-			"api_mapping_status, so the provider cannot tell whether the Helm "+
-			"value groupOrganizationMapping overrides the API. This requires "+
-			"Logfire %s or newer (Helm chart %s or newer). Upgrade the "+
-			"instance, or manage the group mapping with the Helm value until "+
-			"then",
+		return nil, fmt.Errorf("this Logfire instance does not report api_mapping_status, so the provider cannot tell whether the Helm value groupOrganizationMapping overrides the API. This requires Logfire %s or newer (Helm chart %s or newer). Upgrade the instance, or manage the group mapping with the Helm value until then",
 			groupMappingsMinimumRelease, groupMappingsMinimumChart)
 	}
 	if out.GroupOrganizationMapping == nil {

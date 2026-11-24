@@ -27,9 +27,7 @@ func (r *GatewayProviderResource) Schema(ctx context.Context, req resource.Schem
 			"id": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "Provider UUID. Use this identifier to import an existing provider.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"slug": schema.StringAttribute{
 				Required:            true,
@@ -38,12 +36,9 @@ func (r *GatewayProviderResource) Schema(ctx context.Context, req resource.Schem
 					stringvalidator.LengthBetween(1, 64),
 					stringvalidator.RegexMatches(
 						regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`),
-						"must start with a letter or digit and contain only "+
-							"letters, digits, dots, underscores, or hyphens"),
+						"must start with a letter or digit and contain only letters, digits, dots, underscores, or hyphens"),
 				},
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
+				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 			"vendor": schema.StringAttribute{
 				Required:            true,
@@ -53,9 +48,7 @@ func (r *GatewayProviderResource) Schema(ctx context.Context, req resource.Schem
 						"bedrock", "doubleword", "google-vertex", "groq",
 						"huggingface", "mistral"),
 				},
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
+				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 			"api_key": schema.StringAttribute{
 				Required:            true,
@@ -72,9 +65,7 @@ func (r *GatewayProviderResource) Schema(ctx context.Context, req resource.Schem
 			"bedrock_api": schema.StringAttribute{
 				Optional:            true,
 				MarkdownDescription: "Bedrock API variant: runtime or mantle. Required only for bedrock; can be updated in place.",
-				Validators: []validator.String{
-					stringvalidator.OneOf("runtime", "mantle"),
-				},
+				Validators:          []validator.String{stringvalidator.OneOf("runtime", "mantle")},
 			},
 			"bedrock_region": schema.StringAttribute{
 				Optional:            true,
@@ -98,9 +89,7 @@ func (r *GatewayProviderResource) Schema(ctx context.Context, req resource.Schem
 			"created_at": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "Timestamp when the provider was created.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 		},
 	}

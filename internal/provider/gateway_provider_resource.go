@@ -61,9 +61,7 @@ func (r *GatewayProviderResource) Create(ctx context.Context, req resource.Creat
 	})
 	if err != nil {
 		resp.Diagnostics.AddError("Create Gateway provider failed", err.Error()+
-			". A failed request may have stored the provider. "+
-			"Check the provider list and import its UUID before retrying "+
-			"if the slug already exists.")
+			". A failed request may have stored the provider. Check the provider list and import its UUID before retrying if the slug already exists.")
 		return
 	}
 	plan.refresh(out)
@@ -129,8 +127,7 @@ func (r *GatewayProviderResource) Update(ctx context.Context, req resource.Updat
 	out, err := r.client.UpdateGatewayProvider(ctx, state.ID.ValueString(), input)
 	if err != nil {
 		resp.Diagnostics.AddError("Update Gateway provider failed", err.Error()+
-			". Retry the apply before revoking the previous credential; "+
-			"storage may have succeeded before Gateway confirmed the refresh.")
+			". Retry the apply before revoking the previous credential; storage may have succeeded before Gateway confirmed the refresh.")
 		return
 	}
 	plan.refresh(out)
@@ -159,8 +156,7 @@ func (r *GatewayProviderResource) ImportState(ctx context.Context, req resource.
 	id := strings.TrimSpace(req.ID)
 	if id == "" {
 		resp.Diagnostics.AddError("Missing import ID",
-			"Expected the provider UUID or the provider slug. "+
-				"Example: terraform import logfire_gateway_provider.openai "+
+			"Expected the provider UUID or the provider slug. Example: terraform import logfire_gateway_provider.openai "+
 				`"018f45c0-3cab-7b2f-a8f7-8a0b55a7ed11"`)
 		return
 	}

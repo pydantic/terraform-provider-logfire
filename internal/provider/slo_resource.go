@@ -57,48 +57,32 @@ func (r *SloResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *
 			"id": rschema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "SLO ID.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"project_id": rschema.StringAttribute{
 				Required:            true,
 				MarkdownDescription: "Project ID (UUID) used for SLO API paths.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
-				Validators: []validator.String{
-					stringvalidator.LengthAtLeast(1),
-				},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+				Validators:          []validator.String{stringvalidator.LengthAtLeast(1)},
 			},
 			"scope_kind": rschema.StringAttribute{
 				Optional:            true,
 				Computed:            true,
 				Default:             stringdefault.StaticString("service"),
 				MarkdownDescription: "What the SLO is anchored to: a service (`service`) or an LLM provider (`provider`). Defaults to `service`. Changing it forces a new SLO.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
-				Validators: []validator.String{
-					stringvalidator.OneOf("service", "provider"),
-				},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+				Validators:          []validator.String{stringvalidator.OneOf("service", "provider")},
 			},
 			"scope_value": rschema.StringAttribute{
 				Required:            true,
 				MarkdownDescription: "The service name (`scope_kind = \"service\"`) or provider slug like `openai` (`scope_kind = \"provider\"`). Changing it forces a new SLO.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
-				Validators: []validator.String{
-					stringvalidator.LengthAtLeast(1),
-				},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+				Validators:          []validator.String{stringvalidator.LengthAtLeast(1)},
 			},
 			"name": rschema.StringAttribute{
 				Required:            true,
 				MarkdownDescription: "SLO name (unique per project).",
-				Validators: []validator.String{
-					stringvalidator.LengthAtLeast(1),
-				},
+				Validators:          []validator.String{stringvalidator.LengthAtLeast(1)},
 			},
 			"description": rschema.StringAttribute{
 				Optional:            true,
@@ -109,9 +93,7 @@ func (r *SloResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *
 				Computed:            true,
 				Default:             stringdefault.StaticString("records"),
 				MarkdownDescription: "Whether the SLO ratio is computed over span events (`records`) or metric values (`metrics`). Defaults to `records`.",
-				Validators: []validator.String{
-					stringvalidator.OneOf("records", "metrics"),
-				},
+				Validators:          []validator.String{stringvalidator.OneOf("records", "metrics")},
 			},
 			"metric_aggregation": rschema.StringAttribute{
 				Optional:            true,
@@ -142,9 +124,7 @@ func (r *SloResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *
 			"comparison": rschema.StringAttribute{
 				Optional:            true,
 				MarkdownDescription: "For `metric_aggregation = \"histogram_threshold\"`: the good side of the `threshold`. `less_than` (good is below the threshold, the latency case) or `greater_than`. Required for that mode, and must be omitted otherwise.",
-				Validators: []validator.String{
-					stringvalidator.OneOf("less_than", "greater_than"),
-				},
+				Validators:          []validator.String{stringvalidator.OneOf("less_than", "greater_than")},
 			},
 			"target_percent": rschema.StringAttribute{
 				Required:            true,
@@ -223,8 +203,7 @@ func validateSloSliConfig(m *SloModel) diag.Diagnostics {
 			diags.AddAttributeError(
 				path.Root("metric_aggregation"),
 				"histogram_threshold requires source = \"metrics\"",
-				"metric_aggregation = \"histogram_threshold\" is a metric SLI and "+
-					"requires source = \"metrics\".",
+				"metric_aggregation = \"histogram_threshold\" is a metric SLI and requires source = \"metrics\".",
 			)
 		}
 		if m.Threshold.IsNull() {
@@ -635,8 +614,7 @@ func (r *SloResource) ImportState(ctx context.Context, req resource.ImportStateR
 	if rawID == "" {
 		resp.Diagnostics.AddError(
 			"Missing import ID",
-			`Expected a non-empty ID. Use either "project_id/slo_id" or `+
-				`"project_name/slo_name" (also accepts "," or "|").`,
+			`Expected a non-empty ID. Use either "project_id/slo_id" or "project_name/slo_name" (also accepts "," or "|").`,
 		)
 		return
 	}
@@ -645,8 +623,7 @@ func (r *SloResource) ImportState(ctx context.Context, req resource.ImportStateR
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Invalid import ID",
-			`Expected "project_id/slo_id" or "project_name/slo_name" `+
-				`(also accepts "project,slo" or "project|slo").`,
+			`Expected "project_id/slo_id" or "project_name/slo_name" (also accepts "project,slo" or "project|slo").`,
 		)
 		return
 	}

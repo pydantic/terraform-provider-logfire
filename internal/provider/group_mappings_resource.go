@@ -111,9 +111,7 @@ func (r *GroupMappingsResource) Schema(ctx context.Context, req resource.SchemaR
 			"id": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "Always `" + groupMappingsID + "`.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"api_mapping_status": schema.StringAttribute{
 				Computed: true,
@@ -160,11 +158,7 @@ func (r *GroupMappingsResource) Create(ctx context.Context, req resource.CreateR
 	}
 	if len(current.GroupOrganizationMapping) > 0 {
 		resp.Diagnostics.AddError("Group mappings already exist", fmt.Sprintf(
-			"The instance already stores a mapping for %d group(s). "+
-				"Creating this resource would replace it and change "+
-				"access at the next sign-in. Import the stored mapping with "+
-				"`terraform import logfire_group_mappings.<name> %s`, "+
-				"copy it into the configuration, and apply.",
+			"The instance already stores a mapping for %d group(s). Creating this resource would replace it and change access at the next sign-in. Import the stored mapping with `terraform import logfire_group_mappings.<name> %s`, copy it into the configuration, and apply.",
 			len(current.GroupOrganizationMapping), groupMappingsID))
 		return
 	}
@@ -186,10 +180,7 @@ func (r *GroupMappingsResource) Read(ctx context.Context, req resource.ReadReque
 	if out.APIMappingStatus == logclient.GroupMappingsStatusOverriddenByEnvironment {
 		resp.Diagnostics.AddWarning(
 			"Group mappings are overridden by the environment",
-			"The Helm value "+groupMappingsHelmValue+" is set, so sign-in "+
-				"ignores the mapping that the API stores. "+
-				"Terraform keeps the stored mapping in state. "+
-				"Remove the Helm value for this resource to take effect.")
+			"The Helm value "+groupMappingsHelmValue+" is set, so sign-in ignores the mapping that the API stores. Terraform keeps the stored mapping in state. Remove the Helm value for this resource to take effect.")
 	}
 	state.ID = types.StringValue(groupMappingsID)
 	state.Mapping = groupMappingsFromAPI(out.GroupOrganizationMapping)
@@ -213,10 +204,7 @@ func (r *GroupMappingsResource) Delete(ctx context.Context, req resource.DeleteR
 	stored, err := r.client.SetGroupMappings(ctx, nil)
 	if errors.Is(err, logclient.ErrGroupMappingsOverridden) {
 		resp.Diagnostics.AddError("Delete group mappings failed",
-			"The Helm value "+groupMappingsHelmValue+" is set, so the API "+
-				"refuses to change the stored mapping. "+
-				"Remove the Helm value and destroy again, "+
-				"or run `terraform state rm` to leave the stored mapping in place.")
+			"The Helm value "+groupMappingsHelmValue+" is set, so the API refuses to change the stored mapping. Remove the Helm value and destroy again, or run `terraform state rm` to leave the stored mapping in place.")
 		return
 	}
 	if err != nil {
@@ -227,11 +215,7 @@ func (r *GroupMappingsResource) Delete(ctx context.Context, req resource.DeleteR
 	// mapping.
 	if len(stored) > 0 {
 		resp.Diagnostics.AddError("Delete group mappings failed", fmt.Sprintf(
-			"The instance still reports a mapping for %d group(s), "+
-				"so the empty mapping was not stored. A redirect in "+
-				"front of the instance turns the write into a read. "+
-				"Set base_url to the address that serves the API "+
-				"without a redirect and destroy again.", len(stored)))
+			"The instance still reports a mapping for %d group(s), so the empty mapping was not stored. A redirect in front of the instance turns the write into a read. Set base_url to the address that serves the API without a redirect and destroy again.", len(stored)))
 	}
 }
 
@@ -239,8 +223,7 @@ func (r *GroupMappingsResource) ImportState(ctx context.Context, req resource.Im
 	rawID := strings.TrimSpace(req.ID)
 	if rawID != groupMappingsID {
 		resp.Diagnostics.AddError("Invalid import ID",
-			`Expected "`+groupMappingsID+`". `+
-				`Example: terraform import logfire_group_mappings.this "`+
+			`Expected "`+groupMappingsID+`". Example: terraform import logfire_group_mappings.this "`+
 				groupMappingsID+`"`)
 		return
 	}
@@ -299,10 +282,7 @@ func (r *GroupMappingsResource) apply(ctx context.Context, plan GroupMappingsMod
 
 func appendGroupMappingsOverriddenError(diags *diag.Diagnostics, summary string) {
 	diags.AddError(summary,
-		"The Helm value "+groupMappingsHelmValue+" is set, so the API refuses "+
-			"to change the group mapping and sign-in ignores "+
-			"anything stored through it. Remove the Helm value to manage "+
-			"the mapping with Terraform, or do not use this resource.")
+		"The Helm value "+groupMappingsHelmValue+" is set, so the API refuses to change the group mapping and sign-in ignores anything stored through it. Remove the Helm value to manage the mapping with Terraform, or do not use this resource.")
 }
 
 // groupMappingsFromAPI never returns a nil list, so an absent project_roles and
@@ -364,8 +344,7 @@ func (uniqueGroupIDs) ValidateList(ctx context.Context, req validator.ListReques
 			resp.Diagnostics.AddAttributeError(
 				req.Path.AtListIndex(i).AtName("group_id"),
 				"Duplicate group_id",
-				fmt.Sprintf("group_id %q already appears at index %d. "+
-					"The API rejects a repeated group ID.",
+				fmt.Sprintf("group_id %q already appears at index %d. The API rejects a repeated group ID.",
 					id.ValueString(), first))
 			continue
 		}

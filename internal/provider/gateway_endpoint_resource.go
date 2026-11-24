@@ -54,9 +54,7 @@ func (r *GatewayEndpointResource) Create(ctx context.Context, req resource.Creat
 	})
 	if err != nil {
 		resp.Diagnostics.AddError("Create Gateway endpoint failed", err.Error()+
-			". A failed request may have stored the endpoint. "+
-			"Check the endpoint list and import it by slug before retrying "+
-			"if the slug already exists.")
+			". A failed request may have stored the endpoint. Check the endpoint list and import it by slug before retrying if the slug already exists.")
 		return
 	}
 	plan.refresh(out)
@@ -148,8 +146,7 @@ func (r *GatewayEndpointResource) ImportState(ctx context.Context, req resource.
 	id := strings.TrimSpace(req.ID)
 	if id == "" {
 		resp.Diagnostics.AddError("Missing import ID",
-			"Expected the endpoint UUID or the endpoint slug. "+
-				"Example: terraform import logfire_gateway_endpoint.default "+
+			"Expected the endpoint UUID or the endpoint slug. Example: terraform import logfire_gateway_endpoint.default "+
 				`"default"`)
 		return
 	}

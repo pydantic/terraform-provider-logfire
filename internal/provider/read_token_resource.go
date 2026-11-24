@@ -117,14 +117,7 @@ func (r *tokenResource) Metadata(ctx context.Context, req resource.MetadataReque
 func (r *tokenResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	useState := []planmodifier.String{stringplanmodifier.UseStateForUnknown()}
 	resp.Schema = rschema.Schema{
-		MarkdownDescription: fmt.Sprintf("Manages a Logfire %[1]s token. "+
-			"Equivalent to logfire_api_key with scopes "+
-			"`[\"project:%[1]s_otlp\"]`. Creating it requires the "+
-			"`project:%[1]s_token` scope on a credential that can reach the "+
-			"project. Import is not supported: the API returns the token "+
-			"value only at creation, so an imported token could never "+
-			"reproduce its secret in state. Recreate a token with Terraform "+
-			"to adopt it.", r.kind),
+		MarkdownDescription: fmt.Sprintf("Manages a Logfire %[1]s token. Equivalent to logfire_api_key with scopes `[\"project:%[1]s_otlp\"]`. Creating it requires the `project:%[1]s_token` scope on a credential that can reach the project. Import is not supported: the API returns the token value only at creation, so an imported token could never reproduce its secret in state. Recreate a token with Terraform to adopt it.", r.kind),
 		Attributes: map[string]rschema.Attribute{
 			"id": rschema.StringAttribute{
 				Computed:            true,
@@ -134,12 +127,8 @@ func (r *tokenResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 			"project_id": rschema.StringAttribute{
 				Required:            true,
 				MarkdownDescription: "UUID of the project that owns the token.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
-				Validators: []validator.String{
-					stringvalidator.LengthAtLeast(1),
-				},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+				Validators:          []validator.String{stringvalidator.LengthAtLeast(1)},
 			},
 			"description": rschema.StringAttribute{
 				Computed:            true,
@@ -161,12 +150,8 @@ func (r *tokenResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 			"expires_at": rschema.StringAttribute{
 				Optional:            true,
 				MarkdownDescription: "Optional RFC3339 expiration timestamp for the token (for example `2026-12-31T23:59:59Z`). If omitted, the token does not expire.",
-				Validators: []validator.String{
-					newOptionalRFC3339Validator(),
-				},
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
+				Validators:          []validator.String{newOptionalRFC3339Validator()},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 			"project_name": rschema.StringAttribute{
 				Computed:            true,

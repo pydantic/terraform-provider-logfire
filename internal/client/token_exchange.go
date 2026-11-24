@@ -87,9 +87,7 @@ type InstanceAdminRequiredError struct {
 }
 
 func (e *InstanceAdminRequiredError) Error() string {
-	return fmt.Sprintf("cannot act in organization %q: the api_key must be an "+
-		"instance-admin API key (scope instance:admin) created in the "+
-		"self-hosted admin organization. %s", e.Organization, e.Err)
+	return fmt.Sprintf("cannot act in organization %q: the api_key must be an instance-admin API key (scope instance:admin) created in the self-hosted admin organization. %s", e.Organization, e.Err)
 }
 
 func (e *InstanceAdminRequiredError) Unwrap() error { return e.Err }
@@ -103,8 +101,7 @@ type UnknownOrganizationError struct {
 }
 
 func (e *UnknownOrganizationError) Error() string {
-	return fmt.Sprintf("organization %q does not exist on this instance; if "+
-		"it was renamed, set the new name", e.Organization)
+	return fmt.Sprintf("organization %q does not exist on this instance; if it was renamed, set the new name", e.Organization)
 }
 
 func (e *UnknownOrganizationError) Unwrap() error { return e.Err }

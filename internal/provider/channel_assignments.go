@@ -103,8 +103,7 @@ func (uniqueChannelIDsValidator) ValidateSet(ctx context.Context, req validator.
 				req.Path,
 				"Duplicate channel assignment",
 				fmt.Sprintf(
-					"Channel %q is assigned more than once. "+
-						"Assign each channel once, with at most one schedule_id.", id,
+					"Channel %q is assigned more than once. Assign each channel once, with at most one schedule_id.", id,
 				),
 			)
 			return

@@ -80,8 +80,7 @@ func (c *APIClient) FindGatewayEndpointBySlug(ctx context.Context, slug string) 
 	if len(page.Endpoints) == 0 {
 		return nil, &APIError{
 			StatusCode: http.StatusNotFound,
-			Message: fmt.Sprintf("Gateway endpoint with slug %q not found in "+
-				"the credential's organization", slug),
+			Message:    fmt.Sprintf("Gateway endpoint with slug %q not found in the credential's organization", slug),
 		}
 	}
 	return &page.Endpoints[0], nil

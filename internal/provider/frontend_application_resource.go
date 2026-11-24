@@ -123,12 +123,7 @@ func (r *FrontendApplicationResource) ModifyPlan(ctx context.Context, req resour
 		resp.Diagnostics.AddAttributeError(
 			path.Root("adopt_existing_service_name"),
 			"Same-name replacement requires adoption",
-			"Set adopt_existing_service_name to true before changing "+
-				"service_namespace or environment without changing name. Use "+
-				"lifecycle.create_before_destroy when environment changes. A "+
-				"namespace-only replacement keeps the same unique identity, so "+
-				"it must use destroy-before-create and interrupts ingestion; use "+
-				"a separately named application for a zero-downtime handoff.",
+			"Set adopt_existing_service_name to true before changing service_namespace or environment without changing name. Use lifecycle.create_before_destroy when environment changes. A namespace-only replacement keeps the same unique identity, so it must use destroy-before-create and interrupts ingestion; use a separately named application for a zero-downtime handoff.",
 		)
 	}
 }
@@ -245,9 +240,7 @@ func (r *FrontendApplicationResource) Read(ctx context.Context, req resource.Rea
 	if active == nil {
 		resp.Diagnostics.AddWarning(
 			"Frontend application has no active token",
-			"The application remains managed, but its token outputs are "+
-				"null. Add a logfire_frontend_application_token resource to "+
-				"issue a replacement.",
+			"The application remains managed, but its token outputs are null. Add a logfire_frontend_application_token resource to issue a replacement.",
 		)
 	} else {
 		refreshed.TokenID = types.StringValue(active.ID)
@@ -285,9 +278,7 @@ func (r *FrontendApplicationResource) ImportState(ctx context.Context, req resou
 	parts, err := splitImportParts(strings.TrimSpace(req.ID), 2)
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid import ID format",
-			`Expected "project_id/application_id". Example: `+
-				`terraform import logfire_frontend_application.app `+
-				`"project-id/application-id"`)
+			`Expected "project_id/application_id". Example: terraform import logfire_frontend_application.app "project-id/application-id"`)
 		return
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("project_id"), parts[0])...)

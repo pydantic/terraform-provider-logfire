@@ -112,11 +112,7 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 		resp.Diagnostics.AddAttributeError(
 			path.Root("base_url"),
 			"Unknown Logfire API Host",
-			"The provider cannot create the Logfire API client as there is an "+
-				"unknown configuration value for the Logfire API endpoint. "+
-				"Either target apply the source of the value first, set the value "+
-				"statically in the configuration, or use the LOGFIRE_BASE_URL "+
-				"environment variable.",
+			"The provider cannot create the Logfire API client as there is an unknown configuration value for the Logfire API endpoint. Either target apply the source of the value first, set the value statically in the configuration, or use the LOGFIRE_BASE_URL environment variable.",
 		)
 	}
 
@@ -124,11 +120,7 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 		resp.Diagnostics.AddAttributeError(
 			path.Root("api_key"),
 			"Unknown Logfire API token",
-			"The provider cannot create the Logfire API client as there is an "+
-				"unknown configuration value for the Logfire API token. "+
-				"Either target apply the source of the value first, set the value "+
-				"statically in the configuration, or use the LOGFIRE_API_KEY "+
-				"environment variable.",
+			"The provider cannot create the Logfire API client as there is an unknown configuration value for the Logfire API token. Either target apply the source of the value first, set the value statically in the configuration, or use the LOGFIRE_API_KEY environment variable.",
 		)
 	}
 
@@ -136,11 +128,7 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 		resp.Diagnostics.AddAttributeError(
 			path.Root("organization"),
 			"Unknown Logfire organization",
-			"The provider cannot create the Logfire API client as there is an "+
-				"unknown configuration value for organization. "+
-				"Set the value statically in the configuration, use the "+
-				"LOGFIRE_ORGANIZATION environment variable, "+
-				"or pass a name that Terraform knows at plan time.",
+			"The provider cannot create the Logfire API client as there is an unknown configuration value for organization. Set the value statically in the configuration, use the LOGFIRE_ORGANIZATION environment variable, or pass a name that Terraform knows at plan time.",
 		)
 	}
 
@@ -148,10 +136,7 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 		resp.Diagnostics.AddAttributeError(
 			path.Root("custom_headers"),
 			"Unknown custom headers",
-			"The provider cannot create the Logfire API client as there is an "+
-				"unknown configuration value for custom_headers. "+
-				"Either target apply the source of the value first or set the "+
-				"value statically in the configuration.",
+			"The provider cannot create the Logfire API client as there is an unknown configuration value for custom_headers. Either target apply the source of the value first or set the value statically in the configuration.",
 		)
 	}
 
@@ -177,9 +162,7 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 		resp.Diagnostics.AddAttributeError(
 			path.Root("organization"),
 			"Invalid Logfire organization",
-			fmt.Sprintf("The organization %q (from the provider block or "+
-				"LOGFIRE_ORGANIZATION) is not an organization name. "+
-				"An organization name %s.", organization, organizationNameRule),
+			fmt.Sprintf("The organization %q (from the provider block or LOGFIRE_ORGANIZATION) is not an organization name. An organization name %s.", organization, organizationNameRule),
 		)
 	}
 
@@ -187,11 +170,7 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 		resp.Diagnostics.AddAttributeError(
 			path.Root("api_key"),
 			"Missing Logfire API Api Key",
-			"The provider cannot create the Logfire API client as there is a "+
-				"missing or empty value for the Logfire API Api Key. "+
-				"Set the api_key value in the configuration or use the "+
-				"LOGFIRE_API_KEY environment variable. "+
-				"If either is already set, ensure the value is not empty.",
+			"The provider cannot create the Logfire API client as there is a missing or empty value for the Logfire API Api Key. Set the api_key value in the configuration or use the LOGFIRE_API_KEY environment variable. If either is already set, ensure the value is not empty.",
 		)
 	}
 
@@ -205,13 +184,9 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 			resp.Diagnostics.AddAttributeError(
 				path.Root("base_url"),
 				"Unable to infer Logfire API Base URL",
-				"The provider cannot create the Logfire API client because base_url "+
-					"was not set and the api_key does not identify a supported "+
-					"Logfire SaaS region. "+
+				"The provider cannot create the Logfire API client because base_url was not set and the api_key does not identify a supported Logfire SaaS region. "+
 					fmt.Sprintf("Reason: %s. ", err)+
-					"Set the base_url value in the configuration or use the "+
-					"LOGFIRE_BASE_URL environment variable. "+
-					"Self-hosted customers should always set base_url explicitly.",
+					"Set the base_url value in the configuration or use the LOGFIRE_BASE_URL environment variable. Self-hosted customers should always set base_url explicitly.",
 			)
 			return
 		}
@@ -280,8 +255,7 @@ func customHeadersFromConfig(ctx context.Context, config types.Map) (http.Header
 			diags.AddAttributeError(
 				headerPath,
 				"Reserved custom header",
-				fmt.Sprintf("%q is managed by the provider and cannot be configured "+
-					"in custom_headers.", name),
+				fmt.Sprintf("%q is managed by the provider and cannot be configured in custom_headers.", name),
 			)
 		case value == "":
 			diags.AddAttributeError(
@@ -293,8 +267,7 @@ func customHeadersFromConfig(ctx context.Context, config types.Map) (http.Header
 			diags.AddAttributeError(
 				headerPath,
 				"Invalid custom header value",
-				fmt.Sprintf("Custom header %q has a value that is not a valid HTTP "+
-					"header value.", name),
+				fmt.Sprintf("Custom header %q has a value that is not a valid HTTP header value.", name),
 			)
 		default:
 			headers.Set(name, value)

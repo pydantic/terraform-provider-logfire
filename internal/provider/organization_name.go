@@ -36,8 +36,6 @@ func rejectOrganizationContext(c *logclient.APIClient, diags *diag.Diagnostics) 
 		return false
 	}
 	diags.AddError("Not available through an organization", fmt.Sprintf(
-		"This resource needs a credential with a user, but the provider acts in "+
-			"organization %q through a token that has none. Use a provider without "+
-			"organization, with an API key of that organization.", c.Organization()))
+		"This resource needs a credential with a user, but the provider acts in organization %q through a token that has none. Use a provider without organization, with an API key of that organization.", c.Organization()))
 	return true
 }
