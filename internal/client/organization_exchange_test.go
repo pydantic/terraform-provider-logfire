@@ -4,6 +4,7 @@
 package client
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -61,6 +62,12 @@ func newExchangeInstance(t *testing.T) *exchangeInstance {
 				return
 			}
 			_, _ = fmt.Fprintf(w, `{"access_token":"%s#%d","expires_in":900}`, audience, n)
+		case r.URL.Path == organizationContextPath && r.Method == http.MethodPut:
+			in.record(r)
+			_, _ = w.Write([]byte(`{"id":"org-a","organization_name":"team-z"}`))
+		case r.URL.Path == organizationContextPath && r.Method == http.MethodDelete:
+			in.record(r)
+			w.WriteHeader(http.StatusNoContent)
 		case r.URL.Path == "/api/v1/instance/organizations/":
 			in.record(r)
 			_, _ = w.Write([]byte(`[]`))
@@ -302,4 +309,38 @@ func TestExchangeFailures(t *testing.T) {
 			t.Fatalf("err = %q, want %q", err, want)
 		}
 	})
+}
+
+// A token stays bound to the organization it was exchanged for. After a rename
+// or a delete frees a name, a request for that name exchanges again, so that an
+// organization that takes the name never gets the old organization's token.
+func TestFreedOrganizationNameExchangesAgain(t *testing.T) {
+	t.Parallel()
+	for name, free := range map[string]func(context.Context, *APIClient) error{
+		"rename": func(ctx context.Context, c *APIClient) error {
+			_, err := c.UpdateOrganizationContext(ctx, "team-a", OrganizationUpdate{})
+			return err
+		},
+		"delete": func(ctx context.Context, c *APIClient) error {
+			return c.DeleteOrganizationContext(ctx, "team-a")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			in := newExchangeInstance(t)
+			c := in.client(t, nil)
+			if _, err := c.ForOrganization("team-a").ListProjects(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if err := free(t.Context(), c); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.ForOrganization("team-a").ListProjects(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if got := in.exchangeCount("team-a"); got != 2 {
+				t.Fatalf("exchanges for team-a = %d, want 2", got)
+			}
+		})
+	}
 }

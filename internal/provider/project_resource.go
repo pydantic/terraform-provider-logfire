@@ -234,10 +234,12 @@ func (r *ProjectResource) Read(ctx context.Context, req resource.ReadRequest, re
 
 	getProject := func(client *logclient.APIClient) (*logclient.ProjectRead, int, error) {
 		out, status, err := client.GetProject(ctx, state.ID.ValueString())
-		// The server answers 403 for a project outside the token's organization.
-		// An exchanged token has the scopes the provider asked for, so with one
-		// the 403 means the project is not in the organization.
-		if status == http.StatusForbidden && knownString(state.OrganizationID) {
+		// The server answers 403 with this message for a project outside the
+		// token's organization. An exchanged token has the scopes the provider
+		// asked for, so with one the 403 means the project is not in the
+		// organization. Any other 403, from a proxy for example, stays an error.
+		if status == http.StatusForbidden && knownString(state.OrganizationID) &&
+			strings.Contains(err.Error(), "You do not have permission to access this project") {
 			status = http.StatusNotFound
 		}
 		return out, status, err
@@ -475,11 +477,14 @@ func (r *ProjectResource) findProject(ctx context.Context, org, name string) (st
 	}
 	// The last candidate is the target organization, so its failure is the answer
 	// when nothing is found.
-	var lastErr error
+	var lastErr, ownErr error
 	ownListed := false
 	for i, c := range candidates {
 		list, err := c.ListProjects(ctx)
 		lastErr = err
+		if i == 0 && len(candidates) > 1 {
+			ownErr = err
+		}
 		ownListed = ownListed || (i == 0 && err == nil)
 		for _, project := range list {
 			if project.ProjectName == name && project.OrganizationName == org {
@@ -494,7 +499,9 @@ func (r *ProjectResource) findProject(ctx context.Context, org, name string) (st
 		return "", nil, fmt.Errorf("project %q was not found with this key; if %q is another organization, an instance-admin key is needed", name, org)
 	}
 	if lastErr != nil {
-		return "", nil, lastErr
+		// When the key's own list failed too, its error, such as a missing
+		// scope, matters as much as the exchange's.
+		return "", nil, errors.Join(ownErr, lastErr)
 	}
 	return "", nil, fmt.Errorf("project %q/%q not found", org, name)
 }

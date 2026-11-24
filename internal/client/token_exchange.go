@@ -306,7 +306,19 @@ func (c *APIClient) UpdateOrganizationContext(ctx context.Context, orgName strin
 	if err != nil {
 		return nil, err
 	}
+	if out.OrganizationName != orgName {
+		c.forgetOrganizationToken(orgName)
+	}
 	return &out, nil
+}
+
+// forgetOrganizationToken drops the cached token for a name that a rename or a
+// delete freed. The token stays bound to the old organization, so another
+// organization that takes the name must get its own.
+func (c *APIClient) forgetOrganizationToken(orgName string) {
+	c.shared.tokenMu.Lock()
+	defer c.shared.tokenMu.Unlock()
+	delete(c.shared.tokens, orgName)
 }
 
 // DeleteOrganizationContext deletes the organization named orgName through
@@ -315,6 +327,9 @@ func (c *APIClient) DeleteOrganizationContext(ctx context.Context, orgName strin
 	_, err := c.withOrganizationContext(ctx, orgName, func(token string) (*http.Response, error) {
 		return c.doJSONAuthorized(ctx, token, http.MethodDelete, organizationContextPath, nil, nil, http.StatusNoContent)
 	})
+	if err == nil {
+		c.forgetOrganizationToken(orgName)
+	}
 	return err
 }
 

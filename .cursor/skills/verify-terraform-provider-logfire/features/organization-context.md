@@ -39,7 +39,7 @@ the exact base URL the instance accepts as the exchange audience. That is its
 frontend host, or the backend's `OIDC_AUDIENCE` when it is set.
 
 1. Apply the example with two organizations, each through its own provider alias. Require a project in each and an empty second plan.
-2. Rename one organization through the API. Require refresh to update the project's `organization`, an empty plan, and the same project ID.
+2. Use a configuration that names an existing organization as a string, without `logfire_organization`, because a managed organization reports a rename outside Terraform and asks for a re-import. Rename that organization through the API. Require refresh to update the project's `organization`, an empty plan, and the same project ID.
 3. Set `organization` on the project to the new name, and require no replacement.
 4. Delete an organization through the API. Require refresh to drop its project from state.
 
@@ -49,5 +49,5 @@ frontend host, or the backend's `OIDC_AUDIENCE` when it is set.
 - `invalid_target` covers an unknown organization and an audience that does not match the instance.
 - The Terraform test framework serves every provider block from one provider process, and the last configured block wins. A lifecycle test with two provider blocks of different organizations acts in one of them only. Use one provider block per configuration and set `organization` on the projects.
 - The token endpoint limits exchanges to 20 a minute and 100 an hour per client IP.
-- A `LOGFIRE_ORGANIZATION` in the environment applies to every local test whose provider block omits `organization`. The lifecycle tests clear it.
+- `TestMain` in `internal/provider` clears `LOGFIRE_ORGANIZATION`, which would otherwise apply to every test whose provider block omits `organization`.
 - The exchanged token has no user, so `logfire_api_key` and `logfire_gateway_api_key` fail through it.

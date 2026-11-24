@@ -44,6 +44,8 @@ type organizationInstance struct {
 	exchangeNeedsAdmin bool
 	// projectListRefused makes the project list answer 403.
 	projectListRefused bool
+	// proxyForbids makes a project read answer a 403 that the instance did not send.
+	proxyForbids bool
 }
 
 func newOrganizationInstance(t *testing.T, names ...string) *organizationInstance {
@@ -214,6 +216,8 @@ func (api *organizationInstance) serve(w http.ResponseWriter, r *http.Request) {
 		api.projects[project.ID] = project
 		api.creates++
 		reply(http.StatusCreated, projectJSON(project))
+	case strings.HasPrefix(r.URL.Path, "/api/v1/projects/") && api.proxyForbids:
+		reply(http.StatusForbidden, map[string]string{"detail": "Blocked by proxy"})
 	case strings.HasPrefix(r.URL.Path, "/api/v1/projects/"):
 		project := api.projects[id]
 		if project == nil || project.OrganizationID != callerOrganization {
@@ -274,7 +278,6 @@ var expectNoChange = tfresource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck
 
 func runProjectLifecycle(t *testing.T, steps []tfresource.TestStep) {
 	t.Helper()
-	t.Setenv("LOGFIRE_ORGANIZATION", "")
 	tfresource.Test(t, tfresource.TestCase{IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories, Steps: steps})
 }
 
@@ -441,6 +444,20 @@ func TestLifecycleProjectDeletedOutsideTerraformIsCreatedAgain(t *testing.T) {
 	}
 }
 
+func TestLifecycleProjectKeepsStateOnAnotherForbiddenAnswer(t *testing.T) {
+	api := newOrganizationInstance(t, "team-a")
+	config := providerBlock(api, "team-a") + projectBlock("svc", "name = \"svc\"")
+	setProxy := func(on bool) func() { return func() { api.Lock(); api.proxyForbids = on; api.Unlock() } }
+	runProjectLifecycle(t, []tfresource.TestStep{
+		{Config: config},
+		{PreConfig: setProxy(true), Config: config, ExpectError: regexp.MustCompile(`Blocked by proxy`)},
+		{PreConfig: setProxy(false), Config: config, ConfigPlanChecks: expectNoChange},
+	})
+	if api.creates != 1 {
+		t.Errorf("creates = %d, want the project kept in state", api.creates)
+	}
+}
+
 func TestLifecycleProjectWithoutOrganizationUsesTheKey(t *testing.T) {
 	api := newOrganizationInstance(t)
 	config := providerBlock(api, "") + projectBlock("svc", "name = \"svc\"")
@@ -460,7 +477,6 @@ func TestLifecycleProjectWithoutOrganizationUsesTheKey(t *testing.T) {
 
 func TestProjectOrganizationNamesAreValidated(t *testing.T) {
 	api := newOrganizationInstance(t)
-	t.Setenv("LOGFIRE_ORGANIZATION", "")
 	for name, tc := range map[string]struct{ config, want string }{
 		"resource": {providerBlock(api, "") + projectBlock("svc", "organization = \"team-a/\"\nname = \"svc\""), "lowercase letters"},
 		"provider": {providerBlock(api, "team-a/") + projectBlock("svc", "name = \"svc\""), "not an organization name"},
@@ -590,6 +606,18 @@ func TestProjectImportReportsTheFailureOfTheTargetOrganization(t *testing.T) {
 			ImportStateId: "admin/missing",
 			ExpectError: regexp.MustCompile(
 				`(?s)project\s+"missing"\s+was\s+not\s+found\s+with\s+this\s+key;\s+if\s+"admin"\s+is\s+another\s+organization,\s+an\s+instance-admin\s+key\s+is\s+needed`),
+		}})
+	})
+	t.Run("a shorthand import keeps the own list's error", func(t *testing.T) {
+		api := newOrganizationInstance(t, "team-b")
+		api.exchangeNeedsAdmin = true
+		api.projectListRefused = true
+		runProjectLifecycle(t, []tfresource.TestStep{{
+			Config:        providerBlock(api, "") + projectBlock("svc", "name = \"svc\""),
+			ResourceName:  "logfire_project.svc",
+			ImportState:   true,
+			ImportStateId: "team-b/svc",
+			ExpectError:   regexp.MustCompile(`(?s)project:read.*instance-admin`),
 		}})
 	})
 	t.Run("a bare import reports a failed project list", func(t *testing.T) {
