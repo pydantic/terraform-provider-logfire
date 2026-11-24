@@ -98,8 +98,7 @@ func (e *InstanceAdminRequiredError) Unwrap() error { return e.Err }
 
 // UnknownOrganizationError reports that the token exchange knows no
 // organization of this name. The organization never existed, was deleted, or was
-// renamed outside Terraform. The same answer also covers a base_url that differs
-// from the one the instance is configured with.
+// renamed outside Terraform.
 type UnknownOrganizationError struct {
 	Organization string
 	Err          *OAuthTokenError
@@ -238,7 +237,9 @@ func tokenEndpointError(err error) error {
 // asExchangeError wraps the two refusals of an exchange that users can act on.
 // The exchange answers invalid_scope with "subject_token must include
 // instance:admin" to a key that is not an instance-admin key, and invalid_target
-// to an organization name it does not know. IsInvalidTargetError still holds for
+// "unknown organization" to an organization name it does not know. Other
+// invalid_target answers, such as an audience outside the instance's base URL,
+// keep the server's text. IsInvalidTargetError still holds for
 // the wrapped error.
 func asExchangeError(orgName string, err error) error {
 	var oauthErr *OAuthTokenError
@@ -248,7 +249,7 @@ func asExchangeError(orgName string, err error) error {
 	switch {
 	case oauthErr.Code == "invalid_scope" && strings.Contains(oauthErr.Description, "instance:admin"):
 		return &InstanceAdminRequiredError{Organization: orgName, Err: oauthErr}
-	case oauthErr.Code == "invalid_target":
+	case oauthErr.Code == "invalid_target" && strings.HasPrefix(oauthErr.Description, "unknown organization"):
 		return &UnknownOrganizationError{Organization: orgName, Err: oauthErr}
 	}
 	return err

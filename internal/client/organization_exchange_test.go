@@ -263,6 +263,20 @@ func TestExchangeFailures(t *testing.T) {
 			t.Fatalf("err = %v, want InstanceAdminRequiredError", err)
 		}
 	})
+	t.Run("audience outside the base URL keeps the server text", func(t *testing.T) {
+		t.Parallel()
+		in := newExchangeInstance(t)
+		in.exchangeStatus = []int{http.StatusBadRequest}
+		in.exchangeBody = `{"error":"invalid_target","error_description":"audience does not match the configured OIDC base URL"}`
+		_, err := in.client(t, nil).ForOrganization("team-a").ListProjects(t.Context())
+		if !IsInvalidTargetError(err) {
+			t.Fatalf("err = %v, want invalid_target", err)
+		}
+		var unknown *UnknownOrganizationError
+		if errors.As(err, &unknown) || !strings.Contains(err.Error(), "audience does not match the configured OIDC base URL") {
+			t.Fatalf("err = %q, want the server's base URL message", err)
+		}
+	})
 	t.Run("unknown organization", func(t *testing.T) {
 		t.Parallel()
 		in := newExchangeInstance(t)
