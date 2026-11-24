@@ -310,6 +310,30 @@ func TestLifecycleProjectsInTheProviderAndAnotherOrganization(t *testing.T) {
 	}
 }
 
+// A provider block without organization uses LOGFIRE_ORGANIZATION, and one with
+// organization ignores it.
+func TestLifecycleProjectOrganizationFromTheEnvironment(t *testing.T) {
+	for name, tc := range map[string]struct{ provider, want string }{
+		"provider block omits organization": {"", "team-a"},
+		"provider block wins":               {"team-b", "team-b"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			api := newOrganizationInstance(t, "team-a", "team-b")
+			t.Setenv("LOGFIRE_ORGANIZATION", "team-a")
+			runProjectLifecycle(t, []tfresource.TestStep{{
+				Config: providerBlock(api, tc.provider) + projectBlock("svc", "name = \"svc\""),
+				Check: tfresource.ComposeTestCheckFunc(
+					tfresource.TestCheckResourceAttr("logfire_project.svc", "organization", tc.want),
+					tfresource.TestCheckResourceAttr("logfire_project.svc", "organization_id", "org-"+tc.want),
+				),
+			}})
+			if left := api.projectsIn(tc.want); len(left) != 0 {
+				t.Errorf("organization %s still holds %v after destroy", tc.want, left)
+			}
+		})
+	}
+}
+
 func TestLifecycleProjectOrganizationArgument(t *testing.T) {
 	api := newOrganizationInstance(t, "team-a", "team-b")
 	config := func(organization, description string) string {
