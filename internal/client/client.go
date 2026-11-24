@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"golang.org/x/sync/singleflight"
 	"golang.org/x/time/rate"
 	"io"
 	"math/rand"
@@ -80,6 +81,10 @@ type disableAutomaticRetriesContextKey struct{}
 
 func disableAutomaticRetries(ctx context.Context) context.Context {
 	return context.WithValue(ctx, disableAutomaticRetriesContextKey{}, true)
+}
+
+func enableAutomaticRetries(ctx context.Context) context.Context {
+	return context.WithValue(ctx, disableAutomaticRetriesContextKey{}, false)
 }
 
 func (t *retryingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -321,12 +326,39 @@ type APIClient struct {
 	headers          http.Header
 	dashboardManager string
 
-	orgTokenMu    sync.Mutex
-	orgTokenCache map[string]orgTokenEntry
+	// organization is the organization that ForOrganization selected. Empty
+	// means the organization of the API key.
+	organization string
+
+	shared *clientShared
+}
+
+// clientShared is the state that a client and the clients derived from it with
+// ForOrganization share.
+type clientShared struct {
+	tokenMu sync.Mutex
+	tokens  map[string]orgTokenEntry
+	// exchanges lets concurrent requests for one organization share one exchange.
+	exchanges singleflight.Group
 
 	// legacySchedules is set once the instance has answered on the deprecated
 	// /schedules/ route, so later calls skip the notification windows route.
 	legacySchedules atomic.Bool
+}
+
+// ForOrganization returns a client that acts in the named organization. Its
+// requests carry a short-lived token that the instance-admin API key exchanges
+// for that organization, except on instance routes, which keep the API key. An
+// empty name returns a client that acts in the organization of the API key.
+func (c *APIClient) ForOrganization(name string) *APIClient {
+	derived := *c
+	derived.organization = name
+	return &derived
+}
+
+// Organization returns the organization that ForOrganization selected.
+func (c *APIClient) Organization() string {
+	return c.organization
 }
 
 type APIError struct {
@@ -438,12 +470,12 @@ func NewAPIClient(baseURL, token string, httpClient *http.Client, opts ...Option
 		return nil, fmt.Errorf("invalid endpoint: %w", err)
 	}
 	apiClient := &APIClient{
-		BaseURL:       u,
-		HTTP:          httpClient,
-		token:         token,
-		userAgent:     defaultUserAgent,
-		headers:       make(http.Header),
-		orgTokenCache: make(map[string]orgTokenEntry),
+		BaseURL:   u,
+		HTTP:      httpClient,
+		token:     token,
+		userAgent: defaultUserAgent,
+		headers:   make(http.Header),
+		shared:    &clientShared{tokens: make(map[string]orgTokenEntry)},
 
 		dashboardManager: "terraform",
 	}
@@ -455,8 +487,17 @@ func NewAPIClient(baseURL, token string, httpClient *http.Client, opts ...Option
 	return apiClient, nil
 }
 
+// instanceRoutePrefix starts the routes that authorize the instance-admin API
+// key itself. The other routes resolve the organization from the token.
+const instanceRoutePrefix = "/api/v1/instance/"
+
 func (c *APIClient) doJSON(ctx context.Context, method, path string, in any, out any, expectedStatus ...int) (*http.Response, error) {
-	return c.doJSONAuthorized(ctx, c.token, method, path, in, out, expectedStatus...)
+	if c.organization == "" || strings.HasPrefix(path, instanceRoutePrefix) {
+		return c.doJSONAuthorized(ctx, c.token, method, path, in, out, expectedStatus...)
+	}
+	return c.withOrganizationContext(ctx, c.organization, func(token string) (*http.Response, error) {
+		return c.doJSONAuthorized(ctx, token, method, path, in, out, expectedStatus...)
+	})
 }
 
 // doJSONAuthorized is doJSON with an explicit bearer token, for calls made with
@@ -524,11 +565,17 @@ func (c *APIClient) doJSONAuthorized(ctx context.Context, bearer, method, path s
 		return resp, newAPIError(resp, msg)
 	}
 
-	// Decode response if requested
-	if out != nil {
+	// Decode response if requested. A success with no body would leave out empty, and a list would
+	// then look like an empty collection.
+	if out != nil && resp.StatusCode != http.StatusNoContent {
 		dec := json.NewDecoder(resp.Body)
-		if err := dec.Decode(out); err != nil && err != io.EOF {
-			return resp, fmt.Errorf("decode response: %w", err)
+		if err := dec.Decode(out); err != nil {
+			switch {
+			case errors.Is(err, io.EOF) && resp.StatusCode >= 200 && resp.StatusCode < 300:
+				return resp, fmt.Errorf("decode response: the server answered %d with an empty body", resp.StatusCode)
+			case !errors.Is(err, io.EOF):
+				return resp, fmt.Errorf("decode response: %w", err)
+			}
 		}
 	}
 
@@ -1605,7 +1652,7 @@ func (c *APIClient) doSchedule(
 	if id != "" {
 		suffix = url.PathEscape(id) + "/"
 	}
-	if !c.legacySchedules.Load() {
+	if !c.shared.legacySchedules.Load() {
 		resp, err := c.doJSON(ctx, method, notificationWindowsPath+suffix, in, out, expected)
 		if !isMissingRoute(err) {
 			return resp, err
@@ -1613,7 +1660,7 @@ func (c *APIClient) doSchedule(
 	}
 	resp, err := c.doJSON(ctx, method, legacySchedulesPath+suffix, in, out, expected)
 	if err == nil {
-		c.legacySchedules.Store(true)
+		c.shared.legacySchedules.Store(true)
 	}
 	return resp, err
 }

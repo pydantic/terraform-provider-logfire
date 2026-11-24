@@ -137,7 +137,7 @@ func TestOrganizationContextExchange(t *testing.T) {
 				if want := "https://example.invalid/acme"; form.Get("audience") != want {
 					t.Fatalf("audience = %q, want %q", form.Get("audience"), want)
 				}
-				if form.Get("scope") != "organization:read organization:write" {
+				if form.Get("scope") != organizationContextScopes {
 					t.Fatalf("scope = %q", form.Get("scope"))
 				}
 				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header),

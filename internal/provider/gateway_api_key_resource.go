@@ -258,6 +258,9 @@ func (r *GatewayAPIKeyResource) Create(ctx context.Context, req resource.CreateR
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
 		return
 	}
+	if rejectOrganizationContext(r.client, &resp.Diagnostics) {
+		return
+	}
 
 	var plan GatewayAPIKeyModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -297,6 +300,9 @@ func (r *GatewayAPIKeyResource) Read(ctx context.Context, req resource.ReadReque
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
 		return
 	}
+	if rejectOrganizationContext(r.client, &resp.Diagnostics) {
+		return
+	}
 
 	var state GatewayAPIKeyModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
@@ -329,6 +335,9 @@ func (r *GatewayAPIKeyResource) Read(ctx context.Context, req resource.ReadReque
 func (r *GatewayAPIKeyResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	if r.client == nil {
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
+		return
+	}
+	if rejectOrganizationContext(r.client, &resp.Diagnostics) {
 		return
 	}
 
@@ -417,6 +426,9 @@ func (r *GatewayAPIKeyResource) Delete(ctx context.Context, req resource.DeleteR
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
 		return
 	}
+	if rejectOrganizationContext(r.client, &resp.Diagnostics) {
+		return
+	}
 
 	var state GatewayAPIKeyModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
@@ -439,6 +451,9 @@ func (r *GatewayAPIKeyResource) Delete(ctx context.Context, req resource.DeleteR
 func (r *GatewayAPIKeyResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	if r.client == nil {
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
+		return
+	}
+	if rejectOrganizationContext(r.client, &resp.Diagnostics) {
 		return
 	}
 	parts, err := splitImportParts(req.ID, 1)

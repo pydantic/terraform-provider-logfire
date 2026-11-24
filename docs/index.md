@@ -49,6 +49,7 @@ Self-hosted Logfire instances expose APIs as they are released, so a feature the
 | `logfire_api_key`, `logfire_gateway_api_key` | v2026-06-09.02 | - |
 | `logfire_organization` create and list, organization import | v2026-06-03.01 | - |
 | `logfire_organization` read, update, delete (including setting `billing_email` at creation) | v2026-06-25.01 | - |
+| Provider `organization`, `logfire_project` `organization` | v2026-06-25.01 | - |
 | `logfire_gateway_provider` | v2026-08-12.01 | logfire-0.13.40 or newer |
 | `logfire_gateway_spending_limits`, `logfire_gateway_project_spending_limits` | v2026-10-16.01 | - |
 | Delegating project-bound scopes (`project:gateway_proxy`, `project:read_otlp`, `project:write_otlp`) from an organization-wide key | v2026-09-14.01 | logfire-0.13.46 or newer |
@@ -81,6 +82,7 @@ Each resource states the scopes its calls need. The summary below is the single 
 | `logfire_gateway_spending_limits` | `organization:read_gateway` / `organization:write_gateway` (`organization:read` / `organization:write` are also accepted) | Organization-wide key |
 | `logfire_gateway_project_spending_limits` | `organization:read_gateway` / `organization:write_gateway` (`organization:read` / `organization:write` are also accepted) | A key that can reach the project |
 | `logfire_organization` | `organization:admin` | A key created in the admin-panel organization (self-hosted only) |
+| Any resource, when the provider sets `organization`. `logfire_project` also, when it sets `organization`. | `instance:admin` | A key created in the admin-panel organization (self-hosted only). The exchanged token holds a fixed scope set, listed under "Managing several organizations on a self-hosted instance". The `organization` of a project reaches that project only. |
 | `logfire_group_mappings` | `instance:admin` (`organization:admin` is equivalent) | A key created in the admin-panel organization (self-hosted only) |
 
 Two rules decide what a credential can do:
@@ -148,11 +150,71 @@ resource "logfire_gateway_api_key" "example" {
 }
 ```
 
+## Managing several organizations on a self-hosted instance
+
+Use this when one configuration manages projects in more than one organization of a self-hosted instance. One instance-admin API key acts in every organization, so you need no key per organization.
+
+The key must hold `instance:admin` and belong to the admin organization. The instance must run Logfire v2026-06-25.01 or newer. Any other key fails with an error that names the requirement.
+
+The provider exchanges the key at `/api/oauth/token` for a short-lived token for one organization and sends that token on the organization's routes. Routes under `/api/v1/instance/` keep the key. Without an organization, the provider sends the key on every request.
+
+The token acts as a service and has no user, so its scopes are its whole permission boundary. Every token holds these scopes:
+
+```text
+organization:read organization:write organization:create_project
+organization:read_member organization:write_member
+organization:read_channel organization:write_channel
+organization:create_api_key organization:read_api_key organization:write_api_key
+project:read project:write project:read_token project:write_token
+project:read_dashboard project:write_dashboard project:read_alert project:write_alert
+```
+
+Terraform cannot loop over provider blocks, so use one provider alias per organization. Set `organization` on each provider. A provider that omits `organization`, an alias included, uses `LOGFIRE_ORGANIZATION` when it is set.
+
+```terraform
+provider "logfire" {
+  base_url = "https://logfire.example.com"
+  api_key  = var.instance_admin_key
+}
+
+resource "logfire_organization" "team_a" {
+  name = "team-a"
+}
+
+provider "logfire" {
+  alias        = "team_a"
+  base_url     = "https://logfire.example.com"
+  api_key      = var.instance_admin_key
+  organization = logfire_organization.team_a.name
+}
+
+resource "logfire_project" "api" {
+  provider = logfire.team_a
+  name     = "api"
+}
+```
+
+To rename an organization that a provider alias references, apply the rename first with `terraform apply -target=logfire_organization.team_a`. In a full apply the alias uses the new name during the plan, before the organization has it, and the refresh of the alias's resources fails.
+
+`logfire_project` also takes an `organization` argument that overrides the provider's, so one provider can create projects in several organizations. It reaches the project only. Resources that reference the project, such as write tokens, alerts, and dashboards, use the organization of their own provider, so they need the alias of the project's organization. `organization_id` holds the ID of the organization when the project is in a named organization, and is null for a project in the organization of the key.
+
+- Changing a project's `organization` replaces it when the new name is a known, existing organization with another ID than `organization_id`. If the new name is unknown at plan time, is the same organization under another name, or is not in the instance yet, the project updates in place. If the project is not in the named organization, the apply fails and deletes nothing. Before it plans a replacement, the provider checks that it can act in the new organization and that no project there has the same name, so a move it cannot finish fails at plan time.
+- A project moved into an organization that the same apply creates therefore fails at apply. Apply the organization first, for example with `terraform apply -target`, and then change the project.
+- After an organization is renamed outside Terraform, a refresh updates the project's `organization` to the new name. After an organization is deleted, a refresh removes its projects from state. Other resources on a provider alias for that organization fail their refresh with `does not exist on this instance`. Remove them from state with `removed` blocks that set `lifecycle { destroy = false }`.
+- A project with an `organization_id` stays in the organization recorded in its state. Changing the provider `organization` does not move it. Set `organization` on the project to replace it into the new organization. A project created without a named organization has a null `organization_id` and follows the provider `organization` like other resources.
+- Setting `organization` on such a project does not reach it if the key is not from the project's organization, for example after a switch from a per-organization key to an instance-admin key. Its refresh fails with a 403. Set the provider `organization` instead, or remove the project from state with a `removed` block that sets `lifecycle { destroy = false }` and import it as `<organization>/<name>`.
+- Changing the provider `organization` does not move other resources either. Terraform reads them in the newly targeted organization, where some show as missing and others fail with `403 You do not have permission to access this project`, and a singleton such as `logfire_gateway_spending_limits` applies to the new organization. To retarget, keep the existing resources on a provider alias that sets the old `organization`, or remove them from state first with `removed` blocks that set `lifecycle { destroy = false }`. A `removed` block without that setting destroys the resources.
+- `logfire_api_key` and `logfire_gateway_api_key` do not work through an organization. The instance refuses to create an API key for a token without a user. Create those keys with a key from the target organization.
+
 ## Troubleshooting credentials
 
 - `403 This token is missing the required scope: X.` — the provider credential lacks a scope the call needs. Add `X` to the key and retry.
 - `403 You do not have permission to access this project` — the credential cannot reach the project it was given. The key is either project-scoped to a different project, created in a different organization than the project, or the project no longer exists in the key's organization. The API answers the same way for all three on purpose, so it cannot be used to probe.
 - `403 The ... scope is not granted to the calling credential and cannot be delegated` — the provider credential was asked to mint a key with a scope it does not hold. For `project:read_otlp`, `project:write_otlp`, and `project:gateway_proxy`, an organization-wide key may delegate them only if it also holds `organization:create_api_key` and the instance runs Logfire v2026-09-14.01 or newer; before that, or for a project-scoped operator, see "Creating gateway keys" above.
+- `cannot act in organization "x": the api_key must be an instance-admin API key` means the provider or a project sets `organization` and the key lacks `instance:admin`. Use a key from the admin organization that holds `instance:admin`.
+- `organization "<name>" does not exist on this instance` means no organization has that name, for example after an outside rename.
+- `audience does not match the configured OIDC base URL` means the audience does not start with the instance's OIDC base URL followed by `/`. The exchange sends `base_url`, then `/`, then the organization name. Check that `base_url` matches the instance's base URL, and that the instance setting has no trailing slash.
+- `unknown organization: '<name>'` with a name you did not set means `base_url` has an extra path, which the instance reads as the organization.
 - `404 Not Found` from a self-hosted instance — the instance may predate the API being called. See "Self-hosted compatibility" above.
 
 <!-- schema generated by tfplugindocs -->
@@ -163,3 +225,4 @@ resource "logfire_gateway_api_key" "example" {
 - `api_key` (String, Sensitive) Bearer token. If omitted, the LOGFIRE_API_KEY environment variable is used.
 - `base_url` (String) Base URL for the Logfire API. If omitted, the provider uses LOGFIRE_BASE_URL or infers the SaaS endpoint from the api_key region. Self-hosted customers should set this explicitly.
 - `custom_headers` (Map of String, Sensitive) Additional HTTP headers to include on every Logfire API request. Intended for proxy, gateway, or edge authentication. Provider-managed headers cannot be overridden.
+- `organization` (String) Name of the organization that resources act in. Self-hosted instances only. The provider exchanges the instance-admin `api_key` for a short-lived token for this organization. If omitted, the provider uses LOGFIRE_ORGANIZATION. If neither is set, resources act in the organization of the `api_key`. The `organization` argument of `logfire_project` overrides this value.

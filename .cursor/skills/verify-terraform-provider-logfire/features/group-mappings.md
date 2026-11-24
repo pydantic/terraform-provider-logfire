@@ -44,4 +44,4 @@ and confirm `group_organization_mapping` is `[]`.
 - The API does not check role names. A wrong name applies without error and sign-in skips it.
 - Destroy does not restore access that earlier sign-ins changed or removed. Confirm that a live run does not need that access afterward.
 - While the Helm value `groupOrganizationMapping` is set, the API refuses writes with a 409. Live acceptance needs an instance without it.
-- Mapped organizations and projects must exist. A `logfire_project` is created in the credential's own organization, so a project in another organization must exist by other means.
+- Mapped organizations and projects must exist. Create a project in another organization with `organization` on `logfire_project` or on the provider, which needs an instance-admin key.

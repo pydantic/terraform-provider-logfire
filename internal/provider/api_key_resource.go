@@ -336,6 +336,9 @@ func (r *APIKeyResource) Create(ctx context.Context, req resource.CreateRequest,
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
 		return
 	}
+	if rejectOrganizationContext(r.client, &resp.Diagnostics) {
+		return
+	}
 
 	var plan APIKeyModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -364,6 +367,9 @@ func (r *APIKeyResource) Create(ctx context.Context, req resource.CreateRequest,
 func (r *APIKeyResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	if r.client == nil {
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
+		return
+	}
+	if rejectOrganizationContext(r.client, &resp.Diagnostics) {
 		return
 	}
 
@@ -395,6 +401,9 @@ func (r *APIKeyResource) Read(ctx context.Context, req resource.ReadRequest, res
 func (r *APIKeyResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	if r.client == nil {
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
+		return
+	}
+	if rejectOrganizationContext(r.client, &resp.Diagnostics) {
 		return
 	}
 
@@ -477,6 +486,9 @@ func (r *APIKeyResource) Delete(ctx context.Context, req resource.DeleteRequest,
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
 		return
 	}
+	if rejectOrganizationContext(r.client, &resp.Diagnostics) {
+		return
+	}
 
 	var state APIKeyModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
@@ -499,6 +511,9 @@ func (r *APIKeyResource) Delete(ctx context.Context, req resource.DeleteRequest,
 func (r *APIKeyResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	if r.client == nil {
 		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
+		return
+	}
+	if rejectOrganizationContext(r.client, &resp.Diagnostics) {
 		return
 	}
 	parts, err := splitImportParts(req.ID, 1)

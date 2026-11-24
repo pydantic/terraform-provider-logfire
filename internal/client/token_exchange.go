@@ -20,14 +20,34 @@ const (
 	// instance-admin exchange that mints short-lived org-scoped credentials.
 	tokenExchangePath = "/api/oauth/token"
 
-	// organizationContextScopes are the scopes the exchanged org-context
-	// credential requests: `organization:read` for the org read route,
-	// `organization:write` for update and delete.
-	organizationContextScopes = "organization:read organization:write"
+	// organizationContextScopes are the scopes of every token that a client
+	// from ForOrganization sends, the organization routes included. One set
+	// means one exchange per organization, and the token endpoint allows 20
+	// exchanges a minute and 100 an hour from one address. The token is a
+	// service caller without a user, so this set is its whole permission
+	// boundary. The exchange refuses instance:*, organization:admin, and
+	// project-bound scopes. The gateway scopes are absent on purpose:
+	// instances before 2026-10-15 reject an unknown scope for the whole
+	// exchange, and organization:read and organization:write cover the
+	// gateway routes.
+	organizationContextScopes = "organization:read organization:write organization:create_project " +
+		"organization:read_member organization:write_member " +
+		"organization:read_channel organization:write_channel " +
+		"organization:create_api_key organization:read_api_key organization:write_api_key " +
+		"project:read project:write project:read_token project:write_token " +
+		"project:read_dashboard project:write_dashboard project:read_alert project:write_alert"
 
-	// exchangeExpiresInSeconds mirrors the backend automation example; the
-	// server caps the value at its configured JWT max age.
+	// exchangeExpiresInSeconds mirrors the backend automation example. The
+	// server rejects a value above its configured JWT max age.
 	exchangeExpiresInSeconds = 900
+
+	// tokenExchangeMinimumRelease is the first release with the
+	// instance-admin token exchange.
+	tokenExchangeMinimumRelease = "v2026-06-25.01"
+
+	// flightTimeout bounds an exchange that concurrent requests share. It covers
+	// a retry without expires_in and the rate limiter's wait.
+	flightTimeout = 3 * defaultRequestTimeout
 
 	// tokenExpiryMargin shaves the cached credential's validity so a token is
 	// never used seconds before its server-side expiry.
@@ -62,6 +82,34 @@ func IsInvalidTargetError(err error) bool {
 	return errors.As(err, &oauthErr) && oauthErr.Code == "invalid_target"
 }
 
+// InstanceAdminRequiredError reports that the token exchange refused the API
+// key because it is not an instance-admin key.
+type InstanceAdminRequiredError struct {
+	Organization string
+	Err          *OAuthTokenError
+}
+
+func (e *InstanceAdminRequiredError) Error() string {
+	return fmt.Sprintf("cannot act in organization %q: the api_key must be an instance-admin API key "+
+		"(scope instance:admin) created in the self-hosted admin organization. %s", e.Organization, e.Err)
+}
+
+func (e *InstanceAdminRequiredError) Unwrap() error { return e.Err }
+
+// UnknownOrganizationError reports that the token exchange knows no
+// organization of this name. The organization never existed, was deleted, or was
+// renamed outside Terraform.
+type UnknownOrganizationError struct {
+	Organization string
+	Err          *OAuthTokenError
+}
+
+func (e *UnknownOrganizationError) Error() string {
+	return fmt.Sprintf("organization %q does not exist on this instance; if it was renamed, set the new name", e.Organization)
+}
+
+func (e *UnknownOrganizationError) Unwrap() error { return e.Err }
+
 type orgTokenEntry struct {
 	token   string
 	expires time.Time
@@ -72,26 +120,45 @@ type tokenExchangeResponse struct {
 	ExpiresIn   int    `json:"expires_in"`
 }
 
-// organizationContextToken returns a short-lived org-scoped credential for
-// orgName, exchanging the configured instance-admin credential via the OAuth
-// token endpoint and caching the result until shortly before its expiry.
-// force bypasses the cache, for a retry after an unexpected 401.
+// organizationContextToken returns a short-lived token for orgName, exchanging
+// the instance-admin API key at the OAuth token endpoint and caching the result
+// until shortly before its expiry. rejected is a token that the server just
+// refused with 401. A cached token that differs from it replaced it already and
+// is returned without another exchange.
 //
-// The cache lock is never held across the exchange request: an exchange for
-// one organization would otherwise block operations for every other
-// organization for up to the HTTP client timeout. Concurrent exchanges for
-// the same organization may mint a duplicate token; minting is idempotent
-// and the last write wins.
-func (c *APIClient) organizationContextToken(ctx context.Context, orgName string, force bool) (string, error) {
-	c.orgTokenMu.Lock()
-	if !force {
-		if entry, ok := c.orgTokenCache[orgName]; ok && time.Now().Before(entry.expires) {
-			c.orgTokenMu.Unlock()
-			return entry.token, nil
-		}
+// Concurrent requests for one organization share one exchange. The exchange runs
+// on a context that cancellation of the first request does not end, and without a
+// create's "no automatic retries" marker, because every waiting request depends
+// on it. The cache lock is never held across the exchange.
+func (c *APIClient) organizationContextToken(ctx context.Context, orgName, rejected string) (string, error) {
+	cached := func() (string, bool) {
+		c.shared.tokenMu.Lock()
+		defer c.shared.tokenMu.Unlock()
+		entry, ok := c.shared.tokens[orgName]
+		return entry.token, ok && time.Now().Before(entry.expires) && entry.token != rejected
 	}
-	c.orgTokenMu.Unlock()
+	if token, ok := cached(); ok {
+		return token, nil
+	}
+	result := c.shared.exchanges.DoChan(orgName, func() (any, error) {
+		if token, ok := cached(); ok {
+			return token, nil
+		}
+		detached, cancel := context.WithTimeout(enableAutomaticRetries(context.WithoutCancel(ctx)), flightTimeout)
+		defer cancel()
+		return c.exchangeToken(detached, orgName)
+	})
+	select {
+	case r := <-result:
+		token, _ := r.Val.(string)
+		return token, r.Err
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
 
+// exchangeToken runs one exchange for orgName and caches the token.
+func (c *APIClient) exchangeToken(ctx context.Context, orgName string) (string, error) {
 	form := url.Values{
 		"grant_type":         {"urn:ietf:params:oauth:grant-type:token-exchange"},
 		"subject_token":      {c.token},
@@ -101,9 +168,16 @@ func (c *APIClient) organizationContextToken(ctx context.Context, orgName string
 		"expires_in":         {fmt.Sprintf("%d", exchangeExpiresInSeconds)},
 	}
 	var out tokenExchangeResponse
-	_, err := c.doFormJSON(ctx, tokenExchangePath, form, &out, http.StatusOK)
+	err := c.postTokenExchange(ctx, form, &out)
+	var oauthErr *OAuthTokenError
+	if errors.As(err, &oauthErr) && oauthErr.Code == "invalid_request" && strings.HasPrefix(oauthErr.Description, "expires_in") {
+		// The instance's JWT max age is shorter. Without expires_in the token
+		// lives for that max age.
+		form.Del("expires_in")
+		err = c.postTokenExchange(ctx, form, &out)
+	}
 	if err != nil {
-		return "", asOAuthTokenError(err)
+		return "", asExchangeError(orgName, err)
 	}
 	if out.AccessToken == "" {
 		return "", fmt.Errorf("token exchange returned no access token")
@@ -117,15 +191,23 @@ func (c *APIClient) organizationContextToken(ctx context.Context, orgName string
 	} else {
 		valid /= 2
 	}
-	c.orgTokenMu.Lock()
-	c.orgTokenCache[orgName] = orgTokenEntry{token: out.AccessToken, expires: time.Now().Add(valid)}
-	c.orgTokenMu.Unlock()
+	c.shared.tokenMu.Lock()
+	c.shared.tokens[orgName] = orgTokenEntry{token: out.AccessToken, expires: time.Now().Add(valid)}
+	c.shared.tokenMu.Unlock()
 	return out.AccessToken, nil
 }
 
-// asOAuthTokenError converts a token-endpoint APIError into an OAuthTokenError
-// when the body carries the RFC 6749 flat envelope.
-func asOAuthTokenError(err error) error {
+func (c *APIClient) postTokenExchange(ctx context.Context, form url.Values, out *tokenExchangeResponse) error {
+	_, err := c.doFormJSON(ctx, tokenExchangePath, form, out, http.StatusOK)
+	return tokenEndpointError(err)
+}
+
+// tokenEndpointError converts a failed token-endpoint answer. A body with the
+// RFC 6749 flat envelope becomes an OAuthTokenError. A 404 without it means the
+// instance does not serve the exchange. Any other answer keeps its message but
+// drops its HTTP status, because callers read a 404 from a resource route as a
+// deleted resource, and an exchange failure must never look like one.
+func tokenEndpointError(err error) error {
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) {
 		return err
@@ -134,23 +216,53 @@ func asOAuthTokenError(err error) error {
 		Error            string `json:"error"`
 		ErrorDescription string `json:"error_description"`
 	}
-	if jsonErr := json.Unmarshal([]byte(apiErr.Message), &envelope); jsonErr != nil || envelope.Error == "" {
-		return err
+	if jsonErr := json.Unmarshal([]byte(apiErr.Message), &envelope); jsonErr == nil && envelope.Error != "" {
+		return &OAuthTokenError{
+			StatusCode:  apiErr.StatusCode,
+			Code:        envelope.Error,
+			Description: envelope.ErrorDescription,
+		}
 	}
-	return &OAuthTokenError{
-		StatusCode:  apiErr.StatusCode,
-		Code:        envelope.Error,
-		Description: envelope.ErrorDescription,
+	if apiErr.StatusCode == http.StatusNotFound {
+		return &EndpointUnavailableError{
+			Method:         http.MethodPost,
+			Path:           tokenExchangePath,
+			MinimumRelease: tokenExchangeMinimumRelease,
+			BackendVersion: apiErr.BackendVersion,
+		}
 	}
+	return fmt.Errorf("token exchange failed: %s", apiErr.Error())
 }
 
-// withOrganizationContext runs call with a valid org-context token for
-// orgName, retrying once with a fresh exchange when the server rejects a
-// cached token with 401.
+// asExchangeError wraps the two refusals of an exchange that users can act on.
+// The exchange answers invalid_scope with "subject_token must include
+// instance:admin" to a key that is not an instance-admin key, and invalid_target
+// "unknown organization" to an organization name it does not know. Other
+// invalid_target answers, such as an audience outside the instance's base URL,
+// keep the server's text. IsInvalidTargetError still holds for
+// the wrapped error.
+func asExchangeError(orgName string, err error) error {
+	var oauthErr *OAuthTokenError
+	if !errors.As(err, &oauthErr) {
+		return err
+	}
+	switch {
+	case oauthErr.Code == "invalid_scope" && strings.Contains(oauthErr.Description, "instance:admin"):
+		return &InstanceAdminRequiredError{Organization: orgName, Err: oauthErr}
+	// The server names the organization it read from the audience. An extra
+	// path in base_url makes that another name, which keeps the server's text.
+	case oauthErr.Code == "invalid_target" && oauthErr.Description == "unknown organization: '"+orgName+"'":
+		return &UnknownOrganizationError{Organization: orgName, Err: oauthErr}
+	}
+	return err
+}
+
+// withOrganizationContext runs call with a valid token for orgName, retrying
+// once with a fresh exchange when the server rejects the token with 401.
 func (c *APIClient) withOrganizationContext(
 	ctx context.Context, orgName string, call func(token string) (*http.Response, error),
 ) (*http.Response, error) {
-	token, err := c.organizationContextToken(ctx, orgName, false)
+	token, err := c.organizationContextToken(ctx, orgName, "")
 	if err != nil {
 		return nil, err
 	}
@@ -158,7 +270,7 @@ func (c *APIClient) withOrganizationContext(
 	if err == nil || resp == nil || resp.StatusCode != http.StatusUnauthorized {
 		return resp, err
 	}
-	token, err = c.organizationContextToken(ctx, orgName, true)
+	token, err = c.organizationContextToken(ctx, orgName, token)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +306,19 @@ func (c *APIClient) UpdateOrganizationContext(ctx context.Context, orgName strin
 	if err != nil {
 		return nil, err
 	}
+	if out.OrganizationName != orgName {
+		c.forgetOrganizationToken(orgName)
+	}
 	return &out, nil
+}
+
+// forgetOrganizationToken drops the cached token for a name that a rename or a
+// delete freed. The token stays bound to the old organization, so another
+// organization that takes the name must get its own.
+func (c *APIClient) forgetOrganizationToken(orgName string) {
+	c.shared.tokenMu.Lock()
+	defer c.shared.tokenMu.Unlock()
+	delete(c.shared.tokens, orgName)
 }
 
 // DeleteOrganizationContext deletes the organization named orgName through
@@ -203,6 +327,9 @@ func (c *APIClient) DeleteOrganizationContext(ctx context.Context, orgName strin
 	_, err := c.withOrganizationContext(ctx, orgName, func(token string) (*http.Response, error) {
 		return c.doJSONAuthorized(ctx, token, http.MethodDelete, organizationContextPath, nil, nil, http.StatusNoContent)
 	})
+	if err == nil {
+		c.forgetOrganizationToken(orgName)
+	}
 	return err
 }
 

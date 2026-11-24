@@ -5,11 +5,11 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 
-	stringvalidator "github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	rschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -17,7 +17,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
@@ -77,13 +76,7 @@ func (r *OrganizationResource) Schema(ctx context.Context, req resource.SchemaRe
 			"name": rschema.StringAttribute{
 				Required:            true,
 				MarkdownDescription: "Organization name/slug.",
-				Validators: []validator.String{
-					stringvalidator.LengthAtLeast(2),
-					stringvalidator.RegexMatches(
-						regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`),
-						"must use lowercase letters, numbers, and internal hyphens (no spaces or uppercase characters)",
-					),
-				},
+				Validators:          organizationNameValidators(),
 			},
 			"display_name": rschema.StringAttribute{
 				Optional:            true,
@@ -510,6 +503,17 @@ func (r *OrganizationResource) findOrganizationByNameOrID(ctx context.Context, k
 	return nil, false, nil
 }
 
+// exchangeCause returns the token endpoint's own answer. The client words
+// invalid_target as an unknown organization, which is wrong where the caller has
+// found the organization in the instance list.
+func exchangeCause(err error) error {
+	var oauthErr *logclient.OAuthTokenError
+	if errors.As(err, &oauthErr) {
+		return oauthErr
+	}
+	return err
+}
+
 // organizationIdentity classifies an invalid_target token exchange against the
 // instance organization list: the org-context API addresses organizations by
 // name, so the same error covers a missing organization, an externally
@@ -576,7 +580,7 @@ func (r *OrganizationResource) appendOrganizationContextError(
 	identity, entry, listErr := r.classifyOrganization(ctx, state.Name.ValueString(), state.ID.ValueString())
 	if listErr != nil {
 		diags.AddError(summary, fmt.Sprintf(
-			"token exchange rejected the organization audience (%v) and the follow-up organization list failed: %v", err, listErr))
+			"token exchange rejected the organization audience (%v) and the follow-up organization list failed: %v", exchangeCause(err), listErr))
 		return false
 	}
 	switch identity {
@@ -594,7 +598,7 @@ func (r *OrganizationResource) appendOrganizationContextError(
 	default:
 		diags.AddError(summary, fmt.Sprintf(
 			"the organization exists, but the token exchange rejected its audience: %v. "+
-				"Check that the provider base_url matches the instance's configured frontend host.", err))
+				"Check that the provider base_url matches the instance's configured frontend host.", exchangeCause(err)))
 	}
 	return false
 }
