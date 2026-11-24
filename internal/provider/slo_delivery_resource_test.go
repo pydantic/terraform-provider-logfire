@@ -57,9 +57,9 @@ func TestAccSloDelivery(t *testing.T) {
 			{
 				Config: testAccSloDeliveryConfig(projectName, suffix, sameOnEveryTier),
 				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("alerts").AtMapKey("fast").AtMapKey("channel_assignments"), knownvalue.SetSizeExact(1)),
-					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("alerts").AtMapKey("medium").AtMapKey("alert_id"), knownvalue.NotNull()),
-					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("alerts").AtMapKey("slow").AtMapKey("severity"), knownvalue.StringExact("ticket")),
+					sloTierCheck("fast", "channel_assignments", knownvalue.SetSizeExact(1)),
+					sloTierCheck("medium", "alert_id", knownvalue.NotNull()),
+					sloTierCheck("slow", "severity", knownvalue.StringExact("ticket")),
 				},
 			},
 			{
@@ -72,8 +72,8 @@ func TestAccSloDelivery(t *testing.T) {
 					},
 				},
 				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("alerts").AtMapKey("fast").AtMapKey("channel_assignments"), knownvalue.SetSizeExact(2)),
-					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("alerts").AtMapKey("medium").AtMapKey("channel_assignments"), knownvalue.SetSizeExact(1)),
+					sloTierCheck("fast", "channel_assignments", knownvalue.SetSizeExact(2)),
+					sloTierCheck("medium", "channel_assignments", knownvalue.SetSizeExact(1)),
 					statecheck.ExpectKnownValue("logfire_alert.shared", tfjsonpath.New("channel_assignments"), knownvalue.SetSizeExact(2)),
 				},
 			},
@@ -85,7 +85,7 @@ func TestAccSloDelivery(t *testing.T) {
 					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
 				},
 				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("alerts").AtMapKey("medium").AtMapKey("channel_assignments"), knownvalue.SetSizeExact(1)),
+					sloTierCheck("medium", "channel_assignments", knownvalue.SetSizeExact(1)),
 				},
 			},
 			{

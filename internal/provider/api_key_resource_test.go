@@ -16,9 +16,18 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 )
 
+func expectAccValue(address, attribute string, check knownvalue.Check) statecheck.StateCheck {
+	return statecheck.ExpectKnownValue(address, tfjsonpath.New(attribute), check)
+}
+
+func accPreApply(check plancheck.PlanCheck) resource.ConfigPlanChecks {
+	return resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{check}}
+}
+
 func TestAccAPIKeyResource(t *testing.T) {
 	t.Parallel()
 
+	const address = "logfire_api_key.test"
 	projectID := testAccScopedProjectID(t)
 	keyName := fmt.Sprintf("acc-key-%s", acctest.RandStringFromCharSet(6, acctest.CharSetAlphaNum))
 	expiresAt := time.Now().UTC().AddDate(0, 1, 0).Format("2006-01-02") + "T23:59:59Z"
@@ -30,58 +39,48 @@ func TestAccAPIKeyResource(t *testing.T) {
 			{
 				Config: testAccAPIKeyResourceConfig(projectID, keyName, nil, false),
 				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue("logfire_api_key.test", tfjsonpath.New("id"), knownvalue.NotNull()),
-					statecheck.ExpectKnownValue("logfire_api_key.test", tfjsonpath.New("token"), knownvalue.NotNull()),
-					statecheck.ExpectKnownValue("logfire_api_key.test", tfjsonpath.New("all_projects"), knownvalue.Bool(false)),
-					statecheck.ExpectKnownValue("logfire_api_key.test", tfjsonpath.New("active"), knownvalue.Bool(true)),
-					statecheck.ExpectKnownValue("logfire_api_key.test", tfjsonpath.New("expires_at"), knownvalue.Null()),
+					expectAccValue(address, "id", knownvalue.NotNull()),
+					expectAccValue(address, "token", knownvalue.NotNull()),
+					expectAccValue(address, "all_projects", knownvalue.Bool(false)),
+					expectAccValue(address, "active", knownvalue.Bool(true)),
+					expectAccValue(address, "expires_at", knownvalue.Null()),
 				},
 			},
 			{
-				Config: testAccAPIKeyResourceConfig(projectID, keyName, nil, false),
-				ConfigPlanChecks: resource.ConfigPlanChecks{
-					PreApply: []plancheck.PlanCheck{
-						plancheck.ExpectEmptyPlan(),
-					},
-				},
+				Config:           testAccAPIKeyResourceConfig(projectID, keyName, nil, false),
+				ConfigPlanChecks: accPreApply(plancheck.ExpectEmptyPlan()),
 				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue("logfire_api_key.test", tfjsonpath.New("token"), knownvalue.NotNull()),
+					expectAccValue(address, "token", knownvalue.NotNull()),
 				},
 			},
 			{
 				// Name and description update in place.
 				Config: testAccAPIKeyResourceConfig(projectID, keyName+"-renamed", nil, true),
-				ConfigPlanChecks: resource.ConfigPlanChecks{
-					PreApply: []plancheck.PlanCheck{
-						plancheck.ExpectResourceAction("logfire_api_key.test", plancheck.ResourceActionUpdate),
-					},
-				},
+				ConfigPlanChecks: accPreApply(
+					plancheck.ExpectResourceAction(address, plancheck.ResourceActionUpdate),
+				),
 				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue("logfire_api_key.test", tfjsonpath.New("name"), knownvalue.StringExact(keyName+"-renamed")),
-					statecheck.ExpectKnownValue("logfire_api_key.test", tfjsonpath.New("description"), knownvalue.StringExact("acceptance test key")),
+					expectAccValue(address, "name", knownvalue.StringExact(keyName+"-renamed")),
+					expectAccValue(address, "description", knownvalue.StringExact("acceptance test key")),
 				},
 			},
 			{
 				// Expiry change replaces the key.
-				Config: testAccAPIKeyResourceConfigWithExpiry(projectID, keyName+"-renamed", expiresAt),
-				ConfigPlanChecks: resource.ConfigPlanChecks{
-					PreApply: []plancheck.PlanCheck{
-						plancheck.ExpectResourceAction("logfire_api_key.test", plancheck.ResourceActionReplace),
-					},
-				},
+				Config: testAccAPIKeyResourceConfig(projectID, keyName+"-renamed", &expiresAt, true),
+				ConfigPlanChecks: accPreApply(
+					plancheck.ExpectResourceAction(address, plancheck.ResourceActionReplace),
+				),
 				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue("logfire_api_key.test", tfjsonpath.New("token"), knownvalue.NotNull()),
-					statecheck.ExpectKnownValue("logfire_api_key.test", tfjsonpath.New("expires_at"), knownvalue.StringExact(expiresAt)),
+					expectAccValue(address, "token", knownvalue.NotNull()),
+					expectAccValue(address, "expires_at", knownvalue.StringExact(expiresAt)),
 				},
 			},
 			{
 				// Import recovers the key without the create-only token.
-				ResourceName:      "logfire_api_key.test",
-				ImportState:       true,
-				ImportStateVerify: true,
-				ImportStateVerifyIgnore: []string{
-					"token",
-				},
+				ResourceName:            address,
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"token"},
 			},
 		},
 	})
@@ -106,8 +105,4 @@ resource "logfire_api_key" "test" {
   project_id  = %q
 %s%s}
 `, testAccProviderConfig(), testAccScopedProviderConfig(), keyName, projectID, descriptionLine, expiresAtLine)
-}
-
-func testAccAPIKeyResourceConfigWithExpiry(projectID, keyName, expiresAt string) string {
-	return testAccAPIKeyResourceConfig(projectID, keyName, &expiresAt, true)
 }

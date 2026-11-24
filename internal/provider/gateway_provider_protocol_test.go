@@ -12,6 +12,15 @@ import (
 	"github.com/pydantic/terraform-provider-logfire/internal/provider"
 )
 
+func gatewayDynamic(t *testing.T, raw tftypes.Value) *tfprotov6.DynamicValue {
+	t.Helper()
+	value, err := tfprotov6.NewDynamicValue(raw.Type(), raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &value
+}
+
 func TestGatewayProviderProtocolValidation(t *testing.T) {
 	for _, tt := range []struct {
 		name      string
@@ -38,13 +47,8 @@ func TestGatewayProviderProtocolValidation(t *testing.T) {
 				values["vendor"] = "azure"
 			}
 			values[tt.attribute] = tt.value
-			raw := gatewayValue(t, s, values)
-			config, err := tfprotov6.NewDynamicValue(raw.Type(), raw)
-			if err != nil {
-				t.Fatal(err)
-			}
 			response, err := server.ValidateResourceConfig(t.Context(), &tfprotov6.ValidateResourceConfigRequest{
-				TypeName: "logfire_gateway_provider", Config: &config,
+				TypeName: "logfire_gateway_provider", Config: gatewayDynamic(t, gatewayValue(t, s, values)),
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -78,26 +82,14 @@ func TestGatewayProviderReplacementPlan(t *testing.T) {
 				"id": "provider-id", "created_at": "2026-01-01T00:00:00Z", "slug": "primary",
 				"vendor": "openai", "api_key": "synthetic-key", "require_pricing": true,
 			}
-			state := gatewayValue(t, s, values)
-			prior, err := tfprotov6.NewDynamicValue(state.Type(), state)
-			if err != nil {
-				t.Fatal(err)
-			}
+			prior := gatewayDynamic(t, gatewayValue(t, s, values))
 			values[tt.attribute] = tt.value
-			proposedRaw := gatewayValue(t, s, values)
-			proposed, err := tfprotov6.NewDynamicValue(proposedRaw.Type(), proposedRaw)
-			if err != nil {
-				t.Fatal(err)
-			}
+			proposed := gatewayDynamic(t, gatewayValue(t, s, values))
 			delete(values, "id")
 			delete(values, "created_at")
-			configRaw := gatewayValue(t, s, values)
-			config, err := tfprotov6.NewDynamicValue(configRaw.Type(), configRaw)
-			if err != nil {
-				t.Fatal(err)
-			}
+			config := gatewayDynamic(t, gatewayValue(t, s, values))
 			response, err := server.PlanResourceChange(t.Context(), &tfprotov6.PlanResourceChangeRequest{
-				TypeName: "logfire_gateway_provider", PriorState: &prior, Config: &config, ProposedNewState: &proposed,
+				TypeName: "logfire_gateway_provider", PriorState: prior, Config: config, ProposedNewState: proposed,
 			})
 			if err != nil {
 				t.Fatal(err)

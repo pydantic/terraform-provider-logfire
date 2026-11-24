@@ -32,23 +32,22 @@ func testAccPreCheck(t *testing.T) {
 	}
 }
 
+// testAccProviderBlock builds a provider block that authenticates with key and
+// points at LOGFIRE_BASE_URL when it is set.
+func testAccProviderBlock(alias, key string) string {
+	block := "\nprovider \"logfire\" {\n"
+	if alias != "" {
+		block += fmt.Sprintf("  alias    = %q\n", alias)
+	}
+	if base := os.Getenv("LOGFIRE_BASE_URL"); base != "" {
+		block += fmt.Sprintf("  base_url = %q\n", base)
+	}
+	return block + fmt.Sprintf("  api_key  = %q\n}\n", key)
+}
+
 // testAccProviderConfig builds the provider config from env.
 func testAccProviderConfig() string {
-	base := os.Getenv("LOGFIRE_BASE_URL")
-	key := os.Getenv("LOGFIRE_API_KEY")
-	if base == "" {
-		return fmt.Sprintf(`
-provider "logfire" {
-  api_key  = %q
-}
-`, key)
-	}
-	return fmt.Sprintf(`
-provider "logfire" {
-  base_url = %q
-  api_key  = %q
-}
-`, base, key)
+	return testAccProviderBlock("", os.Getenv("LOGFIRE_API_KEY"))
 }
 
 // testAccScopedProviderConfig builds an aliased provider config authenticated
@@ -57,23 +56,7 @@ provider "logfire" {
 // caller holds, and project-bound scopes (read_otlp, write_otlp,
 // gateway_proxy) can only live on a project-scoped key.
 func testAccScopedProviderConfig() string {
-	base := os.Getenv("LOGFIRE_BASE_URL")
-	key := os.Getenv("LOGFIRE_SCOPED_API_KEY")
-	if base == "" {
-		return fmt.Sprintf(`
-provider "logfire" {
-  alias    = "keys"
-  api_key  = %q
-}
-`, key)
-	}
-	return fmt.Sprintf(`
-provider "logfire" {
-  alias    = "keys"
-  base_url = %q
-  api_key  = %q
-}
-`, base, key)
+	return testAccProviderBlock("keys", os.Getenv("LOGFIRE_SCOPED_API_KEY"))
 }
 
 // testAccScopedProjectID returns the pinned project that scoped-key tests

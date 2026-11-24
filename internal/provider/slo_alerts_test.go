@@ -6,6 +6,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -85,10 +86,46 @@ func withTierAssignments(t *testing.T, m SloModel, name string, set types.Set) S
 	return m
 }
 
+// sloTierObject is a tier object holding assignments. Its computed values are
+// unknown, as in a plan, or null, as in a configuration.
+func sloTierObject(t *testing.T, assignments types.Set, unknown bool) types.Object {
+	t.Helper()
+	tier := sloTierModel{
+		ChannelAssignments: assignments,
+		AlertID:            types.StringNull(),
+		Severity:           types.StringNull(),
+		Viable:             types.BoolNull(),
+	}
+	if unknown {
+		tier.AlertID = types.StringUnknown()
+		tier.Severity = types.StringUnknown()
+		tier.Viable = types.BoolUnknown()
+	}
+	obj, diags := types.ObjectValueFrom(context.Background(), sloTierAttrTypes, tier)
+	if diags.HasError() {
+		t.Fatal(diags)
+	}
+	return obj
+}
+
+func sloAlertsObject(t *testing.T, fast, medium, slow types.Object) types.Object {
+	t.Helper()
+	tiers := map[string]attr.Value{"fast": fast, "medium": medium, "slow": slow}
+	obj, diags := types.ObjectValue(sloAlertsAttrTypes, tiers)
+	if diags.HasError() {
+		t.Fatal(diags)
+	}
+	return obj
+}
+
 func TestSloReadToModelAlerts(t *testing.T) {
 	t.Parallel()
 
-	read := sloReadWithTiers([]logclient.ChannelAssignment{testPagerduty, testIncidents}, []logclient.ChannelAssignment{testIncidents}, []logclient.ChannelAssignment{testReliability})
+	read := sloReadWithTiers(
+		[]logclient.ChannelAssignment{testPagerduty, testIncidents},
+		[]logclient.ChannelAssignment{testIncidents},
+		[]logclient.ChannelAssignment{testReliability},
+	)
 	read.Alerts.Fast.Viable = false
 	read.Alerts.Medium.AlertID = nil
 	m := sloStateFrom(t, read)
@@ -105,7 +142,8 @@ func TestSloReadToModelAlerts(t *testing.T) {
 		{"slow", testChannelAssignments(t, testReliability), types.StringValue("alert-slow"), "ticket", true},
 	} {
 		got := sloTier(t, m, tt.tier)
-		if !got.ChannelAssignments.Equal(tt.want) || !got.AlertID.Equal(tt.alertID) || got.Severity.ValueString() != tt.severity || got.Viable.ValueBool() != tt.viable {
+		if !got.ChannelAssignments.Equal(tt.want) || !got.AlertID.Equal(tt.alertID) ||
+			got.Severity.ValueString() != tt.severity || got.Viable.ValueBool() != tt.viable {
 			t.Fatalf("%s: got %+v", tt.tier, got)
 		}
 	}
@@ -113,38 +151,18 @@ func TestSloReadToModelAlerts(t *testing.T) {
 
 func TestSloModelToCreateAlerts(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
 
 	// A configured tier is sent with its assignments, including `[]`; a tier
 	// whose assignments are unknown (not configured) is left out.
-	fast, diags := types.ObjectValueFrom(ctx, sloTierAttrTypes, sloTierModel{
-		ChannelAssignments: testChannelAssignments(t, testPagerduty),
-		AlertID:            types.StringUnknown(), Severity: types.StringUnknown(), Viable: types.BoolUnknown(),
-	})
-	if diags.HasError() {
-		t.Fatal(diags)
-	}
-	slow, diags := types.ObjectValueFrom(ctx, sloTierAttrTypes, sloTierModel{
-		ChannelAssignments: testChannelAssignments(t),
-		AlertID:            types.StringUnknown(), Severity: types.StringUnknown(), Viable: types.BoolUnknown(),
-	})
-	if diags.HasError() {
-		t.Fatal(diags)
-	}
-	alerts, diags := types.ObjectValue(sloAlertsAttrTypes, map[string]attr.Value{
-		"fast": fast, "medium": types.ObjectUnknown(sloTierAttrTypes), "slow": slow,
-	})
-	if diags.HasError() {
-		t.Fatal(diags)
-	}
 	m := baseSloModel()
-	m.Alerts = alerts
+	m.Alerts = sloAlertsObject(
+		t,
+		sloTierObject(t, testChannelAssignments(t, testPagerduty), true),
+		types.ObjectUnknown(sloTierAttrTypes),
+		sloTierObject(t, testChannelAssignments(t), true),
+	)
 
-	create, diags := sloModelToCreate(ctx, &m)
-	if diags.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", diags)
-	}
-	b, err := json.Marshal(create.Alerts)
+	b, err := json.Marshal(sloCreate(t, m).Alerts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,14 +205,15 @@ func TestSloModelToUpdateAlerts(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			payload, diags := sloModelToUpdate(context.Background(), &tt.plan, &state)
-			if diags.HasError() {
-				t.Fatalf("unexpected diagnostics: %v", diags)
-			}
+			payload := sloUpdate(t, tt.plan, state)
 			if payload.Alerts != nil {
-				for _, d := range []*logclient.SloTierDelivery{payload.Alerts.Fast, payload.Alerts.Medium, payload.Alerts.Slow} {
+				for _, d := range []*logclient.SloTierDelivery{
+					payload.Alerts.Fast, payload.Alerts.Medium, payload.Alerts.Slow,
+				} {
 					if d != nil {
-						sortAssignments(d.ChannelAssignments)
+						sort.Slice(d.ChannelAssignments, func(i, j int) bool {
+							return d.ChannelAssignments[i].ChannelID < d.ChannelAssignments[j].ChannelID
+						})
 					}
 				}
 			}
@@ -209,40 +228,23 @@ func TestSloModelToUpdateAlerts(t *testing.T) {
 	}
 }
 
-func sortAssignments(in []logclient.ChannelAssignment) {
-	for i := 1; i < len(in); i++ {
-		for j := i; j > 0 && in[j].ChannelID < in[j-1].ChannelID; j-- {
-			in[j], in[j-1] = in[j-1], in[j]
-		}
-	}
-}
-
 func TestSloReadWithoutAPIAlertsKeepsKnownPlanValues(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
 	// A create against a Logfire release that does not return `alerts`: the
 	// configured assignments stay, and unknown computed values become null.
-	fast, diags := types.ObjectValueFrom(ctx, sloTierAttrTypes, sloTierModel{
-		ChannelAssignments: testChannelAssignments(t, testPagerduty),
-		AlertID:            types.StringUnknown(), Severity: types.StringUnknown(), Viable: types.BoolUnknown(),
-	})
-	if diags.HasError() {
-		t.Fatal(diags)
-	}
-	alerts, diags := types.ObjectValue(sloAlertsAttrTypes, map[string]attr.Value{
-		"fast": fast, "medium": types.ObjectUnknown(sloTierAttrTypes), "slow": types.ObjectUnknown(sloTierAttrTypes),
-	})
-	if diags.HasError() {
-		t.Fatal(diags)
-	}
 	m := baseSloModel()
-	m.Alerts = alerts
-	if diags := sloReadToModel(ctx, sloRead(), &m); diags.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", diags)
-	}
+	m.Alerts = sloAlertsObject(
+		t,
+		sloTierObject(t, testChannelAssignments(t, testPagerduty), true),
+		types.ObjectUnknown(sloTierAttrTypes),
+		types.ObjectUnknown(sloTierAttrTypes),
+	)
+	sloReadInto(t, sloRead(), &m)
 	got := sloTier(t, m, "fast")
-	if !got.ChannelAssignments.Equal(testChannelAssignments(t, testPagerduty)) || !got.AlertID.IsNull() || !got.Viable.IsNull() {
+	if !got.ChannelAssignments.Equal(testChannelAssignments(t, testPagerduty)) ||
+		!got.AlertID.IsNull() || !got.Viable.IsNull() {
 		t.Fatalf("fast: got %+v", got)
 	}
 	a, _, _ := sloAlertsFromObject(ctx, m.Alerts)
@@ -289,7 +291,8 @@ func TestSloModifyPlanRepairsMissingTierAlert(t *testing.T) {
 			}
 
 			resp := resource.ModifyPlanResponse{Plan: plan}
-			r.ModifyPlan(ctx, resource.ModifyPlanRequest{State: state, Plan: plan, Config: tfsdk.Config{Schema: sch, Raw: plan.Raw}}, &resp)
+			config := tfsdk.Config{Schema: sch, Raw: plan.Raw}
+			r.ModifyPlan(ctx, resource.ModifyPlanRequest{State: state, Plan: plan, Config: config}, &resp)
 			if resp.Diagnostics.HasError() {
 				t.Fatal(resp.Diagnostics)
 			}

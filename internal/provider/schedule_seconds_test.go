@@ -29,8 +29,8 @@ import (
 // notification windows route or the deprecated one of an older instance, and
 // answers 404 elsewhere. It stores the windows it receives and returns every
 // time as "HH:MM:SS". It starts with one schedule, `seeded`, whose times have
-// non-zero seconds.
-func fakeScheduleLogfire(t *testing.T, route string) *httptest.Server {
+// non-zero seconds. It returns the server URL.
+func fakeScheduleLogfire(t *testing.T, route string) string {
 	t.Helper()
 	const seeded = "55555555-5555-5555-5555-555555555555"
 	type window struct {
@@ -65,7 +65,7 @@ func fakeScheduleLogfire(t *testing.T, route string) *httptest.Server {
 			"timezone": s.Timezone, "windows": s.Windows, "created_at": "2026-09-22T00:00:00Z", "updated_at": nil,
 		})
 	}
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
 		if !strings.HasPrefix(r.URL.Path, route) {
@@ -100,6 +100,8 @@ func fakeScheduleLogfire(t *testing.T, route string) *httptest.Server {
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
+	t.Cleanup(server.Close)
+	return server.URL
 }
 
 func testScheduleSecondsConfig(baseURL, label, start, end string) string {
@@ -125,45 +127,40 @@ resource "logfire_schedule" "test" {
 // windows route and the deprecated route of an older instance.
 func TestScheduleTimesRoundTrip(t *testing.T) {
 	for _, route := range []string{"/api/v1/notification-windows/", "/api/v1/schedules/"} {
-		t.Run(route, func(t *testing.T) { scheduleTimesRoundTrip(t, route) })
+		t.Run(route, func(t *testing.T) {
+			config := testScheduleSecondsConfig(fakeScheduleLogfire(t, route), "Office hours", "09:00", "17:30:15")
+			resource.Test(t, resource.TestCase{
+				IsUnitTest:               true,
+				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+				Steps: []resource.TestStep{
+					{
+						Config: config,
+						ConfigPlanChecks: resource.ConfigPlanChecks{
+							PostApplyPostRefresh: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+						},
+						ConfigStateChecks: []statecheck.StateCheck{
+							statecheck.ExpectKnownValue("logfire_schedule.test", tfjsonpath.New("windows").AtSliceIndex(0).AtMapKey("start_time"), knownvalue.StringExact("09:00")),
+							statecheck.ExpectKnownValue("logfire_schedule.test", tfjsonpath.New("windows").AtSliceIndex(0).AtMapKey("end_time"), knownvalue.StringExact("17:30:15")),
+						},
+					},
+					{
+						Config:            config,
+						ResourceName:      "logfire_schedule.test",
+						ImportState:       true,
+						ImportStateVerify: true,
+					},
+				},
+			})
+		})
 	}
-}
-
-func scheduleTimesRoundTrip(t *testing.T, route string) {
-	server := fakeScheduleLogfire(t, route)
-	defer server.Close()
-	config := testScheduleSecondsConfig(server.URL, "Office hours", "09:00", "17:30:15")
-	resource.Test(t, resource.TestCase{
-		IsUnitTest:               true,
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{
-				Config: config,
-				ConfigPlanChecks: resource.ConfigPlanChecks{
-					PostApplyPostRefresh: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
-				},
-				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue("logfire_schedule.test", tfjsonpath.New("windows").AtSliceIndex(0).AtMapKey("start_time"), knownvalue.StringExact("09:00")),
-					statecheck.ExpectKnownValue("logfire_schedule.test", tfjsonpath.New("windows").AtSliceIndex(0).AtMapKey("end_time"), knownvalue.StringExact("17:30:15")),
-				},
-			},
-			{
-				Config:            config,
-				ResourceName:      "logfire_schedule.test",
-				ImportState:       true,
-				ImportStateVerify: true,
-			},
-		},
-	})
 }
 
 // TestScheduleImportWithSeconds imports a schedule whose times have non-zero
 // seconds. The imported values must be valid configuration: the same values
 // in configuration then plan no change.
 func TestScheduleImportWithSeconds(t *testing.T) {
-	server := fakeScheduleLogfire(t, "/api/v1/notification-windows/")
-	defer server.Close()
-	config := testScheduleSecondsConfig(server.URL, "Night shift", "08:15:30", "17:45:59")
+	url := fakeScheduleLogfire(t, "/api/v1/notification-windows/")
+	config := testScheduleSecondsConfig(url, "Night shift", "08:15:30", "17:45:59")
 	resource.Test(t, resource.TestCase{
 		IsUnitTest:               true,
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
@@ -200,19 +197,14 @@ func TestScheduleTimeValueValidates(t *testing.T) {
 		if !ok || len(attribute.Validators) == 0 {
 			t.Fatalf("%s has no validators", name)
 		}
-		checkScheduleTimeStateValues(t, name, attribute.Validators)
-	}
-}
-
-func checkScheduleTimeStateValues(t *testing.T, name string, validators []validator.String) {
-	t.Helper()
-	for _, api := range []string{"00:00:00", "09:00:00", "08:15:30", "23:59:59", "09:30"} {
-		value := scheduleTimeValue(api, types.StringNull())
-		for _, v := range validators {
-			resp := &validator.StringResponse{}
-			v.ValidateString(t.Context(), validator.StringRequest{Path: path.Root(name), ConfigValue: value}, resp)
-			if resp.Diagnostics.HasError() {
-				t.Errorf("%s: state value %q from API %q does not validate: %v", name, value.ValueString(), api, resp.Diagnostics)
+		for _, api := range []string{"00:00:00", "09:00:00", "08:15:30", "23:59:59", "09:30"} {
+			value := scheduleTimeValue(api, types.StringNull())
+			for _, v := range attribute.Validators {
+				resp := &validator.StringResponse{}
+				v.ValidateString(t.Context(), validator.StringRequest{Path: path.Root(name), ConfigValue: value}, resp)
+				if resp.Diagnostics.HasError() {
+					t.Errorf("%s: state value %q from API %q does not validate: %v", name, value.ValueString(), api, resp.Diagnostics)
+				}
 			}
 		}
 	}

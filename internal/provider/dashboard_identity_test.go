@@ -19,13 +19,27 @@ import (
 	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
 )
 
+func newDashboardResource(t *testing.T, handler http.HandlerFunc) *DashboardResource {
+	t.Helper()
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	client, err := logclient.NewAPIClient(server.URL, "test-token", server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &DashboardResource{configured{client}}
+}
+
 func dashboardIdentityState(t *testing.T, r *DashboardResource, id types.String) tfsdk.State {
 	t.Helper()
 	var schema resource.SchemaResponse
 	r.Schema(t.Context(), resource.SchemaRequest{}, &schema)
 	state := tfsdk.State{Schema: schema.Schema, Raw: tftypes.NewValue(schema.Schema.Type().TerraformType(t.Context()), nil)}
 	m := DashboardModel{
-		ID: id, ProjectID: types.StringValue("project-1"), Name: types.StringValue("Original"), Slug: types.StringValue("target"),
+		ID:         id,
+		ProjectID:  types.StringValue("project-1"),
+		Name:       types.StringValue("Original"),
+		Slug:       types.StringValue("target"),
 		Definition: types.StringValue(`{"kind":"Dashboard","metadata":{},"spec":{}}`),
 	}
 	if diags := state.Set(t.Context(), &m); diags.HasError() {
@@ -80,21 +94,18 @@ func TestDashboardLifecycleWithMissingID(t *testing.T) {
 			t.Run(operation+"/"+missing.name, func(t *testing.T) {
 				t.Parallel()
 				var requests atomic.Int32
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				r := newDashboardResource(t, func(w http.ResponseWriter, req *http.Request) {
 					requests.Add(1)
 					w.WriteHeader(http.StatusNotFound)
-				}))
-				defer server.Close()
-				client, err := logclient.NewAPIClient(server.URL, "test-token", server.Client())
-				if err != nil {
-					t.Fatal(err)
-				}
-				r := &DashboardResource{configured{client}}
+				})
 				state := dashboardIdentityState(t, r, missing.id)
 				got, diags := runDashboardLifecycleOperation(t, r, state, operation)
+				if requests.Load() != 0 {
+					t.Fatalf("missing ID operation made %d API calls", requests.Load())
+				}
 				if operation == "read" {
-					if diags.HasError() || !got.Raw.IsNull() || requests.Load() != 0 {
-						t.Fatalf("observe-before-create read returned state=%v, diagnostics=%v, requests=%d", got.Raw, diags, requests.Load())
+					if diags.HasError() || !got.Raw.IsNull() {
+						t.Fatalf("observe-before-create read returned state=%v, diagnostics=%v", got.Raw, diags)
 					}
 					return
 				}
@@ -111,9 +122,6 @@ func TestDashboardLifecycleWithMissingID(t *testing.T) {
 				if !got.Raw.Equal(state.Raw) {
 					t.Fatal("missing ID operation must preserve state")
 				}
-				if requests.Load() != 0 {
-					t.Fatalf("missing ID operation made %d API calls", requests.Load())
-				}
 			})
 		}
 	}
@@ -124,7 +132,7 @@ func TestDashboardLifecycleDoesNotAdoptReusedSlug(t *testing.T) {
 	for _, operation := range []string{"read", "update", "delete"} {
 		t.Run(operation, func(t *testing.T) {
 			t.Parallel()
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			r := newDashboardResource(t, func(w http.ResponseWriter, req *http.Request) {
 				switch {
 				case req.Method == http.MethodGet && req.URL.Path == "/api/v1/projects/project-1/":
 					_, _ = w.Write([]byte(`{"project_name":"my-project"}`))
@@ -136,13 +144,7 @@ func TestDashboardLifecycleDoesNotAdoptReusedSlug(t *testing.T) {
 					t.Errorf("operation adopted another dashboard: %s %s", req.Method, req.URL.Path)
 					w.WriteHeader(http.StatusNotFound)
 				}
-			}))
-			defer server.Close()
-			client, err := logclient.NewAPIClient(server.URL, "test-token", server.Client())
-			if err != nil {
-				t.Fatal(err)
-			}
-			r := &DashboardResource{configured{client}}
+			})
 			state := dashboardIdentityState(t, r, types.StringValue("old-dashboard"))
 			got, diags := runDashboardLifecycleOperation(t, r, state, operation)
 			if operation == "update" {

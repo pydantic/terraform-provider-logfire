@@ -14,29 +14,20 @@ import (
 
 func groupMappingsClient(t *testing.T, status int, body string, check func(*http.Request)) *APIClient {
 	t.Helper()
-	c, err := NewAPIClient("https://example.invalid", "admin-key", &http.Client{
-		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			if req.URL.Path != "/api/v1/instance/group-mappings/" {
-				t.Fatalf("request path = %s, want the instance route and no token exchange", req.URL.Path)
-			}
-			if got := req.Header.Get("Authorization"); got != "Bearer admin-key" {
-				t.Fatalf("Authorization = %q, want the raw key", got)
-			}
-			if check != nil {
-				check(req)
-			}
-			return &http.Response{
-				StatusCode: status,
-				Header:     http.Header{"Logfire-Version": []string{"v2026-06-01.01"}},
-				Body:       io.NopCloser(strings.NewReader(body)),
-				Request:    req,
-			}, nil
-		}),
+	return newStubClient(t, func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != "/api/v1/instance/group-mappings/" {
+			t.Fatalf("request path = %s, want the instance route and no token exchange", req.URL.Path)
+		}
+		if got := req.Header.Get("Authorization"); got != "Bearer admin-key" {
+			t.Fatalf("Authorization = %q, want the raw key", got)
+		}
+		if check != nil {
+			check(req)
+		}
+		resp := stubResponse(req, status, body)
+		resp.Header.Set("Logfire-Version", "v2026-06-01.01")
+		return resp, nil
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return c
 }
 
 func TestGetGroupMappings(t *testing.T) {

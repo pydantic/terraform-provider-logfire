@@ -31,16 +31,16 @@ func TestAccSloResource(t *testing.T) {
 			{
 				Config: testAccSloResourceConfig(projectName, sloName, stringPtr("Initial SLO description"), "99.9", "30d", nil),
 				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("id"), knownvalue.NotNull()),
-					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("project_id"), knownvalue.NotNull()),
-					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("scope_kind"), knownvalue.StringExact("service")),
-					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("scope_value"), knownvalue.StringExact("payments-api")),
-					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("metric_aggregation"), knownvalue.StringExact("additive")),
-					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("name"), knownvalue.StringExact(sloName)),
-					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("description"), knownvalue.StringExact("Initial SLO description")),
-					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("source"), knownvalue.StringExact("records")),
-					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("target_percent"), knownvalue.StringExact("99.9")),
-					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("rolling_window"), knownvalue.StringExact("30d")),
+					sloAttrCheck("id", knownvalue.NotNull()),
+					sloAttrCheck("project_id", knownvalue.NotNull()),
+					sloAttrCheck("scope_kind", knownvalue.StringExact("service")),
+					sloAttrCheck("scope_value", knownvalue.StringExact("payments-api")),
+					sloAttrCheck("metric_aggregation", knownvalue.StringExact("additive")),
+					sloAttrCheck("name", knownvalue.StringExact(sloName)),
+					sloAttrCheck("description", knownvalue.StringExact("Initial SLO description")),
+					sloAttrCheck("source", knownvalue.StringExact("records")),
+					sloAttrCheck("target_percent", knownvalue.StringExact("99.9")),
+					sloAttrCheck("rolling_window", knownvalue.StringExact("30d")),
 				},
 			},
 			{
@@ -62,7 +62,6 @@ func TestAccSloResource(t *testing.T) {
 				ImportState:       true,
 				ImportStateVerify: true,
 				ImportStateIdFunc: func(s *terraform.State) (string, error) {
-					// Import by project name + SLO name
 					return fmt.Sprintf("%s/%s", projectName, sloName), nil
 				},
 			},
@@ -77,22 +76,26 @@ func TestAccSloResource(t *testing.T) {
 			{
 				Config: testAccSloResourceConfig(projectName, sloUpdatedName, stringPtr("Updated SLO description"), "99.95", "14d", []string{"prod"}),
 				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("name"), knownvalue.StringExact(sloUpdatedName)),
-					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("description"), knownvalue.StringExact("Updated SLO description")),
-					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("target_percent"), knownvalue.StringExact("99.95")),
-					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("rolling_window"), knownvalue.StringExact("14d")),
-					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("environments"), knownvalue.SetSizeExact(1)),
+					sloAttrCheck("name", knownvalue.StringExact(sloUpdatedName)),
+					sloAttrCheck("description", knownvalue.StringExact("Updated SLO description")),
+					sloAttrCheck("target_percent", knownvalue.StringExact("99.95")),
+					sloAttrCheck("rolling_window", knownvalue.StringExact("14d")),
+					sloAttrCheck("environments", knownvalue.SetSizeExact(1)),
 				},
 			},
 			{
 				Config: testAccSloResourceConfig(projectName, sloUpdatedName, nil, "99.95", "14d", nil),
 				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("description"), knownvalue.Null()),
-					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("environments"), knownvalue.Null()),
+					sloAttrCheck("description", knownvalue.Null()),
+					sloAttrCheck("environments", knownvalue.Null()),
 				},
 			},
 		},
 	})
+}
+
+func sloAttrCheck(attribute string, value knownvalue.Check) statecheck.StateCheck {
+	return statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New(attribute), value)
 }
 
 func testAccSloResourceConfig(projectName, sloName string, description *string, targetPercent, rollingWindow string, environments []string) string {

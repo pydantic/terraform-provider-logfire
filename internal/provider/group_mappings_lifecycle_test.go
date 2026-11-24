@@ -20,6 +20,30 @@ import (
 	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
 )
 
+// runUnitTest runs steps against the provider with no real Terraform backend.
+func runUnitTest(t *testing.T, steps ...resource.TestStep) {
+	t.Helper()
+	resource.Test(t, resource.TestCase{
+		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories, Steps: steps,
+	})
+}
+
+// expectAction expects the plan to do exactly one action to the resource.
+func expectAction(address string, action plancheck.ResourceActionType) resource.ConfigPlanChecks {
+	return resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
+		plancheck.ExpectResourceAction(address, action),
+	}}
+}
+
+// serveOrgToken answers the token exchange that organization routes need.
+func serveOrgToken(w http.ResponseWriter, r *http.Request) bool {
+	if r.URL.Path != "/api/oauth/token" {
+		return false
+	}
+	_, _ = w.Write([]byte(`{"access_token":"test-org-token","expires_in":900}`))
+	return true
+}
+
 const groupMappingsURL = "/api/v1/instance/group-mappings/"
 
 // groupMappingsAPI mimics the instance routes: a PUT replaces the whole document, checks
@@ -137,6 +161,26 @@ func (api *groupMappingsAPI) validate(mapping []logclient.GroupMapping) string {
 	return ""
 }
 
+// preConfig returns a step hook that changes the API under its lock.
+func (api *groupMappingsAPI) preConfig(change func()) func() {
+	return func() {
+		api.Lock()
+		defer api.Unlock()
+		change()
+	}
+}
+
+// storedOpsMapping is the mapping of groupMappingsOpsGroup with the given organization role.
+func storedOpsMapping(role string) []logclient.GroupMapping {
+	return []logclient.GroupMapping{{
+		GroupID: "platform-ops",
+		OrganizationRoles: []logclient.GroupMappingOrganizationRole{{
+			OrganizationName: "team-a", Role: role,
+			ProjectRoles: []logclient.GroupMappingProjectRole{{ProjectName: "api", Role: "read"}, {ProjectName: "worker", Role: "write"}},
+		}},
+	}}
+}
+
 func (api *groupMappingsAPI) lastPut(t *testing.T) string {
 	t.Helper()
 	api.Lock()
@@ -190,17 +234,14 @@ func TestLifecycleGroupMappingsWireNames(t *testing.T) {
 		`{"group_id":"dev","organization_roles":[` +
 		`{"organization_name":"team-a","role":"member","project_roles":[]},` +
 		`{"organization_name":"team-b","role":"guest","project_roles":[]}]}]}`
-	resource.Test(t, resource.TestCase{
-		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{{
-			Config: groupMappingsConfig(server.URL, groupMappingsOpsGroup, groupMappingsDevGroup),
-			Check: func(*terraform.State) error {
-				if got := api.lastPut(t); got != want {
-					return fmt.Errorf("PUT body = %s, want %s", got, want)
-				}
-				return nil
-			},
-		}},
+	runUnitTest(t, resource.TestStep{
+		Config: groupMappingsConfig(server.URL, groupMappingsOpsGroup, groupMappingsDevGroup),
+		Check: func(*terraform.State) error {
+			if got := api.lastPut(t); got != want {
+				return fmt.Errorf("PUT body = %s, want %s", got, want)
+			}
+			return nil
+		},
 	})
 }
 
@@ -209,48 +250,37 @@ func TestLifecycleGroupMappings(t *testing.T) {
 	server, api := newGroupMappingsAPI(t)
 	both := groupMappingsConfig(server.URL, groupMappingsOpsGroup, groupMappingsDevGroup)
 	reordered := groupMappingsConfig(server.URL, groupMappingsDevGroup, groupMappingsOpsGroup)
-	noPlan := resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
-		plancheck.ExpectResourceAction(groupMappingsResourceName, plancheck.ResourceActionNoop),
-	}}
-	update := resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
-		plancheck.ExpectResourceAction(groupMappingsResourceName, plancheck.ResourceActionUpdate),
-	}}
-	resource.Test(t, resource.TestCase{
-		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{
-				Config: both,
-				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr(groupMappingsResourceName, "id", "instance"),
-					resource.TestCheckResourceAttr(groupMappingsResourceName, "api_mapping_status", "active"),
-					resource.TestCheckResourceAttr(groupMappingsResourceName, "mapping.#", "2"),
-					resource.TestCheckResourceAttr(groupMappingsResourceName, "mapping.0.group_id", "platform-ops"),
-					resource.TestCheckResourceAttr(groupMappingsResourceName, "mapping.0.organization_roles.0.project_roles.1.project", "worker"),
-					resource.TestCheckResourceAttr(groupMappingsResourceName, "mapping.1.organization_roles.0.project_roles.#", "0"),
-					resource.TestCheckResourceAttr(groupMappingsResourceName, "mapping.1.organization_roles.1.project_roles.#", "0"),
-				),
-			},
-			{Config: both, ConfigPlanChecks: noPlan},
-			{Config: both, ResourceName: groupMappingsResourceName, ImportState: true, ImportStateId: "instance", ImportStateVerify: true},
-			{
-				// The server keeps the order it receives.
-				Config:           reordered,
-				ConfigPlanChecks: update,
-				Check:            resource.TestCheckResourceAttr(groupMappingsResourceName, "mapping.0.group_id", "dev"),
-			},
-			{
-				// A mapping changed outside Terraform shows as drift.
-				PreConfig: func() {
-					api.Lock()
-					defer api.Unlock()
-					api.stored[1].OrganizationRoles[0].Role = "admin"
-				},
-				Config:           reordered,
-				ConfigPlanChecks: update,
-				Check:            resource.TestCheckResourceAttr(groupMappingsResourceName, "mapping.1.organization_roles.0.role", "guest"),
-			},
+	noPlan := expectAction(groupMappingsResourceName, plancheck.ResourceActionNoop)
+	update := expectAction(groupMappingsResourceName, plancheck.ResourceActionUpdate)
+	runUnitTest(t,
+		resource.TestStep{
+			Config: both,
+			Check: resource.ComposeTestCheckFunc(
+				resource.TestCheckResourceAttr(groupMappingsResourceName, "id", "instance"),
+				resource.TestCheckResourceAttr(groupMappingsResourceName, "api_mapping_status", "active"),
+				resource.TestCheckResourceAttr(groupMappingsResourceName, "mapping.#", "2"),
+				resource.TestCheckResourceAttr(groupMappingsResourceName, "mapping.0.group_id", "platform-ops"),
+				resource.TestCheckResourceAttr(groupMappingsResourceName, "mapping.0.organization_roles.0.project_roles.1.project", "worker"),
+				resource.TestCheckResourceAttr(groupMappingsResourceName, "mapping.1.organization_roles.0.project_roles.#", "0"),
+				resource.TestCheckResourceAttr(groupMappingsResourceName, "mapping.1.organization_roles.1.project_roles.#", "0"),
+			),
 		},
-	})
+		resource.TestStep{Config: both, ConfigPlanChecks: noPlan},
+		resource.TestStep{Config: both, ResourceName: groupMappingsResourceName, ImportState: true, ImportStateId: "instance", ImportStateVerify: true},
+		resource.TestStep{
+			// The server keeps the order it receives.
+			Config:           reordered,
+			ConfigPlanChecks: update,
+			Check:            resource.TestCheckResourceAttr(groupMappingsResourceName, "mapping.0.group_id", "dev"),
+		},
+		resource.TestStep{
+			// A mapping changed outside Terraform shows as drift.
+			PreConfig:        api.preConfig(func() { api.stored[1].OrganizationRoles[0].Role = "admin" }),
+			Config:           reordered,
+			ConfigPlanChecks: update,
+			Check:            resource.TestCheckResourceAttr(groupMappingsResourceName, "mapping.1.organization_roles.0.role", "guest"),
+		},
+	)
 	api.Lock()
 	defer api.Unlock()
 	if len(api.stored) != 0 {
@@ -276,15 +306,7 @@ func TestLifecycleGroupMappingsCreateRefusals(t *testing.T) {
 			error: `terraform\s+import\s+logfire_group_mappings\.<name>\s+instance`,
 		},
 		"stored mapping that differs from the plan in one role": {
-			setup: func(api *groupMappingsAPI) {
-				api.stored = []logclient.GroupMapping{{
-					GroupID: "platform-ops",
-					OrganizationRoles: []logclient.GroupMappingOrganizationRole{{
-						OrganizationName: "team-a", Role: "member",
-						ProjectRoles: []logclient.GroupMappingProjectRole{{ProjectName: "api", Role: "read"}, {ProjectName: "worker", Role: "write"}},
-					}},
-				}}
-			},
+			setup: func(api *groupMappingsAPI) { api.stored = storedOpsMapping("member") },
 			error: `terraform\s+import\s+logfire_group_mappings\.<name>\s+instance`,
 		},
 		"environment override": {
@@ -296,12 +318,9 @@ func TestLifecycleGroupMappingsCreateRefusals(t *testing.T) {
 			t.Parallel()
 			server, api := newGroupMappingsAPI(t)
 			tc.setup(api)
-			resource.Test(t, resource.TestCase{
-				IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-				Steps: []resource.TestStep{{
-					Config:      groupMappingsConfig(server.URL, groupMappingsOpsGroup),
-					ExpectError: regexp.MustCompile(tc.error),
-				}},
+			runUnitTest(t, resource.TestStep{
+				Config:      groupMappingsConfig(server.URL, groupMappingsOpsGroup),
+				ExpectError: regexp.MustCompile(tc.error),
 			})
 			api.Lock()
 			defer api.Unlock()
@@ -319,26 +338,21 @@ func TestLifecycleGroupMappingsCreateRefusesTheMappingOfALostResponse(t *testing
 	server, api := newGroupMappingsAPI(t)
 	config := groupMappingsConfig(server.URL, groupMappingsOpsGroup, groupMappingsDevGroup)
 	var putsBeforeRetry int
-	resource.Test(t, resource.TestCase{
-		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{
-				PreConfig:   func() { api.Lock(); api.lostPutResponses = true; api.Unlock() },
-				Config:      config,
-				ExpectError: regexp.MustCompile(`Create group mappings failed`),
-			},
-			{
-				PreConfig: func() {
-					api.Lock()
-					defer api.Unlock()
-					api.lostPutResponses = false
-					putsBeforeRetry = len(api.puts)
-				},
-				Config:      config,
-				ExpectError: regexp.MustCompile(`Group mappings already exist`),
-			},
+	runUnitTest(t,
+		resource.TestStep{
+			PreConfig:   api.preConfig(func() { api.lostPutResponses = true }),
+			Config:      config,
+			ExpectError: regexp.MustCompile(`Create group mappings failed`),
 		},
-	})
+		resource.TestStep{
+			PreConfig: api.preConfig(func() {
+				api.lostPutResponses = false
+				putsBeforeRetry = len(api.puts)
+			}),
+			Config:      config,
+			ExpectError: regexp.MustCompile(`Group mappings already exist`),
+		},
+	)
 	// A step's Check does not run when the step expects an error, so check here.
 	api.Lock()
 	defer api.Unlock()
@@ -353,15 +367,12 @@ func TestLifecycleGroupMappingsDestroyThroughARedirectFails(t *testing.T) {
 	t.Parallel()
 	server, api := newGroupMappingsAPI(t)
 	config := groupMappingsConfig(server.URL, groupMappingsOpsGroup)
-	setRedirect := func(on bool) func() { return func() { api.Lock(); api.redirectPuts = on; api.Unlock() } }
-	resource.Test(t, resource.TestCase{
-		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{Config: config},
-			{PreConfig: setRedirect(true), Config: config, Destroy: true, ExpectError: regexp.MustCompile(`still reports a mapping`)},
-			{PreConfig: setRedirect(false), Config: config, PlanOnly: true},
-		},
-	})
+	setRedirect := func(on bool) func() { return api.preConfig(func() { api.redirectPuts = on }) }
+	runUnitTest(t,
+		resource.TestStep{Config: config},
+		resource.TestStep{PreConfig: setRedirect(true), Config: config, Destroy: true, ExpectError: regexp.MustCompile(`still reports a mapping`)},
+		resource.TestStep{PreConfig: setRedirect(false), Config: config, PlanOnly: true},
+	)
 	api.Lock()
 	defer api.Unlock()
 	if len(api.stored) != 0 {
@@ -373,21 +384,12 @@ func TestLifecycleGroupMappingsDestroyThroughARedirectFails(t *testing.T) {
 func TestLifecycleGroupMappingsAdoptStoredMapping(t *testing.T) {
 	t.Parallel()
 	server, api := newGroupMappingsAPI(t)
-	api.stored = []logclient.GroupMapping{{
-		GroupID: "platform-ops",
-		OrganizationRoles: []logclient.GroupMappingOrganizationRole{{
-			OrganizationName: "team-a", Role: "guest",
-			ProjectRoles: []logclient.GroupMappingProjectRole{{ProjectName: "api", Role: "read"}, {ProjectName: "worker", Role: "write"}},
-		}},
-	}}
+	api.stored = storedOpsMapping("guest")
 	config := groupMappingsConfig(server.URL, groupMappingsOpsGroup)
-	resource.Test(t, resource.TestCase{
-		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{Config: config, ResourceName: groupMappingsResourceName, ImportState: true, ImportStateId: "instance", ImportStatePersist: true},
-			{Config: config, PlanOnly: true},
-		},
-	})
+	runUnitTest(t,
+		resource.TestStep{Config: config, ResourceName: groupMappingsResourceName, ImportState: true, ImportStateId: "instance", ImportStatePersist: true},
+		resource.TestStep{Config: config, PlanOnly: true},
+	)
 	api.Lock()
 	defer api.Unlock()
 	if len(api.puts) != 1 {
@@ -399,28 +401,20 @@ func TestLifecycleGroupMappingsImportRejectsOtherIDs(t *testing.T) {
 	t.Parallel()
 	server, _ := newGroupMappingsAPI(t)
 	config := groupMappingsConfig(server.URL, groupMappingsOpsGroup)
-	resource.Test(t, resource.TestCase{
-		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{Config: config},
-			{Config: config, ResourceName: groupMappingsResourceName, ImportState: true, ImportStateId: "other", ExpectError: regexp.MustCompile(`Expected\s+"instance"`)},
-		},
-	})
+	runUnitTest(t,
+		resource.TestStep{Config: config},
+		resource.TestStep{Config: config, ResourceName: groupMappingsResourceName, ImportState: true, ImportStateId: "other", ExpectError: regexp.MustCompile(`Expected\s+"instance"`)},
+	)
 }
 
 func TestLifecycleGroupMappingsEmptyList(t *testing.T) {
 	t.Parallel()
 	server, api := newGroupMappingsAPI(t)
 	config := groupMappingsConfig(server.URL)
-	resource.Test(t, resource.TestCase{
-		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{Config: config, Check: resource.TestCheckResourceAttr(groupMappingsResourceName, "mapping.#", "0")},
-			{Config: config, ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
-				plancheck.ExpectResourceAction(groupMappingsResourceName, plancheck.ResourceActionNoop),
-			}}},
-		},
-	})
+	runUnitTest(t,
+		resource.TestStep{Config: config, Check: resource.TestCheckResourceAttr(groupMappingsResourceName, "mapping.#", "0")},
+		resource.TestStep{Config: config, ConfigPlanChecks: expectAction(groupMappingsResourceName, plancheck.ResourceActionNoop)},
+	)
 	if got := api.lastPut(t); got != `{"group_organization_mapping":[]}` {
 		t.Errorf("last PUT = %s", got)
 	}
@@ -454,10 +448,7 @@ func TestLifecycleGroupMappingsRejections(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			resource.Test(t, resource.TestCase{
-				IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-				Steps: []resource.TestStep{{Config: tc.config, ExpectError: regexp.MustCompile(tc.error)}},
-			})
+			runUnitTest(t, resource.TestStep{Config: tc.config, ExpectError: regexp.MustCompile(tc.error)})
 		})
 	}
 	api.Lock()
@@ -472,34 +463,23 @@ func TestLifecycleGroupMappingsRejections(t *testing.T) {
 func TestLifecycleGroupMappingsOverriddenAfterCreate(t *testing.T) {
 	t.Parallel()
 	server, api := newGroupMappingsAPI(t)
-	setOverridden := func(value bool) func() {
-		return func() {
-			api.Lock()
-			defer api.Unlock()
-			api.overridden = value
-		}
-	}
-	resource.Test(t, resource.TestCase{
-		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{Config: groupMappingsConfig(server.URL, groupMappingsOpsGroup)},
-			{
-				PreConfig:   setOverridden(true),
-				Config:      groupMappingsConfig(server.URL, groupMappingsDevGroup),
-				ExpectError: regexp.MustCompile(`Helm\s+value\s+` + "`groupOrganizationMapping`"),
-			},
-			{
-				// A refresh keeps the stored mapping and reports the status.
-				Config: groupMappingsConfig(server.URL, groupMappingsOpsGroup),
-				Check:  resource.TestCheckResourceAttr(groupMappingsResourceName, "api_mapping_status", "overridden_by_environment"),
-			},
-			{
-				Config: groupMappingsConfig(server.URL, groupMappingsOpsGroup), Destroy: true,
-				ExpectError: regexp.MustCompile(`terraform\s+state\s+rm`),
-			},
-			{PreConfig: setOverridden(false), Config: groupMappingsConfig(server.URL, groupMappingsOpsGroup)},
+	setOverridden := func(value bool) func() { return api.preConfig(func() { api.overridden = value }) }
+	ops := groupMappingsConfig(server.URL, groupMappingsOpsGroup)
+	runUnitTest(t,
+		resource.TestStep{Config: ops},
+		resource.TestStep{
+			PreConfig:   setOverridden(true),
+			Config:      groupMappingsConfig(server.URL, groupMappingsDevGroup),
+			ExpectError: regexp.MustCompile(`Helm\s+value\s+` + "`groupOrganizationMapping`"),
 		},
-	})
+		resource.TestStep{
+			// A refresh keeps the stored mapping and reports the status.
+			Config: ops,
+			Check:  resource.TestCheckResourceAttr(groupMappingsResourceName, "api_mapping_status", "overridden_by_environment"),
+		},
+		resource.TestStep{Config: ops, Destroy: true, ExpectError: regexp.MustCompile(`terraform\s+state\s+rm`)},
+		resource.TestStep{PreConfig: setOverridden(false), Config: ops},
+	)
 	api.Lock()
 	defer api.Unlock()
 	if !reflect.DeepEqual(api.stored, []logclient.GroupMapping{}) {
@@ -511,11 +491,8 @@ func TestLifecycleGroupMappingsOnOlderLogfire(t *testing.T) {
 	t.Parallel()
 	server, api := newGroupMappingsAPI(t)
 	api.routesMissing = true
-	resource.Test(t, resource.TestCase{
-		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{{
-			Config:      groupMappingsConfig(server.URL, groupMappingsOpsGroup),
-			ExpectError: regexp.MustCompile(`requires\s+Logfire\s+v2026-07-22\.02\s+or\s+newer\s+\(Helm\s+chart\s+logfire-0\.13\.36`),
-		}},
+	runUnitTest(t, resource.TestStep{
+		Config:      groupMappingsConfig(server.URL, groupMappingsOpsGroup),
+		ExpectError: regexp.MustCompile(`requires\s+Logfire\s+v2026-07-22\.02\s+or\s+newer\s+\(Helm\s+chart\s+logfire-0\.13\.36`),
 	})
 }

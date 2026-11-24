@@ -15,49 +15,58 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-func runAlertDurationValidator(t *testing.T, v alertDurationValidator, input string) *validator.StringResponse {
-	t.Helper()
+var (
+	timeWindowValidator = alertDurationValidator{min: alertTimeWindowMin, max: alertTimeWindowMax}
+	frequencyValidator  = alertDurationValidator{min: alertFrequencyMin, max: alertFrequencyMax}
+)
 
-	req := validator.StringRequest{
-		Path:        path.Root("duration"),
-		ConfigValue: types.StringValue(input),
-	}
+func validateDuration(v validator.String, value types.String) diag.Diagnostics {
 	resp := &validator.StringResponse{}
-	v.ValidateString(context.Background(), req, resp)
-	return resp
+	v.ValidateString(context.Background(), validator.StringRequest{
+		Path:        path.Root("duration"),
+		ConfigValue: value,
+	}, resp)
+	return resp.Diagnostics
 }
 
-func TestAlertTimeWindowValidatorAcceptsAnyDurationInRange(t *testing.T) {
+func TestAlertDurationValidatorAcceptsAnyDurationInRange(t *testing.T) {
 	t.Parallel()
-
-	v := alertDurationValidator{min: alertTimeWindowMin, max: alertTimeWindowMax}
 
 	// The old preset list rejected "20m" and "2h" at terraform validate. The
 	// non-canonical spellings are accepted too; alertDurationType keeps them in
 	// state instead of diffing on every plan.
-	for _, input := range []string{
-		"1m", "2m", "5m", "10m", "15m", "20m", "30m", "47m", "90m",
-		"1h", "1h30m", "2h", "6h", "12h", "24h", "2d", "7d", "30d",
-	} {
-		t.Run(input, func(t *testing.T) {
-			t.Parallel()
-			if resp := runAlertDurationValidator(t, v, input); resp.Diagnostics.HasError() {
-				t.Fatalf("time_window %q was rejected: %v", input, resp.Diagnostics.Errors())
-			}
-		})
+	cases := []struct {
+		name   string
+		v      alertDurationValidator
+		inputs []string
+	}{
+		{
+			name: "time_window",
+			v:    timeWindowValidator,
+			inputs: []string{
+				"1m", "2m", "5m", "10m", "15m", "20m", "30m", "47m", "90m",
+				"1h", "1h30m", "2h", "6h", "12h", "24h", "2d", "7d", "30d",
+			},
+		},
+		{
+			name:   "frequency",
+			v:      frequencyValidator,
+			inputs: []string{"1m", "3m", "5m", "20m", "30m", "1h", "6h", "12h", "24h"},
+		},
 	}
-}
 
-func TestAlertFrequencyValidatorAcceptsAnyDurationInRange(t *testing.T) {
-	t.Parallel()
-
-	v := alertDurationValidator{min: alertFrequencyMin, max: alertFrequencyMax}
-
-	for _, input := range []string{"1m", "3m", "5m", "20m", "30m", "1h", "6h", "12h", "24h"} {
-		t.Run(input, func(t *testing.T) {
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if resp := runAlertDurationValidator(t, v, input); resp.Diagnostics.HasError() {
-				t.Fatalf("frequency %q was rejected: %v", input, resp.Diagnostics.Errors())
+
+			for _, input := range tc.inputs {
+				t.Run(input, func(t *testing.T) {
+					t.Parallel()
+
+					if diags := validateDuration(tc.v, types.StringValue(input)); diags.HasError() {
+						t.Fatalf("%s %q was rejected: %v", tc.name, input, diags.Errors())
+					}
+				})
 			}
 		})
 	}
@@ -71,21 +80,21 @@ func TestAlertDurationValidatorRejectsOutOfRange(t *testing.T) {
 		v     alertDurationValidator
 		input string
 	}{
-		{name: "frequency below minimum", v: alertDurationValidator{min: alertFrequencyMin, max: alertFrequencyMax}, input: "30s"},
-		{name: "frequency above maximum", v: alertDurationValidator{min: alertFrequencyMin, max: alertFrequencyMax}, input: "7d"},
-		{name: "time window below minimum", v: alertDurationValidator{min: alertTimeWindowMin, max: alertTimeWindowMax}, input: "30s"},
-		{name: "time window above maximum", v: alertDurationValidator{min: alertTimeWindowMin, max: alertTimeWindowMax}, input: "90d"},
+		{name: "frequency below minimum", v: frequencyValidator, input: "30s"},
+		{name: "frequency above maximum", v: frequencyValidator, input: "7d"},
+		{name: "time window below minimum", v: timeWindowValidator, input: "30s"},
+		{name: "time window above maximum", v: timeWindowValidator, input: "90d"},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			resp := runAlertDurationValidator(t, tc.v, tc.input)
-			if !resp.Diagnostics.HasError() {
+			diags := validateDuration(tc.v, types.StringValue(tc.input))
+			if !diags.HasError() {
 				t.Fatalf("expected %q to be rejected", tc.input)
 			}
-			if summary := resp.Diagnostics.Errors()[0].Summary(); summary != "Duration out of range" {
+			if summary := diags.Errors()[0].Summary(); summary != "Duration out of range" {
 				t.Fatalf("unexpected summary for %q: %q", tc.input, summary)
 			}
 		})
@@ -95,14 +104,11 @@ func TestAlertDurationValidatorRejectsOutOfRange(t *testing.T) {
 func TestAlertDurationValidatorRejectsUnparseable(t *testing.T) {
 	t.Parallel()
 
-	v := alertDurationValidator{min: alertTimeWindowMin, max: alertTimeWindowMax}
-
 	for _, input := range []string{"not-a-duration", "", "PT20M"} {
 		t.Run(input, func(t *testing.T) {
 			t.Parallel()
 
-			resp := runAlertDurationValidator(t, v, input)
-			if !resp.Diagnostics.HasError() {
+			if !validateDuration(timeWindowValidator, types.StringValue(input)).HasError() {
 				t.Fatalf("expected %q to be rejected", input)
 			}
 		})
@@ -112,8 +118,6 @@ func TestAlertDurationValidatorRejectsUnparseable(t *testing.T) {
 func TestAlertDurationValidatorSkipsNullAndUnknown(t *testing.T) {
 	t.Parallel()
 
-	v := alertDurationValidator{min: alertTimeWindowMin, max: alertTimeWindowMax}
-
 	for name, value := range map[string]types.String{
 		"null":    types.StringNull(),
 		"unknown": types.StringUnknown(),
@@ -121,12 +125,8 @@ func TestAlertDurationValidatorSkipsNullAndUnknown(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			req := validator.StringRequest{Path: path.Root("duration"), ConfigValue: value}
-			resp := &validator.StringResponse{}
-			v.ValidateString(context.Background(), req, resp)
-
-			if resp.Diagnostics.HasError() {
-				t.Fatalf("%s value must not raise an error: %v", name, resp.Diagnostics.Errors())
+			if diags := validateDuration(timeWindowValidator, value); diags.HasError() {
+				t.Fatalf("%s value must not raise an error: %v", name, diags.Errors())
 			}
 		})
 	}
@@ -210,13 +210,7 @@ func TestAlertSchemaAppliesDurationValidators(t *testing.T) {
 			run := func(input string) diag.Diagnostics {
 				var diags diag.Diagnostics
 				for _, v := range attr.Validators {
-					req := validator.StringRequest{
-						Path:        path.Root(tc.attribute),
-						ConfigValue: types.StringValue(input),
-					}
-					vResp := &validator.StringResponse{}
-					v.ValidateString(context.Background(), req, vResp)
-					diags.Append(vResp.Diagnostics...)
+					diags.Append(validateDuration(v, types.StringValue(input))...)
 				}
 				return diags
 			}

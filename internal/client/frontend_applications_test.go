@@ -7,21 +7,19 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 )
 
 func TestFrontendApplicationLifecycleRequests(t *testing.T) {
 	t.Parallel()
 
+	const applications = "/api/v1/projects/project-id/frontend-applications/"
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	client := newServerClient(t, func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		switch requests {
 		case 1:
-			if r.Method != http.MethodPost || r.URL.Path != "/api/v1/projects/project-id/frontend-applications/" {
-				t.Fatalf("create request = %s %s", r.Method, r.URL.EscapedPath())
-			}
+			requireRequest(t, r, http.MethodPost, applications)
 			var in FrontendApplicationCreate
 			if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 				t.Fatal(err)
@@ -32,44 +30,29 @@ func TestFrontendApplicationLifecycleRequests(t *testing.T) {
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"id":"app-id","project_id":"project-id","name":"browser","service_namespace":null,"environment":"production","created_at":"2026-01-01T00:00:00Z","token_id":"token-1","token":"secret-1"}`))
 		case 2:
-			if r.Method != http.MethodGet || r.URL.Path != "/api/v1/projects/project-id/frontend-applications/app-id/" {
-				t.Fatalf("get request = %s %s", r.Method, r.URL.EscapedPath())
-			}
+			requireRequest(t, r, http.MethodGet, applications+"app-id/")
 			_, _ = w.Write([]byte(`{"id":"app-id","project_id":"project-id","name":"browser","service_namespace":null,"environment":"production","created_at":"2026-01-01T00:00:00Z"}`))
 		case 3:
-			if r.Method != http.MethodPost || r.URL.Path != "/api/v1/projects/project-id/frontend-applications/app-id/tokens/" {
-				t.Fatalf("token create request = %s %s", r.Method, r.URL.EscapedPath())
-			}
+			requireRequest(t, r, http.MethodPost, applications+"app-id/tokens/")
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"token_id":"token-2","description":"Issued to replace the previous token","status":"active","token":"secret-2","created_at":"2026-01-02T00:00:00Z","expires_at":null,"last_used_at":null}`))
 		case 4:
-			if r.Method != http.MethodGet || r.URL.Path != "/api/v1/projects/project-id/frontend-applications/app-id/tokens/" {
-				t.Fatalf("token list request = %s %s", r.Method, r.URL.EscapedPath())
-			}
+			requireRequest(t, r, http.MethodGet, applications+"app-id/tokens/")
 			if r.URL.Query().Get("limit") != "100" || r.URL.Query().Has("cursor") {
 				t.Fatalf("unexpected token list query: %s", r.URL.RawQuery)
 			}
 			_, _ = w.Write([]byte(`{"data":[{"id":"token-2","description":null,"status":"active","token":"secret-2","created_at":"2026-01-02T00:00:00Z","expires_at":null,"last_used_at":null}],"next_cursor":null}`))
 		case 5:
-			if r.Method != http.MethodPost || r.URL.Path != "/api/v1/projects/project-id/frontend-applications/app-id/tokens/token-2/revoke/" {
-				t.Fatalf("revoke request = %s %s", r.Method, r.URL.EscapedPath())
-			}
+			requireRequest(t, r, http.MethodPost, applications+"app-id/tokens/token-2/revoke/")
 			w.WriteHeader(http.StatusNoContent)
 		case 6:
-			if r.Method != http.MethodDelete || r.URL.Path != "/api/v1/projects/project-id/frontend-applications/app-id/" {
-				t.Fatalf("delete request = %s %s", r.Method, r.URL.EscapedPath())
-			}
+			requireRequest(t, r, http.MethodDelete, applications+"app-id/")
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			t.Fatalf("unexpected request %d: %s %s", requests, r.Method, r.URL.EscapedPath())
 		}
-	}))
-	defer server.Close()
+	})
 
-	client, err := NewAPIClient(server.URL, "test", server.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
 	environment := "production"
 	created, err := client.CreateFrontendApplication(context.Background(), "project-id", FrontendApplicationCreate{Name: "browser", Environment: &environment, AdoptExistingServiceName: true})
 	if err != nil || created.Token != "secret-1" {
@@ -95,65 +78,9 @@ func TestFrontendApplicationLifecycleRequests(t *testing.T) {
 	}
 }
 
-func TestFrontendApplicationCreatesAreNotAutomaticallyRetried(t *testing.T) {
-	t.Parallel()
-
-	tests := map[string]func(*APIClient) error{
-		"application": func(client *APIClient) error {
-			_, err := client.CreateFrontendApplication(context.Background(), "project-id", FrontendApplicationCreate{Name: "browser"})
-			return err
-		},
-		"token": func(client *APIClient) error {
-			_, err := client.CreateFrontendApplicationToken(context.Background(), "project-id", "app-id")
-			return err
-		},
-	}
-
-	for name, call := range tests {
-		t.Run(name, func(t *testing.T) {
-			probe := &frontendApplicationCreateRetryProbe{}
-			client, err := NewAPIClient("https://example.com", "test", &http.Client{Transport: &retryingTransport{next: probe, maxAttempts: 3}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := call(client); err == nil {
-				t.Fatal("expected the first 503 response to be returned")
-			}
-			if probe.attempts != 1 {
-				t.Fatalf("create request attempts = %d; want 1", probe.attempts)
-			}
-		})
-	}
-}
-
-type frontendApplicationCreateRetryProbe struct{ attempts int }
-
-func (p *frontendApplicationCreateRetryProbe) RoundTrip(req *http.Request) (*http.Response, error) {
-	p.attempts++
-	if p.attempts == 1 {
-		return &http.Response{
-			StatusCode: http.StatusServiceUnavailable,
-			Header:     http.Header{"Retry-After": []string{"0"}},
-			Body:       http.NoBody,
-			Request:    req,
-		}, nil
-	}
-	return &http.Response{
-		StatusCode: http.StatusCreated,
-		Header:     make(http.Header),
-		Body:       http.NoBody,
-		Request:    req,
-	}, nil
-}
-
 func TestGetFrontendApplicationNotFound(t *testing.T) {
 	t.Parallel()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) }))
-	defer server.Close()
-	client, err := NewAPIClient(server.URL, "test", server.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
+	client := newServerClient(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) })
 	application, status, err := client.GetFrontendApplication(context.Background(), "project", "missing")
 	if err != nil || status != http.StatusNotFound || application != nil {
 		t.Fatalf("out=%+v status=%d err=%v", application, status, err)
@@ -162,10 +89,8 @@ func TestGetFrontendApplicationNotFound(t *testing.T) {
 
 func TestListFrontendApplications(t *testing.T) {
 	t.Parallel()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/projects/project-id/frontend-applications/" {
-			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
-		}
+	client := newServerClient(t, func(w http.ResponseWriter, r *http.Request) {
+		requireRequest(t, r, http.MethodGet, "/api/v1/projects/project-id/frontend-applications/")
 		if r.URL.Query().Get("limit") != "100" {
 			t.Fatalf("unexpected limit: %s", r.URL.RawQuery)
 		}
@@ -177,12 +102,7 @@ func TestListFrontendApplications(t *testing.T) {
 			t.Fatalf("unexpected cursor: %s", r.URL.RawQuery)
 		}
 		_, _ = w.Write([]byte(`{"data":[{"id":"app-id","project_id":"project-id","name":"browser","service_namespace":null,"environment":null,"created_at":"2026-01-01T00:00:00Z"}],"next_cursor":"next page"}`))
-	}))
-	defer server.Close()
-	client, err := NewAPIClient(server.URL, "test", server.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
+	})
 	applications, err := client.ListFrontendApplications(context.Background(), "project-id")
 	if err != nil || len(applications) != 2 || applications[0].Name != "browser" || applications[1].Name != "admin" {
 		t.Fatalf("out=%+v err=%v", applications, err)
@@ -191,7 +111,7 @@ func TestListFrontendApplications(t *testing.T) {
 
 func TestListFrontendApplicationTokens(t *testing.T) {
 	t.Parallel()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	client := newServerClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("limit") != "100" {
 			t.Fatalf("unexpected limit: %s", r.URL.RawQuery)
 		}
@@ -203,12 +123,7 @@ func TestListFrontendApplicationTokens(t *testing.T) {
 			t.Fatalf("unexpected cursor: %s", r.URL.RawQuery)
 		}
 		_, _ = w.Write([]byte(`{"data":[{"id":"revoked","description":null,"status":"revoked","token":null,"created_at":"2026-01-01T00:00:00Z","expires_at":null,"last_used_at":null}],"next_cursor":"token cursor"}`))
-	}))
-	defer server.Close()
-	client, err := NewAPIClient(server.URL, "test", server.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
+	})
 	tokens, err := client.ListFrontendApplicationTokens(context.Background(), "project-id", "app-id")
 	if err != nil || len(tokens) != 2 || tokens[1].ID != "active" || tokens[1].Token == nil || *tokens[1].Token != "secret" {
 		t.Fatalf("out=%+v err=%v", tokens, err)

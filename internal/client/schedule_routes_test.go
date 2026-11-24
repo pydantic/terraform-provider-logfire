@@ -5,7 +5,6 @@ package client
 
 import (
 	"context"
-	"io"
 	"net/http"
 	"slices"
 	"strings"
@@ -17,30 +16,30 @@ const (
 	legacySchedulesRoute     = "/api/v1/schedules/"
 )
 
-// scheduleRoutesTransport serves the schedule routes under the prefixes in
-// serves, answers any other path as FastAPI answers a missing route, and
-// records each "METHOD path" it receives. The schedule "missing" does not exist.
-type scheduleRoutesTransport struct {
-	serves []string
-	calls  *[]string
-}
-
-func (t scheduleRoutesTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	*t.calls = append(*t.calls, req.Method+" "+req.URL.Path)
-	status, body := http.StatusNotFound, `{"detail":"Not Found"}`
-	if slices.ContainsFunc(t.serves, func(prefix string) bool { return strings.HasPrefix(req.URL.Path, prefix) }) {
-		switch {
-		case strings.HasSuffix(req.URL.Path, "/missing/"):
-			body = `{"detail":"No notification window with that ID in this organization."}`
-		case req.Method == http.MethodPost:
-			status, body = http.StatusCreated, `{"id":"s1"}`
-		case req.Method == http.MethodDelete:
-			status, body = http.StatusNoContent, ""
-		default:
-			status, body = http.StatusOK, `{"id":"s1"}`
+// scheduleRoutesClient serves the schedule routes under the prefixes in serves, answers any
+// other path as FastAPI answers a missing route, and records each "METHOD path" it receives.
+// The schedule "missing" does not exist.
+func scheduleRoutesClient(t *testing.T, serves []string) (*APIClient, *[]string) {
+	t.Helper()
+	var calls []string
+	c := newStubClient(t, func(req *http.Request) (*http.Response, error) {
+		calls = append(calls, req.Method+" "+req.URL.Path)
+		status, body := http.StatusNotFound, `{"detail":"Not Found"}`
+		if slices.ContainsFunc(serves, func(prefix string) bool { return strings.HasPrefix(req.URL.Path, prefix) }) {
+			switch {
+			case strings.HasSuffix(req.URL.Path, "/missing/"):
+				body = `{"detail":"No notification window with that ID in this organization."}`
+			case req.Method == http.MethodPost:
+				status, body = http.StatusCreated, `{"id":"s1"}`
+			case req.Method == http.MethodDelete:
+				status, body = http.StatusNoContent, ""
+			default:
+				status, body = http.StatusOK, `{"id":"s1"}`
+			}
 		}
-	}
-	return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: req}, nil
+		return stubResponse(req, status, body), nil
+	})
+	return c, &calls
 }
 
 func TestScheduleRoutes(t *testing.T) {
@@ -74,11 +73,7 @@ func TestScheduleRoutes(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			var calls []string
-			c, err := NewAPIClient("https://example.invalid", "test-token", &http.Client{Transport: scheduleRoutesTransport{serves: tc.serves, calls: &calls}})
-			if err != nil {
-				t.Fatal(err)
-			}
+			c, calls := scheduleRoutesClient(t, tc.serves)
 			ctx := context.Background()
 			if _, err := c.CreateSchedule(ctx, ScheduleCreate{Label: "office hours", Timezone: "UTC"}); err != nil {
 				t.Fatal(err)
@@ -92,8 +87,8 @@ func TestScheduleRoutes(t *testing.T) {
 			if err := c.DeleteSchedule(ctx, "s1"); err != nil {
 				t.Fatal(err)
 			}
-			if !slices.Equal(calls, tc.want) {
-				t.Fatalf("requests:\n%s\nwant:\n%s", strings.Join(calls, "\n"), strings.Join(tc.want, "\n"))
+			if !slices.Equal(*calls, tc.want) {
+				t.Fatalf("requests:\n%s\nwant:\n%s", strings.Join(*calls, "\n"), strings.Join(tc.want, "\n"))
 			}
 		})
 	}
@@ -106,17 +101,13 @@ func TestScheduleMissingIDIsNotFound(t *testing.T) {
 		{legacySchedulesRoute},
 		{notificationWindowsRoute, legacySchedulesRoute},
 	} {
-		var calls []string
-		c, err := NewAPIClient("https://example.invalid", "test-token", &http.Client{Transport: scheduleRoutesTransport{serves: serves, calls: &calls}})
-		if err != nil {
-			t.Fatal(err)
-		}
+		c, calls := scheduleRoutesClient(t, serves)
 		if _, status, err := c.GetSchedule(context.Background(), "missing"); !IsNotFoundError(err) || status != http.StatusNotFound {
 			t.Fatalf("serves %v: status %d, error %v; want a not-found error", serves, status, err)
 		}
 		// The window's own 404 is final, so a failure on the old route cannot replace it.
-		if serves[0] == notificationWindowsRoute && len(calls) != 1 {
-			t.Fatalf("serves %v: requests %v; want only the notification windows route", serves, calls)
+		if serves[0] == notificationWindowsRoute && len(*calls) != 1 {
+			t.Fatalf("serves %v: requests %v; want only the notification windows route", serves, *calls)
 		}
 	}
 }

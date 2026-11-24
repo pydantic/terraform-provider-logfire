@@ -4,7 +4,6 @@
 package provider
 
 import (
-	"context"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -14,7 +13,6 @@ import (
 
 func TestOptionalRFC3339Validator(t *testing.T) {
 	t.Parallel()
-
 	cases := []struct {
 		name    string
 		input   types.String
@@ -30,23 +28,14 @@ func TestOptionalRFC3339Validator(t *testing.T) {
 	}
 
 	v := newOptionalRFC3339Validator()
-
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-
-			req := validator.StringRequest{
-				Path:        path.Root("expires_at"),
-				ConfigValue: tc.input,
-			}
+			req := validator.StringRequest{Path: path.Root("expires_at"), ConfigValue: tc.input}
 			var resp validator.StringResponse
-			v.ValidateString(context.Background(), req, &resp)
-
-			if tc.wantErr && !resp.Diagnostics.HasError() {
-				t.Fatalf("expected validation error, got none")
-			}
-			if !tc.wantErr && resp.Diagnostics.HasError() {
-				t.Fatalf("unexpected validation error: %v", resp.Diagnostics)
+			v.ValidateString(t.Context(), req, &resp)
+			if resp.Diagnostics.HasError() != tc.wantErr {
+				t.Fatalf("wantErr = %v, diagnostics = %v", tc.wantErr, resp.Diagnostics)
 			}
 		})
 	}

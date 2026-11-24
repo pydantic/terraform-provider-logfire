@@ -34,8 +34,7 @@ func newFrontendApplicationAPI(t *testing.T) (*httptest.Server, *frontendApplica
 		api.Lock()
 		defer api.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/api/oauth/token" {
-			_, _ = w.Write([]byte(`{"access_token":"test-org-token","expires_in":900}`))
+		if serveOrgToken(w, r) {
 			return
 		}
 		route := r.Method + " " + strings.TrimPrefix(r.URL.Path, frontendApplicationsURL)
@@ -77,51 +76,44 @@ func TestLifecycleFrontendApplicationUIRename(t *testing.T) {
 		return lifecycleConfig(server.URL, "frontend_application", fmt.Sprintf("project_id = \"project-1\"\nname = %q", name))
 	}
 	const resourceName = "logfire_frontend_application.test"
-	resource.Test(t, resource.TestCase{
-		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{Config: config("browser"), Check: resource.TestCheckResourceAttr(resourceName, "id", "app-1")},
-			{
-				PreConfig: func() {
-					api.Lock()
-					defer api.Unlock()
-					api.application.Name = "renamed-in-ui"
-				},
-				Config: config("browser"), PlanOnly: true,
+	runUnitTest(t,
+		resource.TestStep{Config: config("browser"), Check: resource.TestCheckResourceAttr(resourceName, "id", "app-1")},
+		resource.TestStep{
+			PreConfig: func() {
+				api.Lock()
+				defer api.Unlock()
+				api.application.Name = "renamed-in-ui"
 			},
-			{
-				Config: config("browser"), ResourceName: resourceName, ImportState: true, ImportStateId: "project-1/app-1",
-				ImportStateCheck: func(states []*terraform.InstanceState) error {
-					if got := states[0].Attributes["name"]; got != "renamed-in-ui" {
-						return fmt.Errorf("imported name = %q, want the name from the API", got)
-					}
-					return nil
-				},
-			},
-			{
-				Config: lifecycleConfig(server.URL, "frontend_application",
-					"project_id = \"project-1\"\nname = \"renamed-in-ui\"\nservice_namespace = \"web\""),
-				ExpectError: regexp.MustCompile("Same-name replacement requires adoption"),
-			},
-			{
-				Config: config("renamed-in-ui"),
-				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
-					plancheck.ExpectResourceAction(resourceName, plancheck.ResourceActionUpdate),
-				}},
-				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr(resourceName, "id", "app-1"),
-					resource.TestCheckResourceAttr(resourceName, "name", "renamed-in-ui"),
-				),
-			},
-			{
-				Config: config("other"),
-				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
-					plancheck.ExpectResourceAction(resourceName, plancheck.ResourceActionDestroyBeforeCreate),
-				}},
-				Check: resource.TestCheckResourceAttr(resourceName, "id", "app-2"),
+			Config: config("browser"), PlanOnly: true,
+		},
+		resource.TestStep{
+			Config: config("browser"), ResourceName: resourceName, ImportState: true, ImportStateId: "project-1/app-1",
+			ImportStateCheck: func(states []*terraform.InstanceState) error {
+				if got := states[0].Attributes["name"]; got != "renamed-in-ui" {
+					return fmt.Errorf("imported name = %q, want the name from the API", got)
+				}
+				return nil
 			},
 		},
-	})
+		resource.TestStep{
+			Config: lifecycleConfig(server.URL, "frontend_application",
+				"project_id = \"project-1\"\nname = \"renamed-in-ui\"\nservice_namespace = \"web\""),
+			ExpectError: regexp.MustCompile("Same-name replacement requires adoption"),
+		},
+		resource.TestStep{
+			Config:           config("renamed-in-ui"),
+			ConfigPlanChecks: expectAction(resourceName, plancheck.ResourceActionUpdate),
+			Check: resource.ComposeTestCheckFunc(
+				resource.TestCheckResourceAttr(resourceName, "id", "app-1"),
+				resource.TestCheckResourceAttr(resourceName, "name", "renamed-in-ui"),
+			),
+		},
+		resource.TestStep{
+			Config:           config("other"),
+			ConfigPlanChecks: expectAction(resourceName, plancheck.ResourceActionDestroyBeforeCreate),
+			Check:            resource.TestCheckResourceAttr(resourceName, "id", "app-2"),
+		},
+	)
 	api.Lock()
 	defer api.Unlock()
 	if api.application != nil {

@@ -24,13 +24,27 @@ func testChannelAssignments(t *testing.T, in ...logclient.ChannelAssignment) typ
 	return set
 }
 
+func alertModelFromJSON(t *testing.T, fields string) AlertModel {
+	t.Helper()
+
+	body := `{
+		"id": "alert-1", "name": "name", "query": "select 1", "time_window": "PT5M", "frequency": "PT5M",
+		"watermark": "PT10S", "notify_when": "has_matches", "active": true, ` + fields + `}`
+	var read logclient.AlertRead
+	if err := json.Unmarshal([]byte(body), &read); err != nil {
+		t.Fatal(err)
+	}
+	var got AlertModel
+	if diags := alertReadToModel(context.Background(), &read, &got); diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags)
+	}
+	return got
+}
+
 func TestChannelAssignmentsRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	set := testChannelAssignments(t,
-		logclient.ChannelAssignment{ChannelID: "pagerduty"},
-		logclient.ChannelAssignment{ChannelID: "incidents", ScheduleID: stringPtr("office-hours")},
-	)
+	set := testChannelAssignments(t, testPagerduty, testIncidents)
 	out, diags := channelAssignmentsToAPI(context.Background(), set)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
@@ -48,7 +62,8 @@ func TestChannelAssignmentsRoundTrip(t *testing.T) {
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
-	b, err := json.Marshal(logclient.SloUpdate{Alerts: &logclient.SloAlertsDelivery{Slow: &logclient.SloTierDelivery{ChannelAssignments: empty}}})
+	slow := &logclient.SloTierDelivery{ChannelAssignments: empty}
+	b, err := json.Marshal(logclient.SloUpdate{Alerts: &logclient.SloAlertsDelivery{Slow: slow}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,10 +75,7 @@ func TestChannelAssignmentsRoundTrip(t *testing.T) {
 func TestChannelAssignmentJSON(t *testing.T) {
 	t.Parallel()
 
-	b, err := json.Marshal([]logclient.ChannelAssignment{
-		{ChannelID: "pagerduty"},
-		{ChannelID: "incidents", ScheduleID: stringPtr("office-hours")},
-	})
+	b, err := json.Marshal([]logclient.ChannelAssignment{testPagerduty, testIncidents})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,10 +125,7 @@ func TestAlertChannelAssignmentsMapping(t *testing.T) {
 	t.Parallel()
 
 	m := environmentsBaseModel(t)
-	m.ChannelAssignments = testChannelAssignments(t,
-		logclient.ChannelAssignment{ChannelID: "pagerduty"},
-		logclient.ChannelAssignment{ChannelID: "incidents", ScheduleID: stringPtr("office-hours")},
-	)
+	m.ChannelAssignments = testChannelAssignments(t, testPagerduty, testIncidents)
 	create, diags := alertModelToCreate(context.Background(), &m)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
@@ -130,21 +139,10 @@ func TestAlertChannelAssignmentsMapping(t *testing.T) {
 	}
 
 	// The alert API returns the assignments in the shape it accepts.
-	var read logclient.AlertRead
-	if err := json.Unmarshal([]byte(`{
-		"id": "alert-1", "name": "name", "query": "select 1", "time_window": "PT5M", "frequency": "PT5M",
-		"watermark": "PT10S", "notify_when": "has_matches", "active": true,
-		"channel_assignments": [
-			{"channel_id": "incidents", "schedule_id": "office-hours"},
-			{"channel_id": "pagerduty", "schedule_id": null}
-		]
-	}`), &read); err != nil {
-		t.Fatal(err)
-	}
-	var got AlertModel
-	if diags := alertReadToModel(context.Background(), &read, &got); diags.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", diags)
-	}
+	got := alertModelFromJSON(t, `"channel_assignments": [
+		{"channel_id": "incidents", "schedule_id": "office-hours"},
+		{"channel_id": "pagerduty", "schedule_id": null}
+	]`)
 	if !got.ChannelAssignments.Equal(m.ChannelAssignments) {
 		t.Fatalf("got %v, want %v", got.ChannelAssignments, m.ChannelAssignments)
 	}
@@ -155,18 +153,9 @@ func TestAlertChannelAssignmentsMapping(t *testing.T) {
 func TestAlertReadWithoutChannelAssignmentsUsesChannels(t *testing.T) {
 	t.Parallel()
 
-	var read logclient.AlertRead
-	if err := json.Unmarshal([]byte(`{
-		"id": "alert-1", "name": "name", "query": "select 1", "time_window": "PT5M", "frequency": "PT5M",
-		"watermark": "PT10S", "notify_when": "has_matches", "active": true,
-		"channels": [{"id": "pagerduty", "schedule_id": null}, {"id": "incidents", "schedule_id": "office-hours"}]
-	}`), &read); err != nil {
-		t.Fatal(err)
-	}
-	var got AlertModel
-	if diags := alertReadToModel(context.Background(), &read, &got); diags.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", diags)
-	}
+	got := alertModelFromJSON(t, `"channels": [
+		{"id": "pagerduty", "schedule_id": null}, {"id": "incidents", "schedule_id": "office-hours"}
+	]`)
 	if want := testChannelAssignments(t, testPagerduty, testIncidents); !got.ChannelAssignments.Equal(want) {
 		t.Fatalf("got %v, want %v", got.ChannelAssignments, want)
 	}

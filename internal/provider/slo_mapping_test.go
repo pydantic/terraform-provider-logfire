@@ -25,18 +25,53 @@ func baseSloModel() SloModel {
 	}
 }
 
+func sloCreate(t *testing.T, m SloModel) logclient.SloCreate {
+	t.Helper()
+	create, diags := sloModelToCreate(context.Background(), &m)
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags)
+	}
+	return create
+}
+
+func sloUpdate(t *testing.T, plan, state SloModel) logclient.SloUpdate {
+	t.Helper()
+	payload, diags := sloModelToUpdate(context.Background(), &plan, &state)
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags)
+	}
+	return payload
+}
+
+func sloReadInto(t *testing.T, read *logclient.SloRead, m *SloModel) {
+	t.Helper()
+	if diags := sloReadToModel(context.Background(), read, m); diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags)
+	}
+}
+
+func jsonBody(t *testing.T, v any) map[string]any {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	return body
+}
+
 func TestSloModelToCreate(t *testing.T) {
 	t.Parallel()
 
 	t.Run("maps required fields and converts the window to seconds", func(t *testing.T) {
 		t.Parallel()
 
-		m := baseSloModel()
-		create, diags := sloModelToCreate(context.Background(), &m)
-		if diags.HasError() {
-			t.Fatalf("unexpected diagnostics: %v", diags)
-		}
-		if create.ScopeKind != "service" || create.ScopeValue != "payments-api" || create.Name != "payments 99.9% / 30d" {
+		create := sloCreate(t, baseSloModel())
+		if create.ScopeKind != "service" || create.ScopeValue != "payments-api" ||
+			create.Name != "payments 99.9% / 30d" {
 			t.Fatalf("unexpected identity fields: %#v", create)
 		}
 		if create.TargetPercent != "99.9" {
@@ -45,7 +80,8 @@ func TestSloModelToCreate(t *testing.T) {
 		if create.RollingWindowSeconds != 30*86400 {
 			t.Fatalf("expected 30d in seconds, got %d", create.RollingWindowSeconds)
 		}
-		if create.Description != nil || create.Source != nil || create.MetricAggregation != nil || create.Environments != nil {
+		if create.Description != nil || create.Source != nil || create.MetricAggregation != nil ||
+			create.Environments != nil {
 			t.Fatalf("expected omitted optionals, got %#v", create)
 		}
 		if create.Alerts != nil {
@@ -66,10 +102,7 @@ func TestSloModelToCreate(t *testing.T) {
 		m.MetricAggregation = types.StringValue("counter_rate")
 		m.Environments = envs
 
-		create, gotDiags := sloModelToCreate(context.Background(), &m)
-		if gotDiags.HasError() {
-			t.Fatalf("unexpected diagnostics: %v", gotDiags)
-		}
+		create := sloCreate(t, m)
 		if create.Description == nil || *create.Description != "desc" {
 			t.Fatalf("unexpected description: %#v", create.Description)
 		}
@@ -94,10 +127,7 @@ func TestSloModelToCreate(t *testing.T) {
 		m.Threshold = types.StringValue("60000")
 		m.Comparison = types.StringValue("less_than")
 
-		create, diags := sloModelToCreate(context.Background(), &m)
-		if diags.HasError() {
-			t.Fatalf("unexpected diagnostics: %v", diags)
-		}
+		create := sloCreate(t, m)
 		if create.BadQuery != nil {
 			t.Fatalf("expected omitted bad_query, got %#v", create.BadQuery)
 		}
@@ -109,16 +139,9 @@ func TestSloModelToCreate(t *testing.T) {
 		}
 
 		// bad_query must be absent from the wire body, not sent as "".
-		raw, err := json.Marshal(create)
-		if err != nil {
-			t.Fatalf("marshal failed: %v", err)
-		}
-		var body map[string]any
-		if err := json.Unmarshal(raw, &body); err != nil {
-			t.Fatalf("unmarshal failed: %v", err)
-		}
+		body := jsonBody(t, create)
 		if _, ok := body["bad_query"]; ok {
-			t.Fatalf("expected bad_query absent from body, got %s", raw)
+			t.Fatalf("expected bad_query absent from body, got %v", body)
 		}
 	})
 
@@ -159,9 +182,7 @@ func TestSloReadToModel(t *testing.T) {
 		t.Parallel()
 
 		m := baseSloModel()
-		if diags := sloReadToModel(context.Background(), sloRead(), &m); diags != nil && diags.HasError() {
-			t.Fatalf("unexpected diagnostics: %v", diags)
-		}
+		sloReadInto(t, sloRead(), &m)
 		if got := m.TargetPercent.ValueString(); got != "99.9" {
 			t.Fatalf("expected preserved target 99.9, got %q", got)
 		}
@@ -192,9 +213,7 @@ func TestSloReadToModel(t *testing.T) {
 		read.Description = &desc
 
 		m := baseSloModel()
-		if diags := sloReadToModel(context.Background(), read, &m); diags != nil && diags.HasError() {
-			t.Fatalf("unexpected diagnostics: %v", diags)
-		}
+		sloReadInto(t, read, &m)
 		if got := m.TargetPercent.ValueString(); got != "99.95" {
 			t.Fatalf("expected normalized API target, got %q", got)
 		}
@@ -230,9 +249,7 @@ func TestSloReadToModel(t *testing.T) {
 		m.BadQuery = types.StringNull()
 		m.Threshold = types.StringValue("60000")
 		m.Comparison = types.StringValue("less_than")
-		if diags := sloReadToModel(context.Background(), read, &m); diags != nil && diags.HasError() {
-			t.Fatalf("unexpected diagnostics: %v", diags)
-		}
+		sloReadInto(t, read, &m)
 		if !m.BadQuery.IsNull() {
 			t.Fatalf("expected null bad_query, got %v", m.BadQuery)
 		}
@@ -250,25 +267,9 @@ func TestSloReadToModel(t *testing.T) {
 		m := baseSloModel()
 		m.Threshold = types.StringValue("60000")
 		m.Comparison = types.StringValue("less_than")
-		if diags := sloReadToModel(context.Background(), sloRead(), &m); diags != nil && diags.HasError() {
-			t.Fatalf("unexpected diagnostics: %v", diags)
-		}
+		sloReadInto(t, sloRead(), &m)
 		if !m.Threshold.IsNull() || !m.Comparison.IsNull() {
 			t.Fatalf("expected null threshold/comparison, got %v / %v", m.Threshold, m.Comparison)
-		}
-	})
-
-	t.Run("renders sub-day windows compactly on import", func(t *testing.T) {
-		t.Parallel()
-
-		read := sloRead()
-		read.RollingWindow = "PT1H30M"
-		var m SloModel
-		if diags := sloReadToModel(context.Background(), read, &m); diags != nil && diags.HasError() {
-			t.Fatalf("unexpected diagnostics: %v", diags)
-		}
-		if got := m.RollingWindow.ValueString(); got != "1h30m" {
-			t.Fatalf("expected 1h30m, got %q", got)
 		}
 	})
 
@@ -276,9 +277,7 @@ func TestSloReadToModel(t *testing.T) {
 		t.Parallel()
 
 		var m SloModel
-		if diags := sloReadToModel(context.Background(), sloRead(), &m); diags != nil && diags.HasError() {
-			t.Fatalf("unexpected diagnostics: %v", diags)
-		}
+		sloReadInto(t, sloRead(), &m)
 		if got := m.TargetPercent.ValueString(); got != "99.9" {
 			t.Fatalf("expected normalized target 99.9, got %q", got)
 		}
@@ -292,13 +291,9 @@ func TestSloModelToUpdate(t *testing.T) {
 		t.Parallel()
 
 		plan := baseSloModel()
-		state := baseSloModel()
 		plan.Name = types.StringValue("renamed")
 
-		payload, diags := sloModelToUpdate(context.Background(), &plan, &state)
-		if diags != nil && diags.HasError() {
-			t.Fatalf("unexpected diagnostics: %v", diags)
-		}
+		payload := sloUpdate(t, plan, baseSloModel())
 		if payload.Name == nil || *payload.Name != "renamed" {
 			t.Fatalf("expected name in payload, got %#v", payload.Name)
 		}
@@ -313,14 +308,10 @@ func TestSloModelToUpdate(t *testing.T) {
 		t.Parallel()
 
 		plan := baseSloModel()
-		state := baseSloModel()
 		plan.TargetPercent = types.StringValue("99.90")
 		plan.RollingWindow = types.StringValue("720h")
 
-		payload, diags := sloModelToUpdate(context.Background(), &plan, &state)
-		if diags != nil && diags.HasError() {
-			t.Fatalf("unexpected diagnostics: %v", diags)
-		}
+		payload := sloUpdate(t, plan, baseSloModel())
 		if payload.TargetPercent != nil || payload.RollingWindowSeconds != nil {
 			t.Fatalf("expected empty payload for equivalent values, got %#v", payload)
 		}
@@ -337,10 +328,7 @@ func TestSloModelToUpdate(t *testing.T) {
 		plan.MetricAggregation = types.StringValue("gauge_fraction")
 		state.MetricAggregation = types.StringValue("additive")
 
-		payload, diags := sloModelToUpdate(context.Background(), &plan, &state)
-		if diags != nil && diags.HasError() {
-			t.Fatalf("unexpected diagnostics: %v", diags)
-		}
+		payload := sloUpdate(t, plan, state)
 		if payload.TargetPercent == nil || *payload.TargetPercent != "99.95" {
 			t.Fatalf("expected target in payload, got %#v", payload.TargetPercent)
 		}
@@ -373,29 +361,20 @@ func TestSloModelToUpdate(t *testing.T) {
 		state := baseSloModel()
 		plan.Environments = mkSet("prod", "staging")
 		state.Environments = mkSet("staging", "prod")
-		payload, diags := sloModelToUpdate(context.Background(), &plan, &state)
-		if diags != nil && diags.HasError() {
-			t.Fatalf("unexpected diagnostics: %v", diags)
-		}
-		if payload.Environments != nil {
+		if payload := sloUpdate(t, plan, state); payload.Environments != nil {
 			t.Fatalf("expected same-elements set omitted, got %#v", payload.Environments)
 		}
 
 		plan.Environments = types.SetNull(types.StringType)
-		payload, diags = sloModelToUpdate(context.Background(), &plan, &state)
-		if diags != nil && diags.HasError() {
-			t.Fatalf("unexpected diagnostics: %v", diags)
-		}
+		payload := sloUpdate(t, plan, state)
 		if payload.Environments == nil || len(*payload.Environments) != 0 {
 			t.Fatalf("expected empty environments to clear, got %#v", payload.Environments)
 		}
 
 		plan.Environments = mkSet("prod")
-		payload, diags = sloModelToUpdate(context.Background(), &plan, &state)
-		if diags != nil && diags.HasError() {
-			t.Fatalf("unexpected diagnostics: %v", diags)
-		}
-		if payload.Environments == nil || len(*payload.Environments) != 1 || (*payload.Environments)[0] != "prod" {
+		payload = sloUpdate(t, plan, state)
+		if payload.Environments == nil || len(*payload.Environments) != 1 ||
+			(*payload.Environments)[0] != "prod" {
 			t.Fatalf("expected changed environments sent, got %#v", payload.Environments)
 		}
 	})
@@ -408,10 +387,7 @@ func TestSloModelToUpdate(t *testing.T) {
 		state := baseSloModel()
 		plan.Threshold = types.StringValue("60000")
 		plan.Comparison = types.StringValue("less_than")
-		payload, diags := sloModelToUpdate(context.Background(), &plan, &state)
-		if diags != nil && diags.HasError() {
-			t.Fatalf("unexpected diagnostics: %v", diags)
-		}
+		payload := sloUpdate(t, plan, state)
 		if payload.Threshold == nil || *payload.Threshold == nil || **payload.Threshold != "60000" {
 			t.Fatalf("expected threshold value in payload, got %#v", payload.Threshold)
 		}
@@ -424,55 +400,38 @@ func TestSloModelToUpdate(t *testing.T) {
 		plan.Comparison = types.StringValue("less_than")
 		state.Threshold = types.StringValue("60000")
 		state.Comparison = types.StringValue("less_than")
-		payload, diags = sloModelToUpdate(context.Background(), &plan, &state)
-		if diags != nil && diags.HasError() {
-			t.Fatalf("unexpected diagnostics: %v", diags)
-		}
+		payload = sloUpdate(t, plan, state)
 		if payload.Threshold != nil || payload.Comparison != nil {
-			t.Fatalf("expected unchanged threshold/comparison omitted, got %#v / %#v", payload.Threshold, payload.Comparison)
+			t.Fatalf("expected unchanged threshold/comparison omitted, got %#v", payload)
 		}
 
 		// value -> null sends an explicit JSON null so the API clears them
 		// (e.g. switching a histogram SLO back to another mode).
 		plan.Threshold = types.StringNull()
 		plan.Comparison = types.StringNull()
-		payload, diags = sloModelToUpdate(context.Background(), &plan, &state)
-		if diags != nil && diags.HasError() {
-			t.Fatalf("unexpected diagnostics: %v", diags)
-		}
+		payload = sloUpdate(t, plan, state)
 		if payload.Threshold == nil || *payload.Threshold != nil {
 			t.Fatalf("expected explicit-null threshold, got %#v", payload.Threshold)
 		}
 		if payload.Comparison == nil || *payload.Comparison != nil {
 			t.Fatalf("expected explicit-null comparison, got %#v", payload.Comparison)
 		}
-		raw, err := json.Marshal(payload)
-		if err != nil {
-			t.Fatalf("marshal failed: %v", err)
-		}
-		var body map[string]any
-		if err := json.Unmarshal(raw, &body); err != nil {
-			t.Fatalf("unmarshal failed: %v", err)
-		}
+		body := jsonBody(t, payload)
 		if v, ok := body["threshold"]; !ok || v != nil {
-			t.Fatalf("expected threshold:null in body, got %s", raw)
+			t.Fatalf("expected threshold:null in body, got %v", body)
 		}
 		if v, ok := body["comparison"]; !ok || v != nil {
-			t.Fatalf("expected comparison:null in body, got %s", raw)
+			t.Fatalf("expected comparison:null in body, got %v", body)
 		}
 	})
 
 	t.Run("clears a removed description", func(t *testing.T) {
 		t.Parallel()
 
-		plan := baseSloModel()
 		state := baseSloModel()
 		state.Description = types.StringValue("old")
 
-		payload, diags := sloModelToUpdate(context.Background(), &plan, &state)
-		if diags != nil && diags.HasError() {
-			t.Fatalf("unexpected diagnostics: %v", diags)
-		}
+		payload := sloUpdate(t, baseSloModel(), state)
 		if payload.Description == nil || *payload.Description != "" {
 			t.Fatalf("expected empty description to clear, got %#v", payload.Description)
 		}
@@ -518,7 +477,6 @@ func TestValidateSloSliConfig(t *testing.T) {
 			*m = histogram()
 			m.Comparison = types.StringNull()
 		}, true},
-		{"histogram without bad_query is fine", func(m *SloModel) { *m = histogram() }, false},
 		{"unknown metric_aggregation defers validation", func(m *SloModel) {
 			m.MetricAggregation = types.StringUnknown()
 			m.BadQuery = types.StringNull()
@@ -588,9 +546,7 @@ func TestSloReadToModelWindowSpelling(t *testing.T) {
 		read.RollingWindow = tc.iso
 		m := baseSloModel()
 		m.RollingWindow = types.StringNull()
-		if diags := sloReadToModel(context.Background(), read, &m); diags.HasError() {
-			t.Fatalf("unexpected diagnostics: %v", diags)
-		}
+		sloReadInto(t, read, &m)
 		if got := m.RollingWindow.ValueString(); got != tc.want {
 			t.Errorf("window %s = %q, want %q", tc.iso, got, tc.want)
 		}

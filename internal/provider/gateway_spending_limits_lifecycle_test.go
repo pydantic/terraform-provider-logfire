@@ -42,18 +42,18 @@ func newSpendingLimitsAPI(t *testing.T) (*httptest.Server, *spendingLimitsAPI) {
 		api.Lock()
 		defer api.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/api/oauth/token" {
-			_, _ = w.Write([]byte(`{"access_token":"test-org-token","expires_in":900}`))
+		if serveOrgToken(w, r) {
 			return
 		}
 		route := r.Method + " " + r.URL.Path
 		api.requests[route]++
-		if r.URL.Path == "/api/v1/projects/"+spendingLimitsProjectID+"/" && r.Method == http.MethodGet {
-			if api.projectDenied {
-				w.WriteHeader(http.StatusForbidden)
-				_, _ = w.Write([]byte(`{"detail":"You do not have permission to access this project"}`))
-				return
-			}
+		projectLookup := r.URL.Path == "/api/v1/projects/"+spendingLimitsProjectID+"/" && r.Method == http.MethodGet
+		if api.projectDenied && (projectLookup || r.URL.Path == spendingLimitsProjectURL) {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"detail":"You do not have permission to access this project"}`))
+			return
+		}
+		if projectLookup {
 			_, _ = w.Write([]byte(`{"id":"` + spendingLimitsProjectID + `","project_name":"demo","visibility":"private"}`))
 			return
 		}
@@ -65,11 +65,6 @@ func newSpendingLimitsAPI(t *testing.T) (*httptest.Server, *spendingLimitsAPI) {
 		if api.routesMissing {
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"detail":"Not Found"}`))
-			return
-		}
-		if r.URL.Path == spendingLimitsProjectURL && api.projectDenied {
-			w.WriteHeader(http.StatusForbidden)
-			_, _ = w.Write([]byte(`{"detail":"You do not have permission to access this project"}`))
 			return
 		}
 		limits := api.limits[r.URL.Path]
@@ -104,6 +99,17 @@ func newSpendingLimitsAPI(t *testing.T) (*httptest.Server, *spendingLimitsAPI) {
 	return server, api
 }
 
+// projectLimitsBody names the project that the project spending limits resource configures.
+func projectLimitsBody(body string) string {
+	return "project_id = \"" + spendingLimitsProjectID + "\"\n" + body
+}
+
+// spendingLimitsBodies holds a valid configuration body for each resource kind.
+var spendingLimitsBodies = map[string]string{
+	"gateway_spending_limits":         "daily_usd = 1",
+	"gateway_project_spending_limits": projectLimitsBody("daily_usd = 1"),
+}
+
 func TestLifecycleGatewaySpendingLimits(t *testing.T) {
 	t.Parallel()
 	server, api := newSpendingLimitsAPI(t)
@@ -111,31 +117,26 @@ func TestLifecycleGatewaySpendingLimits(t *testing.T) {
 	api.limits[spendingLimitsOrgURL] = logclient.GatewaySpendingLimits{WeeklyUSD: new(int64(700))}
 	config := func(body string) string { return lifecycleConfig(server.URL, "gateway_spending_limits", body) }
 	const resourceName = "logfire_gateway_spending_limits.test"
-	resource.Test(t, resource.TestCase{
-		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{
-				Config: config("monthly_usd = 5000"),
-				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr(resourceName, "id", "organization"),
-					resource.TestCheckResourceAttr(resourceName, "monthly_usd", "5000"),
-					resource.TestCheckNoResourceAttr(resourceName, "weekly_usd"),
-					resource.TestCheckNoResourceAttr(resourceName, "daily_usd"),
-				),
-			},
-			{
-				Config: config("daily_usd = 100"),
-				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
-					plancheck.ExpectResourceAction(resourceName, plancheck.ResourceActionUpdate),
-				}},
-				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr(resourceName, "daily_usd", "100"),
-					resource.TestCheckNoResourceAttr(resourceName, "monthly_usd"),
-				),
-			},
-			{Config: config("daily_usd = 100"), ResourceName: resourceName, ImportState: true, ImportStateId: "organization", ImportStateVerify: true},
+	runUnitTest(t,
+		resource.TestStep{
+			Config: config("monthly_usd = 5000"),
+			Check: resource.ComposeTestCheckFunc(
+				resource.TestCheckResourceAttr(resourceName, "id", "organization"),
+				resource.TestCheckResourceAttr(resourceName, "monthly_usd", "5000"),
+				resource.TestCheckNoResourceAttr(resourceName, "weekly_usd"),
+				resource.TestCheckNoResourceAttr(resourceName, "daily_usd"),
+			),
 		},
-	})
+		resource.TestStep{
+			Config:           config("daily_usd = 100"),
+			ConfigPlanChecks: expectAction(resourceName, plancheck.ResourceActionUpdate),
+			Check: resource.ComposeTestCheckFunc(
+				resource.TestCheckResourceAttr(resourceName, "daily_usd", "100"),
+				resource.TestCheckNoResourceAttr(resourceName, "monthly_usd"),
+			),
+		},
+		resource.TestStep{Config: config("daily_usd = 100"), ResourceName: resourceName, ImportState: true, ImportStateId: "organization", ImportStateVerify: true},
+	)
 	api.Lock()
 	defer api.Unlock()
 	if got := api.limits[spendingLimitsOrgURL]; got != (logclient.GatewaySpendingLimits{}) {
@@ -149,40 +150,32 @@ func TestLifecycleGatewaySpendingLimits(t *testing.T) {
 func TestLifecycleGatewayProjectSpendingLimits(t *testing.T) {
 	t.Parallel()
 	server, api := newSpendingLimitsAPI(t)
-	config := func(body string) string {
-		return lifecycleConfig(server.URL, "gateway_project_spending_limits",
-			"project_id = \""+spendingLimitsProjectID+"\"\n"+body)
-	}
+	config := lifecycleConfig(server.URL, "gateway_project_spending_limits", projectLimitsBody("daily_usd = 10\nweekly_usd = 50"))
 	const resourceName = "logfire_gateway_project_spending_limits.test"
-	resource.Test(t, resource.TestCase{
-		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{
-				Config: config("daily_usd = 10\nweekly_usd = 50"),
-				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr(resourceName, "id", spendingLimitsProjectID),
-					resource.TestCheckResourceAttr(resourceName, "daily_usd", "10"),
-					resource.TestCheckResourceAttr(resourceName, "weekly_usd", "50"),
-				),
-			},
-			{Config: config("daily_usd = 10\nweekly_usd = 50"), ResourceName: resourceName, ImportState: true, ImportStateId: spendingLimitsProjectID, ImportStateVerify: true},
-			{
-				// A limit changed outside Terraform shows as drift.
-				PreConfig: func() {
-					api.Lock()
-					defer api.Unlock()
-					limits := api.limits[spendingLimitsProjectURL]
-					limits.MonthlyUSD = new(int64(999))
-					api.limits[spendingLimitsProjectURL] = limits
-				},
-				Config: config("daily_usd = 10\nweekly_usd = 50"),
-				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
-					plancheck.ExpectResourceAction(resourceName, plancheck.ResourceActionUpdate),
-				}},
-				Check: resource.TestCheckNoResourceAttr(resourceName, "monthly_usd"),
-			},
+	runUnitTest(t,
+		resource.TestStep{
+			Config: config,
+			Check: resource.ComposeTestCheckFunc(
+				resource.TestCheckResourceAttr(resourceName, "id", spendingLimitsProjectID),
+				resource.TestCheckResourceAttr(resourceName, "daily_usd", "10"),
+				resource.TestCheckResourceAttr(resourceName, "weekly_usd", "50"),
+			),
 		},
-	})
+		resource.TestStep{Config: config, ResourceName: resourceName, ImportState: true, ImportStateId: spendingLimitsProjectID, ImportStateVerify: true},
+		resource.TestStep{
+			// A limit changed outside Terraform shows as drift.
+			PreConfig: func() {
+				api.Lock()
+				defer api.Unlock()
+				limits := api.limits[spendingLimitsProjectURL]
+				limits.MonthlyUSD = new(int64(999))
+				api.limits[spendingLimitsProjectURL] = limits
+			},
+			Config:           config,
+			ConfigPlanChecks: expectAction(resourceName, plancheck.ResourceActionUpdate),
+			Check:            resource.TestCheckNoResourceAttr(resourceName, "monthly_usd"),
+		},
+	)
 	api.Lock()
 	defer api.Unlock()
 	if got := api.limits[spendingLimitsProjectURL]; got != (logclient.GatewaySpendingLimits{}) {
@@ -195,36 +188,30 @@ func TestLifecycleGatewayProjectSpendingLimits(t *testing.T) {
 func TestLifecycleGatewayProjectSpendingLimitsProjectUnavailable(t *testing.T) {
 	t.Parallel()
 	server, api := newSpendingLimitsAPI(t)
-	config := lifecycleConfig(server.URL, "gateway_project_spending_limits",
-		"project_id = \""+spendingLimitsProjectID+"\"\nmonthly_usd = 10")
-	resource.Test(t, resource.TestCase{
-		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{Config: config},
-			{
-				PreConfig: func() {
-					api.Lock()
-					defer api.Unlock()
-					api.projectDenied = true
-				},
-				Config:      config,
-				PlanOnly:    true,
-				ExpectError: regexp.MustCompile(`You do not have permission to access this\s+project`),
-			},
-			{
-				PreConfig: func() {
-					api.Lock()
-					defer api.Unlock()
-					api.projectDenied = false
-				},
-				Config: config,
-				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
-					plancheck.ExpectResourceAction("logfire_gateway_project_spending_limits.test", plancheck.ResourceActionNoop),
-				}},
-				Check: resource.TestCheckResourceAttr("logfire_gateway_project_spending_limits.test", "monthly_usd", "10"),
-			},
+	config := lifecycleConfig(server.URL, "gateway_project_spending_limits", projectLimitsBody("monthly_usd = 10"))
+	const resourceName = "logfire_gateway_project_spending_limits.test"
+	setDenied := func(denied bool) func() {
+		return func() {
+			api.Lock()
+			defer api.Unlock()
+			api.projectDenied = denied
+		}
+	}
+	runUnitTest(t,
+		resource.TestStep{Config: config},
+		resource.TestStep{
+			PreConfig:   setDenied(true),
+			Config:      config,
+			PlanOnly:    true,
+			ExpectError: regexp.MustCompile(`You do not have permission to access this\s+project`),
 		},
-	})
+		resource.TestStep{
+			PreConfig:        setDenied(false),
+			Config:           config,
+			ConfigPlanChecks: expectAction(resourceName, plancheck.ResourceActionNoop),
+			Check:            resource.TestCheckResourceAttr(resourceName, "monthly_usd", "10"),
+		},
+	)
 	api.Lock()
 	defer api.Unlock()
 	if got := api.requests["PATCH "+spendingLimitsProjectURL]; got != 2 {
@@ -236,16 +223,10 @@ func TestLifecycleGatewaySpendingLimitsOnOlderLogfire(t *testing.T) {
 	t.Parallel()
 	server, api := newSpendingLimitsAPI(t)
 	api.routesMissing = true
-	for kind, body := range map[string]string{
-		"gateway_spending_limits":         "daily_usd = 1",
-		"gateway_project_spending_limits": "project_id = \"" + spendingLimitsProjectID + "\"\ndaily_usd = 1",
-	} {
-		resource.Test(t, resource.TestCase{
-			IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-			Steps: []resource.TestStep{{
-				Config:      lifecycleConfig(server.URL, kind, body),
-				ExpectError: regexp.MustCompile(`requires\s+Logfire\s+v2026-10-16\.01\s+or\s+newer`),
-			}},
+	for kind, body := range spendingLimitsBodies {
+		runUnitTest(t, resource.TestStep{
+			Config:      lifecycleConfig(server.URL, kind, body),
+			ExpectError: regexp.MustCompile(`requires\s+Logfire\s+v2026-10-16\.01\s+or\s+newer`),
 		})
 	}
 }
@@ -253,24 +234,19 @@ func TestLifecycleGatewaySpendingLimitsOnOlderLogfire(t *testing.T) {
 func TestLifecycleGatewaySpendingLimitsValidation(t *testing.T) {
 	t.Parallel()
 	steps := []resource.TestStep{}
-	for body, message := range map[string]string{
-		"daily_usd = 0":           "between 1 and 500000000",
-		"monthly_usd = 500000001": "between 1 and 500000000",
+	for _, tc := range []struct{ kind, body, message string }{
+		{"gateway_spending_limits", "daily_usd = 0", "between 1 and 500000000"},
+		{"gateway_spending_limits", "monthly_usd = 500000001", "between 1 and 500000000"},
+		{"gateway_project_spending_limits", `project_id = "demo"`, "must be a lowercase project UUID"},
+		{"gateway_project_spending_limits", `project_id = "` + strings.ToUpper(spendingLimitsProjectID) + `"`, "must be a lowercase project UUID"},
 	} {
 		steps = append(steps, resource.TestStep{
-			Config:      lifecycleConfig("http://127.0.0.1:1", "gateway_spending_limits", body),
+			Config:      lifecycleConfig("http://127.0.0.1:1", tc.kind, tc.body),
 			PlanOnly:    true,
-			ExpectError: regexp.MustCompile(message),
+			ExpectError: regexp.MustCompile(tc.message),
 		})
 	}
-	for _, projectID := range []string{"demo", strings.ToUpper(spendingLimitsProjectID)} {
-		steps = append(steps, resource.TestStep{
-			Config:      lifecycleConfig("http://127.0.0.1:1", "gateway_project_spending_limits", `project_id = "`+projectID+`"`),
-			PlanOnly:    true,
-			ExpectError: regexp.MustCompile("must be a lowercase project UUID"),
-		})
-	}
-	resource.Test(t, resource.TestCase{IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories, Steps: steps})
+	runUnitTest(t, steps...)
 }
 
 func TestGatewaySpendingLimitsImportRejectsOtherIDs(t *testing.T) {
@@ -281,17 +257,9 @@ func TestGatewaySpendingLimitsImportRejectsOtherIDs(t *testing.T) {
 		{"gateway_project_spending_limits", "demo"},
 		{"gateway_project_spending_limits", strings.ToUpper(spendingLimitsProjectID)},
 	} {
-		kind, id := tc.kind, tc.id
-		body := "daily_usd = 1"
-		if strings.Contains(kind, "project") {
-			body = "project_id = \"" + spendingLimitsProjectID + "\"\n" + body
-		}
-		resource.Test(t, resource.TestCase{
-			IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-			Steps: []resource.TestStep{{
-				Config: lifecycleConfig(server.URL, kind, body), ResourceName: "logfire_" + kind + ".test",
-				ImportState: true, ImportStateId: id, ExpectError: regexp.MustCompile("Invalid import ID"),
-			}},
+		runUnitTest(t, resource.TestStep{
+			Config: lifecycleConfig(server.URL, tc.kind, spendingLimitsBodies[tc.kind]), ResourceName: "logfire_" + tc.kind + ".test",
+			ImportState: true, ImportStateId: tc.id, ExpectError: regexp.MustCompile("Invalid import ID"),
 		})
 	}
 }

@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 )
 
@@ -21,7 +20,7 @@ func TestUpdateDashboardLayoutReplacementIsOptIn(t *testing.T) {
 		{"replace layout", "replace_layout=true", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			client := newServerClient(t, func(w http.ResponseWriter, req *http.Request) {
 				body, err := io.ReadAll(req.Body)
 				if err != nil {
 					t.Error(err)
@@ -33,12 +32,7 @@ func TestUpdateDashboardLayoutReplacementIsOptIn(t *testing.T) {
 					t.Errorf("unexpected update body: %s", body)
 				}
 				_, _ = io.WriteString(w, `{"id":"dashboard-id","dashboard_name":"Main"}`)
-			}))
-			defer server.Close()
-			client, err := NewAPIClient(server.URL, "test", server.Client())
-			if err != nil {
-				t.Fatal(err)
-			}
+			})
 			definition := json.RawMessage(`{"kind":"Dashboard","spec":{}}`)
 			out, err := client.UpdateDashboard(t.Context(), "project-id", "dashboard-id", DashboardUpdateRequest{Definition: &definition, ReplaceLayout: tc.replace})
 			if err != nil {

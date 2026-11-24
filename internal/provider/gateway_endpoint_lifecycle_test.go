@@ -43,8 +43,7 @@ func newEndpointAPI(t *testing.T) (*httptest.Server, *endpointAPI) {
 		api.Lock()
 		defer api.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/api/oauth/token" {
-			_, _ = w.Write([]byte(`{"access_token":"test-org-token","expires_in":900}`))
+		if serveOrgToken(w, r) {
 			return
 		}
 		route := r.Method + " " + r.URL.Path
@@ -112,36 +111,32 @@ func TestLifecycleGatewayEndpoint(t *testing.T) {
 	openAI := fmt.Sprintf("{ provider_id = %q, weight = 0.1 }", endpointOpenAI)
 	claude := fmt.Sprintf("{ provider_id = %q, priority = 10, active = false }", endpointClaude)
 	const resourceName = "logfire_gateway_endpoint.test"
-	resource.Test(t, resource.TestCase{
-		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{
-				Config: config("", openAI),
-				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr(resourceName, "id", endpointTestID),
-					resource.TestCheckNoResourceAttr(resourceName, "description"),
-					resource.TestCheckTypeSetElemNestedAttrs(resourceName, "providers.*", map[string]string{
-						"provider_id": endpointOpenAI, "weight": "0.1",
-					}),
-				),
-			},
-			{
-				Config: config(`description = "Primary"`, openAI+", "+claude),
-				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
-					plancheck.ExpectResourceAction(resourceName, plancheck.ResourceActionUpdate),
-				}},
-				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr(resourceName, "description", "Primary"),
-					resource.TestCheckResourceAttr(resourceName, "providers.#", "2"),
-					resource.TestCheckTypeSetElemNestedAttrs(resourceName, "providers.*", map[string]string{
-						"provider_id": endpointClaude, "priority": "10", "active": "false",
-					}),
-				),
-			},
-			{Config: config(`description = "Primary"`, openAI+", "+claude), ResourceName: resourceName, ImportState: true, ImportStateId: "default", ImportStateVerify: true},
-			{Config: config("", openAI+", "+claude), Check: resource.TestCheckNoResourceAttr(resourceName, "description")},
+	primary := config(`description = "Primary"`, openAI+", "+claude)
+	runUnitTest(t,
+		resource.TestStep{
+			Config: config("", openAI),
+			Check: resource.ComposeTestCheckFunc(
+				resource.TestCheckResourceAttr(resourceName, "id", endpointTestID),
+				resource.TestCheckNoResourceAttr(resourceName, "description"),
+				resource.TestCheckTypeSetElemNestedAttrs(resourceName, "providers.*", map[string]string{
+					"provider_id": endpointOpenAI, "weight": "0.1",
+				}),
+			),
 		},
-	})
+		resource.TestStep{
+			Config:           primary,
+			ConfigPlanChecks: expectAction(resourceName, plancheck.ResourceActionUpdate),
+			Check: resource.ComposeTestCheckFunc(
+				resource.TestCheckResourceAttr(resourceName, "description", "Primary"),
+				resource.TestCheckResourceAttr(resourceName, "providers.#", "2"),
+				resource.TestCheckTypeSetElemNestedAttrs(resourceName, "providers.*", map[string]string{
+					"provider_id": endpointClaude, "priority": "10", "active": "false",
+				}),
+			),
+		},
+		resource.TestStep{Config: primary, ResourceName: resourceName, ImportState: true, ImportStateId: "default", ImportStateVerify: true},
+		resource.TestStep{Config: config("", openAI+", "+claude), Check: resource.TestCheckNoResourceAttr(resourceName, "description")},
+	)
 	api.Lock()
 	defer api.Unlock()
 	want := map[string]int{
@@ -183,7 +178,7 @@ func TestLifecycleGatewayEndpointValidation(t *testing.T) {
 	} {
 		steps = append(steps, resource.TestStep{Config: config(body), PlanOnly: true, ExpectError: regexp.MustCompile(message)})
 	}
-	resource.Test(t, resource.TestCase{IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories, Steps: steps})
+	runUnitTest(t, steps...)
 }
 
 func TestGatewayEndpointValidationDefersUnknownProvider(t *testing.T) {

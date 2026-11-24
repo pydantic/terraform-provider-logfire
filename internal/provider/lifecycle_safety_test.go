@@ -22,8 +22,32 @@ import (
 	"golang.org/x/net/idna"
 )
 
+func runLifecycleSteps(t *testing.T, steps []resource.TestStep) {
+	t.Helper()
+	resource.Test(t, resource.TestCase{
+		IsUnitTest:               true,
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps:                    steps,
+	})
+}
+
+func lifecycleProvider(baseURL string) string {
+	return fmt.Sprintf("provider \"logfire\" {\nbase_url = %q\napi_key = \"test-token\"\n}\n", baseURL)
+}
+
 func lifecycleConfig(baseURL, kind, body string) string {
-	return fmt.Sprintf("provider \"logfire\" {\nbase_url = %q\napi_key = \"test-token\"\n}\nresource \"logfire_%s\" \"test\" {\n%s\n}", baseURL, kind, body)
+	return lifecycleProvider(baseURL) + fmt.Sprintf("resource \"logfire_%s\" \"test\" {\n%s\n}", kind, body)
+}
+
+// requireOneCreateAndDestroy fails unless the API saw exactly one create and one
+// delete and holds no item, so the resource was created once and then destroyed.
+func (api *lifecycleAPI) requireOneCreateAndDestroy(t *testing.T) {
+	t.Helper()
+	api.Lock()
+	defer api.Unlock()
+	if api.creates != 1 || api.deletes != 1 || api.item != nil {
+		t.Fatalf("creates=%d, deletes=%d, item=%v; want one create, then its destroy", api.creates, api.deletes, api.item)
+	}
 }
 
 const lifecycleWebhook = "config {\ntype = \"webhook\"\nurl = \"https://example.com/hook\"\nformat = \"auto\"\n}"
@@ -164,34 +188,27 @@ func TestLifecycleSlackSettings(t *testing.T) {
 	slack := func(name, prompt string) string {
 		return lifecycleConfig(server.URL, "channel", fmt.Sprintf("name = %q\nconfig {\ntype = \"slack-integration\"\ninstall_id = \"install-1\"\nchannel_id = \"C123\"\n%s\n}", name, prompt))
 	}
-	resource.Test(t, resource.TestCase{
-		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{Config: slack("slack", ""), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.include_agent_prompt", "true")},
-			{Config: slack("slack", "include_agent_prompt = false"), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.include_agent_prompt", "false")},
-			{
-				Config: slack("renamed", ""),
-				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr("logfire_channel.test", "id", "channel-1"),
-					resource.TestCheckResourceAttr("logfire_channel.test", "name", "renamed"),
-					resource.TestCheckResourceAttr("logfire_channel.test", "active", "true"),
-					resource.TestCheckResourceAttr("logfire_channel.test", "config.include_agent_prompt", "false")),
-			},
-			{Config: slack("renamed", ""), ResourceName: "logfire_channel.test", ImportState: true, ImportStateVerify: true},
-			{Config: slack("renamed", "include_agent_prompt = true"), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.include_agent_prompt", "true")},
-			{
-				Config: lifecycleConfig(server.URL, "channel", "name = \"renamed\"\nactive = false\n"+lifecycleWebhook),
-				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr("logfire_channel.test", "active", "false"),
-					resource.TestCheckResourceAttr("logfire_channel.test", "config.url", "https://example.com/hook")),
-			},
+	runLifecycleSteps(t, []resource.TestStep{
+		{Config: slack("slack", ""), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.include_agent_prompt", "true")},
+		{Config: slack("slack", "include_agent_prompt = false"), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.include_agent_prompt", "false")},
+		{
+			Config: slack("renamed", ""),
+			Check: resource.ComposeTestCheckFunc(
+				resource.TestCheckResourceAttr("logfire_channel.test", "id", "channel-1"),
+				resource.TestCheckResourceAttr("logfire_channel.test", "name", "renamed"),
+				resource.TestCheckResourceAttr("logfire_channel.test", "active", "true"),
+				resource.TestCheckResourceAttr("logfire_channel.test", "config.include_agent_prompt", "false")),
+		},
+		{Config: slack("renamed", ""), ResourceName: "logfire_channel.test", ImportState: true, ImportStateVerify: true},
+		{Config: slack("renamed", "include_agent_prompt = true"), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.include_agent_prompt", "true")},
+		{
+			Config: lifecycleConfig(server.URL, "channel", "name = \"renamed\"\nactive = false\n"+lifecycleWebhook),
+			Check: resource.ComposeTestCheckFunc(
+				resource.TestCheckResourceAttr("logfire_channel.test", "active", "false"),
+				resource.TestCheckResourceAttr("logfire_channel.test", "config.url", "https://example.com/hook")),
 		},
 	})
-	api.Lock()
-	defer api.Unlock()
-	if api.creates != 1 || api.deletes != 1 || api.item != nil {
-		t.Fatalf("channel lifecycle: creates=%d, deletes=%d, item=%v", api.creates, api.deletes, api.item)
-	}
+	api.requireOneCreateAndDestroy(t)
 }
 
 func TestLifecycleOpsgenieBaseURL(t *testing.T) {
@@ -201,38 +218,35 @@ func TestLifecycleOpsgenieBaseURL(t *testing.T) {
 		return lifecycleConfig(server.URL, "channel", fmt.Sprintf("name = %q\nconfig {\ntype = \"opsgenie\"\nauth_key = \"key\"\n%s\n}", name, baseURL))
 	}
 	const eu = "https://api.eu.opsgenie.com"
-	resource.Test(t, resource.TestCase{
-		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{Config: opsgenie("opsgenie", ""), Check: resource.TestCheckNoResourceAttr("logfire_channel.test", "config.base_url")},
-			{
-				PreConfig: func() {
+	runLifecycleSteps(t, []resource.TestStep{
+		{Config: opsgenie("opsgenie", ""), Check: resource.TestCheckNoResourceAttr("logfire_channel.test", "config.base_url")},
+		{
+			PreConfig: func() {
+				api.Lock()
+				defer api.Unlock()
+				config, ok := api.item["config"].(map[string]any)
+				if !ok {
+					t.Fatalf("stored config = %v", api.item["config"])
+				}
+				config["base_url"] = eu
+			},
+			Config: opsgenie("renamed", ""),
+			Check: resource.ComposeTestCheckFunc(
+				resource.TestCheckResourceAttr("logfire_channel.test", "config.base_url", eu),
+				func(*terraform.State) error {
 					api.Lock()
 					defer api.Unlock()
-					config, ok := api.item["config"].(map[string]any)
-					if !ok {
-						t.Fatalf("stored config = %v", api.item["config"])
+					config, _ := api.item["config"].(map[string]any)
+					if got := config["base_url"]; got != eu {
+						return fmt.Errorf("base_url after update = %v, want the value set outside Terraform", got)
 					}
-					config["base_url"] = eu
-				},
-				Config: opsgenie("renamed", ""),
-				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr("logfire_channel.test", "config.base_url", eu),
-					func(*terraform.State) error {
-						api.Lock()
-						defer api.Unlock()
-						config, _ := api.item["config"].(map[string]any)
-						if got := config["base_url"]; got != eu {
-							return fmt.Errorf("base_url after update = %v, want the value set outside Terraform", got)
-						}
-						return nil
-					}),
-			},
-			{Config: opsgenie("renamed", "base_url = \"https://api.opsgenie.com \""), ExpectError: regexp.MustCompile(`without\s+spaces`)},
-			{Config: opsgenie("renamed", "base_url = \"https://api.opsgenie.com\u0085\""), ExpectError: regexp.MustCompile(`without\s+spaces`)},
-			{Config: opsgenie("renamed", "base_url = \"https://api.opsgenie.com\v\""), ExpectError: regexp.MustCompile(`without\s+spaces`)},
-			{Config: opsgenie("renamed", "base_url = \"https://api.opsgenie.com\""), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.base_url", "https://api.opsgenie.com")},
+					return nil
+				}),
 		},
+		{Config: opsgenie("renamed", "base_url = \"https://api.opsgenie.com \""), ExpectError: regexp.MustCompile(`without\s+spaces`)},
+		{Config: opsgenie("renamed", "base_url = \"https://api.opsgenie.com\u0085\""), ExpectError: regexp.MustCompile(`without\s+spaces`)},
+		{Config: opsgenie("renamed", "base_url = \"https://api.opsgenie.com\v\""), ExpectError: regexp.MustCompile(`without\s+spaces`)},
+		{Config: opsgenie("renamed", "base_url = \"https://api.opsgenie.com\""), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.base_url", "https://api.opsgenie.com")},
 	})
 }
 
@@ -244,40 +258,37 @@ func TestLifecycleEmailRecipients(t *testing.T) {
 	}
 	email := func(recipients string) string { return named("email", recipients) }
 	const normalized = `"a@Example.com", " Postmaster@example.com", "b@xn--bcher-kva.example\u00a0"`
-	resource.Test(t, resource.TestCase{
-		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{Config: email(`"a@example.com"`), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.recipients.#", "1")},
-			{Config: email(`"a@example.com", "b@example.com"`), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.recipients.#", "2")},
-			{Config: email(`"a@example.com", "b@example.com"`), ResourceName: "logfire_channel.test", ImportState: true, ImportStateVerify: true},
-			// Logfire stores other spellings of these, so each must keep its configured spelling.
-			{Config: email(normalized), Check: resource.TestCheckTypeSetElemAttr("logfire_channel.test", "config.recipients.*", " Postmaster@example.com")},
-			{Config: email(normalized), ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}}},
-			{Config: email(`"not-an-address"`), ExpectError: regexp.MustCompile(`must be an email\s+address`)},
-			{Config: email(`"a@example.com\u001f"`), ExpectError: regexp.MustCompile(`without\s+control\s+characters`)},
-			{
-				// Logfire keeps the last address after it unsubscribes, so a rename must not resend it.
-				PreConfig: func() { api.Lock(); api.unsubscribed = "a@example.com"; api.Unlock() },
-				Config:    named("renamed", normalized),
-				Check:     resource.TestCheckResourceAttr("logfire_channel.test", "name", "renamed"),
-			},
-			{Config: named("renamed", `"a@example.com"`), ExpectError: regexp.MustCompile("unsubscribed")},
-			// Logfire keeps the case of most mailbox names, so these are two recipients.
-			{Config: named("renamed", `"Ops@example.com", "ops@example.com"`), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.recipients.#", "2")},
-			{Config: named("renamed", `"Ops@example.com"`), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.recipients.#", "1")},
-			{
-				// A recipient changed outside Terraform to another mailbox case is drift.
-				PreConfig: func() {
-					api.Lock()
-					defer api.Unlock()
-					config, _ := api.item["config"].(map[string]any)
-					config["recipients"] = []any{"ops@example.com"}
-				},
-				Config:   named("renamed", `"Ops@example.com"`),
-				PlanOnly: true, ExpectNonEmptyPlan: true,
-			},
-			{Config: named("renamed", `"Ops@example.com"`), Check: resource.TestCheckTypeSetElemAttr("logfire_channel.test", "config.recipients.*", "Ops@example.com")},
+	runLifecycleSteps(t, []resource.TestStep{
+		{Config: email(`"a@example.com"`), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.recipients.#", "1")},
+		{Config: email(`"a@example.com", "b@example.com"`), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.recipients.#", "2")},
+		{Config: email(`"a@example.com", "b@example.com"`), ResourceName: "logfire_channel.test", ImportState: true, ImportStateVerify: true},
+		// Logfire stores other spellings of these, so each must keep its configured spelling.
+		{Config: email(normalized), Check: resource.TestCheckTypeSetElemAttr("logfire_channel.test", "config.recipients.*", " Postmaster@example.com")},
+		{Config: email(normalized), ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}}},
+		{Config: email(`"not-an-address"`), ExpectError: regexp.MustCompile(`must be an email\s+address`)},
+		{Config: email(`"a@example.com\u001f"`), ExpectError: regexp.MustCompile(`without\s+control\s+characters`)},
+		{
+			// Logfire keeps the last address after it unsubscribes, so a rename must not resend it.
+			PreConfig: func() { api.Lock(); api.unsubscribed = "a@example.com"; api.Unlock() },
+			Config:    named("renamed", normalized),
+			Check:     resource.TestCheckResourceAttr("logfire_channel.test", "name", "renamed"),
 		},
+		{Config: named("renamed", `"a@example.com"`), ExpectError: regexp.MustCompile("unsubscribed")},
+		// Logfire keeps the case of most mailbox names, so these are two recipients.
+		{Config: named("renamed", `"Ops@example.com", "ops@example.com"`), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.recipients.#", "2")},
+		{Config: named("renamed", `"Ops@example.com"`), Check: resource.TestCheckResourceAttr("logfire_channel.test", "config.recipients.#", "1")},
+		{
+			// A recipient changed outside Terraform to another mailbox case is drift.
+			PreConfig: func() {
+				api.Lock()
+				defer api.Unlock()
+				config, _ := api.item["config"].(map[string]any)
+				config["recipients"] = []any{"ops@example.com"}
+			},
+			Config:   named("renamed", `"Ops@example.com"`),
+			PlanOnly: true, ExpectNonEmptyPlan: true,
+		},
+		{Config: named("renamed", `"Ops@example.com"`), Check: resource.TestCheckTypeSetElemAttr("logfire_channel.test", "config.recipients.*", "Ops@example.com")},
 	})
 }
 
@@ -286,12 +297,9 @@ func TestLifecycleEmailRecipientMappedDomain(t *testing.T) {
 	t.Parallel()
 	server, _ := newLifecycleAPI(t, "channel")
 	config := lifecycleConfig(server.URL, "channel", "name = \"email\"\nconfig {\ntype = \"email\"\nrecipients = [\"oncall@example\u3002com\"]\n}")
-	resource.Test(t, resource.TestCase{
-		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{Config: config, Check: resource.TestCheckTypeSetElemAttr("logfire_channel.test", "config.recipients.*", "oncall@example\u3002com")},
-			{Config: config, ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}}},
-		},
+	runLifecycleSteps(t, []resource.TestStep{
+		{Config: config, Check: resource.TestCheckTypeSetElemAttr("logfire_channel.test", "config.recipients.*", "oncall@example\u3002com")},
+		{Config: config, ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}}},
 	})
 }
 
@@ -301,32 +309,25 @@ func TestLifecyclePartialCreateRecovery(t *testing.T) {
 	const address = "logfire_channel.test"
 	config := lifecycleConfig(server.URL, "channel", "name = \"channel\"\nactive = false\n"+lifecycleWebhook)
 	api.failFollowup = true
-	resource.Test(t, resource.TestCase{
-		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{Config: config, ExpectError: regexp.MustCompile("saved in state")},
-			{
-				Config:           fmt.Sprintf("provider \"logfire\" {\nbase_url = %q\napi_key = \"test-token\"\n}\nremoved {\nfrom = %s\nlifecycle { destroy = false }\n}", server.URL, address),
-				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{partialCreateStateCheck{}}},
-				PreConfig: func() {
-					api.Lock()
-					defer api.Unlock()
-					api.failFollowup = false
-				},
-			},
-			{Config: config, ResourceName: address, ImportState: true, ImportStatePersist: true, ImportStateId: "channel-1"},
-			{
-				Config:           config,
-				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction(address, plancheck.ResourceActionUpdate)}},
-				Check:            resource.ComposeTestCheckFunc(resource.TestCheckResourceAttr(address, "id", "channel-1"), resource.TestCheckResourceAttr(address, "active", "false")),
+	runLifecycleSteps(t, []resource.TestStep{
+		{Config: config, ExpectError: regexp.MustCompile("saved in state")},
+		{
+			Config:           lifecycleProvider(server.URL) + fmt.Sprintf("removed {\nfrom = %s\nlifecycle { destroy = false }\n}", address),
+			ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{partialCreateStateCheck{}}},
+			PreConfig: func() {
+				api.Lock()
+				defer api.Unlock()
+				api.failFollowup = false
 			},
 		},
+		{Config: config, ResourceName: address, ImportState: true, ImportStatePersist: true, ImportStateId: "channel-1"},
+		{
+			Config:           config,
+			ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction(address, plancheck.ResourceActionUpdate)}},
+			Check:            resource.ComposeTestCheckFunc(resource.TestCheckResourceAttr(address, "id", "channel-1"), resource.TestCheckResourceAttr(address, "active", "false")),
+		},
 	})
-	api.Lock()
-	defer api.Unlock()
-	if api.creates != 1 || api.deletes != 1 || api.item != nil {
-		t.Fatalf("recovery must update the same resource, then destroy it: creates=%d, deletes=%d, item=%v", api.creates, api.deletes, api.item)
-	}
+	api.requireOneCreateAndDestroy(t)
 }
 
 // Logfire no longer stores billing_email. The provider must not send it, and a
@@ -340,36 +341,29 @@ func TestLifecycleOrganizationBillingEmail(t *testing.T) {
 		return lifecycleConfig(server.URL, "organization", "name = \"acme\"\ndeletion_protection = false\n"+extra)
 	}
 	emptyPlan := resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}}
-	resource.Test(t, resource.TestCase{
-		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{Config: protected, Check: resource.TestCheckResourceAttr(address, "billing_email", "billing@example.com")},
-			{Config: protected, ConfigPlanChecks: emptyPlan},
-			{
-				Config:      fmt.Sprintf("provider \"logfire\" {\nbase_url = %q\napi_key = \"test-token\"\n}", server.URL),
-				ExpectError: regexp.MustCompile("Organization deletion is protected"),
-			},
-			{Config: config(`billing_email = "billing@example.com"`), Check: resource.TestCheckResourceAttr(address, "billing_email", "billing@example.com")},
-			{Config: config(`billing_email = "finance@example.com"`), Check: resource.TestCheckResourceAttr(address, "billing_email", "finance@example.com")},
-			{
-				// This update reaches the API, which does not return billing_email.
-				Config: config(`billing_email = "accounts@example.com"` + "\ndisplay_name = \"Acme\""),
-				Check:  resource.ComposeTestCheckFunc(resource.TestCheckResourceAttr(address, "display_name", "Acme"), resource.TestCheckResourceAttr(address, "billing_email", "accounts@example.com")),
-			},
-			{
-				// Removing the argument clears the value from state.
-				Config: config(`display_name = "Acme"`),
-				Check:  resource.ComposeTestCheckFunc(resource.TestCheckResourceAttr(address, "id", "organization-1"), resource.TestCheckNoResourceAttr(address, "billing_email")),
-			},
-			{Config: config(`display_name = "Acme"`), ConfigPlanChecks: emptyPlan},
-			{Config: config(`display_name = "Acme"`), ResourceName: address, ImportState: true, ImportStateId: "acme", ImportStateVerify: true, ImportStateVerifyIgnore: []string{"deletion_protection"}},
+	runLifecycleSteps(t, []resource.TestStep{
+		{Config: protected, Check: resource.TestCheckResourceAttr(address, "billing_email", "billing@example.com")},
+		{Config: protected, ConfigPlanChecks: emptyPlan},
+		{
+			Config:      lifecycleProvider(server.URL),
+			ExpectError: regexp.MustCompile("Organization deletion is protected"),
 		},
+		{Config: config(`billing_email = "billing@example.com"`), Check: resource.TestCheckResourceAttr(address, "billing_email", "billing@example.com")},
+		{Config: config(`billing_email = "finance@example.com"`), Check: resource.TestCheckResourceAttr(address, "billing_email", "finance@example.com")},
+		{
+			// This update reaches the API, which does not return billing_email.
+			Config: config(`billing_email = "accounts@example.com"` + "\ndisplay_name = \"Acme\""),
+			Check:  resource.ComposeTestCheckFunc(resource.TestCheckResourceAttr(address, "display_name", "Acme"), resource.TestCheckResourceAttr(address, "billing_email", "accounts@example.com")),
+		},
+		{
+			// Removing the argument clears the value from state.
+			Config: config(`display_name = "Acme"`),
+			Check:  resource.ComposeTestCheckFunc(resource.TestCheckResourceAttr(address, "id", "organization-1"), resource.TestCheckNoResourceAttr(address, "billing_email")),
+		},
+		{Config: config(`display_name = "Acme"`), ConfigPlanChecks: emptyPlan},
+		{Config: config(`display_name = "Acme"`), ResourceName: address, ImportState: true, ImportStateId: "acme", ImportStateVerify: true, ImportStateVerifyIgnore: []string{"deletion_protection"}},
 	})
-	api.Lock()
-	defer api.Unlock()
-	if api.creates != 1 || api.deletes != 1 || api.item != nil {
-		t.Fatalf("creates=%d, deletes=%d, item=%v; want one organization, then its destroy", api.creates, api.deletes, api.item)
-	}
+	api.requireOneCreateAndDestroy(t)
 }
 
 // The public API rate limit refuses a request before the route runs, so the provider retries
@@ -378,13 +372,10 @@ func TestLifecycleCreateAfterRateLimitRefusal(t *testing.T) {
 	t.Parallel()
 	server, api := newLifecycleAPI(t, "channel")
 	api.refuseCreates = 2
-	resource.Test(t, resource.TestCase{
-		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{{
-			Config: lifecycleConfig(server.URL, "channel", "name = \"channel\"\n"+lifecycleWebhook),
-			Check:  resource.TestCheckResourceAttr("logfire_channel.test", "id", "channel-1"),
-		}},
-	})
+	runLifecycleSteps(t, []resource.TestStep{{
+		Config: lifecycleConfig(server.URL, "channel", "name = \"channel\"\n"+lifecycleWebhook),
+		Check:  resource.TestCheckResourceAttr("logfire_channel.test", "id", "channel-1"),
+	}})
 	api.Lock()
 	defer api.Unlock()
 	if api.refusals != 2 || api.creates != 1 || api.deletes != 1 {
@@ -454,10 +445,10 @@ func TestLifecycleFailedCreates(t *testing.T) {
 					_, _ = w.Write([]byte(`{"detail":"response lost after creation"}`))
 				}))
 				defer server.Close()
-				resource.Test(t, resource.TestCase{
-					IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-					Steps: []resource.TestStep{{Config: lifecycleConfig(server.URL, kind, body), ExpectError: regexp.MustCompile("failed")}},
-				})
+				runLifecycleSteps(t, []resource.TestStep{{
+					Config:      lifecycleConfig(server.URL, kind, body),
+					ExpectError: regexp.MustCompile("failed"),
+				}})
 				if got := creates.Load(); got != 1 {
 					t.Fatalf("uncertain response caused %d creations; want exactly one", got)
 				}
@@ -468,13 +459,10 @@ func TestLifecycleFailedCreates(t *testing.T) {
 
 func TestLifecycleDashboardNullDefinition(t *testing.T) {
 	t.Parallel()
-	resource.Test(t, resource.TestCase{
-		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{{
-			Config:      lifecycleConfig("https://example.invalid", "dashboard", "project_id = \"project-1\"\nname = \"test\"\nslug = \"test\"\ndefinition = \"null\""),
-			ExpectError: regexp.MustCompile("dashboard definition must be a JSON object"),
-		}},
-	})
+	runLifecycleSteps(t, []resource.TestStep{{
+		Config:      lifecycleConfig("https://example.invalid", "dashboard", "project_id = \"project-1\"\nname = \"test\"\nslug = \"test\"\ndefinition = \"null\""),
+		ExpectError: regexp.MustCompile("dashboard definition must be a JSON object"),
+	}})
 }
 
 func TestLifecycleProjectImportIDCollision(t *testing.T) {
@@ -493,17 +481,14 @@ func TestLifecycleProjectImportIDCollision(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	resource.Test(t, resource.TestCase{
-		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{{
-			Config:       lifecycleConfig(server.URL, "project", "name = \"production\""),
-			ResourceName: "logfire_project.test", ImportState: true, ImportStateId: id,
-			ImportStateCheck: func(states []*terraform.InstanceState) error {
-				if len(states) != 1 || states[0].ID != id || states[0].Attributes["name"] != "production" {
-					return fmt.Errorf("UUID import must select production, not the project named after its UUID: %v", states)
-				}
-				return nil
-			},
-		}},
-	})
+	runLifecycleSteps(t, []resource.TestStep{{
+		Config:       lifecycleConfig(server.URL, "project", "name = \"production\""),
+		ResourceName: "logfire_project.test", ImportState: true, ImportStateId: id,
+		ImportStateCheck: func(states []*terraform.InstanceState) error {
+			if len(states) != 1 || states[0].ID != id || states[0].Attributes["name"] != "production" {
+				return fmt.Errorf("UUID import must select production, not the project named after its UUID: %v", states)
+			}
+			return nil
+		},
+	}})
 }

@@ -15,8 +15,9 @@ import (
 )
 
 // rateLimitedThenCreated answers the first refusals POST requests with a public API rate-limit
-// refusal and every later request with a created schedule.
-func rateLimitedThenCreated(t *testing.T, refusals int32, retryAfter string, resource string) (*httptest.Server, *atomic.Int32) {
+// refusal and every later request with a created schedule. It returns a retrying client with the
+// given timeout and the count of POST requests the server saw.
+func rateLimitedThenCreated(t *testing.T, refusals int32, retryAfter, resource string, timeout time.Duration) (*APIClient, *atomic.Int32) {
 	t.Helper()
 	var posts atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -37,12 +38,7 @@ func rateLimitedThenCreated(t *testing.T, refusals int32, retryAfter string, res
 		_, _ = w.Write([]byte(`{"id":"00000000-0000-0000-0000-000000000001","label":"office hours","timezone":"UTC"}`))
 	}))
 	t.Cleanup(server.Close)
-	return server, &posts
-}
-
-func newRetryTestClient(t *testing.T, baseURL string, timeout time.Duration) *APIClient {
-	t.Helper()
-	httpClient := &http.Client{
+	client, err := NewAPIClient(server.URL, "test", &http.Client{
 		Timeout: timeout,
 		Transport: &retryingTransport{
 			next:        http.DefaultTransport,
@@ -50,19 +46,17 @@ func newRetryTestClient(t *testing.T, baseURL string, timeout time.Duration) *AP
 			baseDelay:   time.Millisecond,
 			maxDelay:    2 * time.Millisecond,
 		},
-	}
-	client, err := NewAPIClient(baseURL, "test", httpClient)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return client
+	return client, &posts
 }
 
 func TestCreateRetriesPublicAPIRateLimitRefusals(t *testing.T) {
 	t.Parallel()
 	// More refusals than defaultRetryMaxAttempts: a refusal does not use up the attempt count.
-	server, posts := rateLimitedThenCreated(t, defaultRetryMaxAttempts+1, "0", "public_api")
-	client := newRetryTestClient(t, server.URL, 5*time.Second)
+	client, posts := rateLimitedThenCreated(t, defaultRetryMaxAttempts+1, "0", "public_api", 5*time.Second)
 
 	created, err := client.CreateSchedule(context.Background(), ScheduleCreate{Label: "office hours", Timezone: "UTC"})
 	if err != nil {
@@ -81,8 +75,7 @@ func TestCreateDoesNotRetryOtherRateLimitResponses(t *testing.T) {
 	for name, resource := range map[string]string{"no resource header": "", "another resource": "mcp"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			server, posts := rateLimitedThenCreated(t, 1, "0", resource)
-			client := newRetryTestClient(t, server.URL, 5*time.Second)
+			client, posts := rateLimitedThenCreated(t, 1, "0", resource, 5*time.Second)
 
 			_, err := client.CreateSchedule(context.Background(), ScheduleCreate{Label: "office hours", Timezone: "UTC"})
 			if !IsRateLimitError(err) {
@@ -98,8 +91,7 @@ func TestCreateDoesNotRetryOtherRateLimitResponses(t *testing.T) {
 func TestRateLimitRetryStopsBeforeTheClientTimeout(t *testing.T) {
 	t.Parallel()
 	// Retry-After is longer than the client timeout, so a wait could only end in a timeout error.
-	server, posts := rateLimitedThenCreated(t, 1, "3", "public_api")
-	client := newRetryTestClient(t, server.URL, time.Second)
+	client, posts := rateLimitedThenCreated(t, 1, "3", "public_api", time.Second)
 
 	started := time.Now()
 	_, err := client.CreateSchedule(context.Background(), ScheduleCreate{Label: "office hours", Timezone: "UTC"})
