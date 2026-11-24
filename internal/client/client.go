@@ -50,8 +50,6 @@ var (
 	// backend never spend another's.
 	hostLimiters   = map[string]*rateLimiter{}
 	hostLimitersMu sync.Mutex
-	jitterRand     = rand.New(rand.NewSource(time.Now().UnixNano()))
-	jitterMu       sync.Mutex
 )
 
 type rateLimitedTransport struct {
@@ -63,8 +61,7 @@ func (t *rateLimitedTransport) RoundTrip(req *http.Request) (*http.Response, err
 	hostLimitersMu.Lock()
 	limiter := hostLimiters[host]
 	if limiter == nil {
-		limiter = newRateLimiter(
-			defaultRequestsPerMinute, defaultRequestsPerHour)
+		limiter = newRateLimiter(defaultRequestsPerMinute, defaultRequestsPerHour)
 		hostLimiters[host] = limiter
 	}
 	hostLimitersMu.Unlock()
@@ -90,7 +87,7 @@ func disableAutomaticRetries(ctx context.Context) context.Context {
 func (t *retryingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	ctx := req.Context()
 	attempts := t.maxAttempts
-	if attempts <= 0 || ctx.Value(disableAutomaticRetriesContextKey{}) == true {
+	if ctx.Value(disableAutomaticRetriesContextKey{}) == true {
 		attempts = 1
 	}
 
@@ -105,8 +102,7 @@ func (t *retryingTransport) RoundTrip(req *http.Request) (*http.Response, error)
 				}
 				req.Body = body
 			case req.Body != nil:
-				return nil, errors.New(
-					"cannot retry request with body: GetBody is nil")
+				return nil, errors.New("cannot retry request with body: GetBody is nil")
 			}
 		}
 
@@ -116,18 +112,16 @@ func (t *retryingTransport) RoundTrip(req *http.Request) (*http.Response, error)
 		// runs, so the request had no effect. A retry is then safe for every
 		// method, a create included. Other 429 responses do not carry this
 		// header, and the provider cannot tell whether those requests ran.
-		refused := err == nil &&
-			resp.StatusCode == http.StatusTooManyRequests &&
+		refused := err == nil && resp.StatusCode == http.StatusTooManyRequests &&
 			resp.Header.Get("X-RateLimit-Resource") == "public_api"
 
 		var delay time.Duration
 		if refused {
-			delay = max(
-				retryDelay(resp, t.baseDelay, t.maxDelay, 0), t.baseDelay)
+			delay = max(retryDelay(resp, t.baseDelay, t.maxDelay, 0), t.baseDelay)
 			// Add up to a quarter of delay, so concurrent requests that got the
 			// same Retry-After do not retry together.
 			if spread := int64(delay / 4); spread > 0 {
-				delay += jitter(spread)
+				delay += time.Duration(rand.Int63n(spread))
 			}
 			if !retryFitsBudget(ctx, start, delay) {
 				return resp, nil
@@ -180,12 +174,6 @@ func retryFitsBudget(ctx context.Context, start time.Time, delay time.Duration) 
 	return end.Sub(start) <= maxRateLimitRetryWait
 }
 
-func jitter(n int64) time.Duration {
-	jitterMu.Lock()
-	defer jitterMu.Unlock()
-	return time.Duration(jitterRand.Int63n(n))
-}
-
 func drainResponse(resp *http.Response) {
 	_, _ = io.Copy(io.Discard, resp.Body)
 	_ = resp.Body.Close()
@@ -200,21 +188,20 @@ func retryDelay(resp *http.Response, base, maxDelay time.Duration, attempt int) 
 	}
 
 	if resp != nil {
-		if ra := resp.Header.Get("Retry-After"); ra != "" {
-			if seconds, err := strconv.Atoi(ra); err == nil && seconds >= 0 {
-				return time.Duration(seconds) * time.Second
-			}
-			if t, err := http.ParseTime(ra); err == nil {
-				if delay := time.Until(t); delay > 0 {
-					return delay
-				}
+		ra := resp.Header.Get("Retry-After")
+		if seconds, err := strconv.Atoi(ra); err == nil && seconds >= 0 {
+			return time.Duration(seconds) * time.Second
+		}
+		if t, err := http.ParseTime(ra); err == nil {
+			if delay := time.Until(t); delay > 0 {
+				return delay
 			}
 		}
 	}
 
 	delay := min(base*time.Duration(1<<attempt), maxDelay)
 	// Add jitter to avoid thundering herd on retries.
-	return delay/2 + jitter(int64(delay/2))
+	return delay/2 + time.Duration(rand.Int63n(int64(delay/2)))
 }
 
 // rateLimiter holds a per-minute and a per-hour token bucket. Both start full.
@@ -226,7 +213,6 @@ type rateLimiter struct {
 
 func newRateLimiter(requestsPerMinute, requestsPerHour int) *rateLimiter {
 	bucket := func(window time.Duration, n int) *rate.Limiter {
-		n = max(n, 1)
 		return rate.NewLimiter(rate.Every(window/time.Duration(n)), n)
 	}
 	return &rateLimiter{
@@ -282,7 +268,6 @@ func (c *APIClient) ForOrganization(name string) *APIClient {
 	return &derived
 }
 
-// Organization returns the organization that ForOrganization selected.
 func (c *APIClient) Organization() string {
 	return c.organization
 }
@@ -389,7 +374,6 @@ func NewAPIClient(baseURL, token string, httpClient *http.Client, opts ...Option
 // key itself. The other routes resolve the organization from the token.
 const instanceRoutePrefix = "/api/v1/instance/"
 
-// apiPath returns the route /api/v1/{segment}/.../ with every segment escaped.
 func apiPath(segments ...string) string {
 	path := "/api/v1"
 	for _, segment := range segments {
@@ -400,11 +384,9 @@ func apiPath(segments ...string) string {
 
 func (c *APIClient) doJSON(ctx context.Context, method, path string, in, out any, expectedStatus ...int) (*http.Response, error) {
 	if c.organization == "" || strings.HasPrefix(path, instanceRoutePrefix) {
-		return c.doJSONAuthorized(
-			ctx, c.token, method, path, in, out, expectedStatus...)
+		return c.doJSONAuthorized(ctx, c.token, method, path, in, out, expectedStatus...)
 	}
-	return c.withOrganizationContext(
-		ctx, c.organization, method, path, in, out, expectedStatus...)
+	return c.withOrganizationContext(ctx, c.organization, method, path, in, out, expectedStatus...)
 }
 
 // doJSONAuthorized is doJSON with an explicit bearer token, for calls made with
@@ -441,10 +423,8 @@ func (c *APIClient) doJSONAuthorized(ctx context.Context, bearer, method, path s
 		return resp, nil
 	}
 	switch err := json.NewDecoder(resp.Body).Decode(out); {
-	case errors.Is(err, io.EOF) &&
-		resp.StatusCode >= 200 && resp.StatusCode < 300:
-		return resp, fmt.Errorf("decode response: the server answered %d "+
-			"with an empty body", resp.StatusCode)
+	case errors.Is(err, io.EOF) && resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return resp, fmt.Errorf("decode response: the server answered %d with an empty body", resp.StatusCode)
 	case err != nil && !errors.Is(err, io.EOF):
 		return resp, fmt.Errorf("decode response: %w", err)
 	}
@@ -501,12 +481,9 @@ func (c *APIClient) send(req *http.Request, expectedStatus ...int) (*http.Respon
 	}
 }
 
-// request sends a call that the server answers with 200 and decodes the answer
-// into a new T.
 func request[T any](ctx context.Context, c *APIClient, method, path string, in any) (*T, error) {
 	out := new(T)
-	_, err := c.doJSON(ctx, method, path, in, out, http.StatusOK)
-	if err != nil {
+	if _, err := c.doJSON(ctx, method, path, in, out, http.StatusOK); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -517,8 +494,7 @@ func request[T any](ctx context.Context, c *APIClient, method, path string, in a
 func create[T any](ctx context.Context, c *APIClient, path string, in any, expectedStatus ...int) (*T, error) {
 	out := new(T)
 	ctx = disableAutomaticRetries(ctx)
-	_, err := c.doJSON(ctx, http.MethodPost, path, in, out, expectedStatus...)
-	if err != nil {
+	if _, err := c.doJSON(ctx, http.MethodPost, path, in, out, expectedStatus...); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -542,29 +518,27 @@ func getWithStatus[T any](ctx context.Context, c *APIClient, path string) (*T, i
 }
 
 func withStatus[T any](out *T, resp *http.Response, err error) (*T, int, error) {
-	if err != nil {
-		if resp != nil {
-			return nil, resp.StatusCode, err
-		}
+	if err == nil {
+		return out, http.StatusOK, nil
+	}
+	if resp == nil {
 		return nil, 0, err
 	}
-	return out, http.StatusOK, nil
+	return nil, resp.StatusCode, err
 }
 
 func (c *APIClient) remove(ctx context.Context, path string) error {
-	_, err := c.doJSON(
-		ctx, http.MethodDelete, path, nil, nil, http.StatusNoContent)
+	_, err := c.doJSON(ctx, http.MethodDelete, path, nil, nil, http.StatusNoContent)
 	return err
 }
 
-// cursorPage is one page of a cursor-paginated list.
 type cursorPage[T any] struct {
 	Data       []T     `json:"data"`
 	NextCursor *string `json:"next_cursor"`
 }
 
-// pagePath returns the route of the page that follows cursor, which is empty
-// for the first page.
+// pagePath returns the route of the page after cursor, which is empty for the
+// first page.
 func pagePath(base, cursor string) string {
 	query := url.Values{"limit": []string{"100"}}
 	if cursor != "" {
@@ -578,9 +552,7 @@ func listPages[T any](ctx context.Context, c *APIClient, base string) ([]T, erro
 	cursor := ""
 	for {
 		var page cursorPage[T]
-		_, err := c.doJSON(
-			ctx, http.MethodGet, pagePath(base, cursor), nil, &page,
-			http.StatusOK)
+		_, err := c.doJSON(ctx, http.MethodGet, pagePath(base, cursor), nil, &page, http.StatusOK)
 		if err != nil {
 			return nil, err
 		}
@@ -669,8 +641,8 @@ type OrganizationUpdate struct {
 const instanceOrganizationsPath = "/api/v1/instance/organizations/"
 
 func (c *APIClient) CreateOrganization(ctx context.Context, in OrganizationCreate) (*OrganizationRead, error) {
-	return create[OrganizationRead](ctx, c, instanceOrganizationsPath, in,
-		http.StatusCreated, http.StatusOK)
+	return create[OrganizationRead](
+		ctx, c, instanceOrganizationsPath, in, http.StatusCreated, http.StatusOK)
 }
 
 func (c *APIClient) ListOrganizations(ctx context.Context) ([]OrganizationRead, error) {
@@ -704,8 +676,7 @@ type ProjectUpdate struct {
 }
 
 func (c *APIClient) CreateProject(ctx context.Context, in ProjectCreate) (*ProjectRead, error) {
-	return create[ProjectRead](ctx, c, apiPath("projects"), in,
-		http.StatusCreated, http.StatusOK)
+	return create[ProjectRead](ctx, c, apiPath("projects"), in, http.StatusCreated, http.StatusOK)
 }
 
 func (c *APIClient) GetProject(ctx context.Context, id string) (*ProjectRead, int, error) {
@@ -713,8 +684,7 @@ func (c *APIClient) GetProject(ctx context.Context, id string) (*ProjectRead, in
 }
 
 func (c *APIClient) UpdateProject(ctx context.Context, id string, in ProjectUpdate) (*ProjectRead, error) {
-	return request[ProjectRead](
-		ctx, c, http.MethodPut, apiPath("projects", id), in)
+	return request[ProjectRead](ctx, c, http.MethodPut, apiPath("projects", id), in)
 }
 
 func (c *APIClient) DeleteProject(ctx context.Context, id string) error {
@@ -775,38 +745,34 @@ type ChannelAssignment struct {
 	ScheduleID *string `json:"schedule_id,omitempty"`
 }
 
-// AlertChannelRead is a channel as listed on an alert: the channel plus the
-// schedule of its assignment to that alert.
 type AlertChannelRead struct {
 	ChannelRead
 	ScheduleID *string `json:"schedule_id"`
 }
 
 type AlertCreate struct {
-	Name               string              `json:"name"`
-	Description        *string             `json:"description"`
-	Active             *bool               `json:"active,omitempty"`
-	Query              string              `json:"query"`
-	TimeWindow         string              `json:"time_window"`
-	Frequency          string              `json:"frequency"`
-	Watermark          string              `json:"watermark"`
-	Environments       []string            `json:"environments,omitempty"`
-	ChannelAssignments []ChannelAssignment `json:"channel_assignments"`
-	NotifyWhen         string              `json:"notify_when"`
-	// InstancePolicy is left out when nil.
-	InstancePolicy *AlertInstancePolicy `json:"instance_policy,omitempty"`
+	Name               string               `json:"name"`
+	Description        *string              `json:"description"`
+	Active             *bool                `json:"active,omitempty"`
+	Query              string               `json:"query"`
+	TimeWindow         string               `json:"time_window"`
+	Frequency          string               `json:"frequency"`
+	Watermark          string               `json:"watermark"`
+	Environments       []string             `json:"environments,omitempty"`
+	ChannelAssignments []ChannelAssignment  `json:"channel_assignments"`
+	NotifyWhen         string               `json:"notify_when"`
+	InstancePolicy     *AlertInstancePolicy `json:"instance_policy,omitempty"`
 }
 
 type AlertUpdate struct {
-	Name         *string   `json:"name,omitempty"`
-	Description  *string   `json:"description,omitempty"`
-	TimeWindow   *string   `json:"time_window,omitempty"`
-	Frequency    *string   `json:"frequency,omitempty"`
-	Watermark    *string   `json:"watermark,omitempty"`
-	Active       *bool     `json:"active,omitempty"`
-	Query        *string   `json:"query,omitempty"`
-	Environments *[]string `json:"environments,omitempty"`
-	// ChannelAssignments replaces the alert's channels when set.
+	Name               *string              `json:"name,omitempty"`
+	Description        *string              `json:"description,omitempty"`
+	TimeWindow         *string              `json:"time_window,omitempty"`
+	Frequency          *string              `json:"frequency,omitempty"`
+	Watermark          *string              `json:"watermark,omitempty"`
+	Active             *bool                `json:"active,omitempty"`
+	Query              *string              `json:"query,omitempty"`
+	Environments       *[]string            `json:"environments,omitempty"`
 	ChannelAssignments *[]ChannelAssignment `json:"channel_assignments,omitempty"`
 	NotifyWhen         *string              `json:"notify_when,omitempty"`
 	// InstancePolicy replaces the policy when set. A set pointer to nil sends
@@ -815,18 +781,17 @@ type AlertUpdate struct {
 }
 
 func (c *APIClient) CreateAlert(ctx context.Context, projectID string, in AlertCreate) (*AlertRead, error) {
-	return create[AlertRead](ctx, c,
-		apiPath("projects", projectID, "alerts"), in, http.StatusCreated)
+	path := apiPath("projects", projectID, "alerts")
+	return create[AlertRead](ctx, c, path, in, http.StatusCreated)
 }
 
 func (c *APIClient) GetAlert(ctx context.Context, projectID, id string) (*AlertRead, int, error) {
-	return getWithStatus[AlertRead](ctx, c,
-		apiPath("projects", projectID, "alerts", id))
+	return getWithStatus[AlertRead](ctx, c, apiPath("projects", projectID, "alerts", id))
 }
 
 func (c *APIClient) UpdateAlert(ctx context.Context, projectID, id string, in AlertUpdate) (*AlertRead, error) {
-	return request[AlertRead](ctx, c, http.MethodPut,
-		apiPath("projects", projectID, "alerts", id), in)
+	path := apiPath("projects", projectID, "alerts", id)
+	return request[AlertRead](ctx, c, http.MethodPut, path, in)
 }
 
 func (c *APIClient) DeleteAlert(ctx context.Context, projectID, id string) error {
@@ -837,7 +802,6 @@ func (c *APIClient) ListAlerts(ctx context.Context, projectID string) ([]AlertRe
 	return list[AlertRead](ctx, c, apiPath("projects", projectID, "alerts"))
 }
 
-// Base channel config - never used directly, only for embedding.
 type ChannelConfigBase struct {
 	Type string `json:"type"`
 }
@@ -882,7 +846,6 @@ type PagerdutyIntegrationConfig struct {
 	ServiceID *string `json:"service_id,omitempty"`
 }
 
-// ChannelConfig represents any channel config (used for unmarshaling).
 type ChannelConfig struct {
 	Type               string   `json:"type"`
 	Format             *string  `json:"format,omitempty"`
@@ -925,8 +888,7 @@ type ChannelUpdate struct {
 }
 
 func (c *APIClient) CreateChannel(ctx context.Context, in ChannelCreate) (*ChannelRead, error) {
-	return create[ChannelRead](
-		ctx, c, apiPath("channels"), in, http.StatusCreated)
+	return create[ChannelRead](ctx, c, apiPath("channels"), in, http.StatusCreated)
 }
 
 func (c *APIClient) ListChannels(ctx context.Context) ([]ChannelRead, error) {
@@ -938,8 +900,7 @@ func (c *APIClient) GetChannel(ctx context.Context, id string) (*ChannelRead, in
 }
 
 func (c *APIClient) UpdateChannel(ctx context.Context, id string, in ChannelUpdate) (*ChannelRead, error) {
-	return request[ChannelRead](
-		ctx, c, http.MethodPut, apiPath("channels", id), in)
+	return request[ChannelRead](ctx, c, http.MethodPut, apiPath("channels", id), in)
 }
 
 func (c *APIClient) DeleteChannel(ctx context.Context, id string) error {
@@ -963,51 +924,33 @@ type CreateReadTokenInput struct {
 }
 
 func (c *APIClient) CreateReadToken(ctx context.Context, projectID string, in CreateReadTokenInput) (*ReadToken, error) {
-	return create[ReadToken](ctx, c,
-		apiPath("projects", projectID, "read-tokens"), in,
-		http.StatusCreated, http.StatusOK)
+	path := apiPath("projects", projectID, "read-tokens")
+	return create[ReadToken](ctx, c, path, in, http.StatusCreated, http.StatusOK)
 }
 
 func (c *APIClient) ListReadTokens(ctx context.Context, projectID string) ([]ReadToken, error) {
-	return list[ReadToken](ctx, c,
-		apiPath("projects", projectID, "read-tokens"))
+	return list[ReadToken](ctx, c, apiPath("projects", projectID, "read-tokens"))
 }
 
 func (c *APIClient) DeleteReadToken(ctx context.Context, projectID, tokenID string) error {
-	return c.remove(ctx,
-		apiPath("projects", projectID, "read-tokens", tokenID))
+	return c.remove(ctx, apiPath("projects", projectID, "read-tokens", tokenID))
 }
 
-type WriteToken struct {
-	ID            string  `json:"id"`
-	ProjectID     string  `json:"project_id"`
-	CreatedAt     string  `json:"created_at"`
-	ExpiresAt     *string `json:"expires_at"`
-	Description   *string `json:"description"`
-	Token         *string `json:"token,omitempty"`
-	ProjectName   string  `json:"project_name"`
-	CreatedByName *string `json:"created_by_name"`
-	TokenPrefix   string  `json:"token_prefix"`
-}
+type WriteToken ReadToken
 
-type CreateWriteTokenInput struct {
-	ExpiresAt *string `json:"expires_at,omitempty"`
-}
+type CreateWriteTokenInput CreateReadTokenInput
 
 func (c *APIClient) CreateWriteToken(ctx context.Context, projectID string, in CreateWriteTokenInput) (*WriteToken, error) {
-	return create[WriteToken](ctx, c,
-		apiPath("projects", projectID, "write-tokens"), in,
-		http.StatusCreated, http.StatusOK)
+	path := apiPath("projects", projectID, "write-tokens")
+	return create[WriteToken](ctx, c, path, in, http.StatusCreated, http.StatusOK)
 }
 
 func (c *APIClient) ListWriteTokens(ctx context.Context, projectID string) ([]WriteToken, error) {
-	return list[WriteToken](ctx, c,
-		apiPath("projects", projectID, "write-tokens"))
+	return list[WriteToken](ctx, c, apiPath("projects", projectID, "write-tokens"))
 }
 
 func (c *APIClient) DeleteWriteToken(ctx context.Context, projectID, tokenID string) error {
-	return c.remove(ctx,
-		apiPath("projects", projectID, "write-tokens", tokenID))
+	return c.remove(ctx, apiPath("projects", projectID, "write-tokens", tokenID))
 }
 
 type FrontendApplication struct {
@@ -1053,17 +996,14 @@ type FrontendApplicationTokenCreated struct {
 }
 
 func (c *APIClient) CreateFrontendApplication(ctx context.Context, projectID string, in FrontendApplicationCreate) (*FrontendApplicationCreated, error) {
-	return create[FrontendApplicationCreated](ctx, c,
-		apiPath("projects", projectID, "frontend-applications"), in,
-		http.StatusCreated)
+	path := apiPath("projects", projectID, "frontend-applications")
+	return create[FrontendApplicationCreated](ctx, c, path, in, http.StatusCreated)
 }
 
 func (c *APIClient) GetFrontendApplication(ctx context.Context, projectID, applicationID string) (*FrontendApplication, int, error) {
 	var out FrontendApplication
-	path := apiPath(
-		"projects", projectID, "frontend-applications", applicationID)
-	resp, err := c.doJSON(ctx, http.MethodGet, path, nil, &out,
-		http.StatusOK, http.StatusNotFound)
+	path := apiPath("projects", projectID, "frontend-applications", applicationID)
+	resp, err := c.doJSON(ctx, http.MethodGet, path, nil, &out, http.StatusOK, http.StatusNotFound)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1074,32 +1014,28 @@ func (c *APIClient) GetFrontendApplication(ctx context.Context, projectID, appli
 }
 
 func (c *APIClient) ListFrontendApplications(ctx context.Context, projectID string) ([]FrontendApplication, error) {
-	return listPages[FrontendApplication](ctx, c,
-		apiPath("projects", projectID, "frontend-applications"))
+	path := apiPath("projects", projectID, "frontend-applications")
+	return listPages[FrontendApplication](ctx, c, path)
 }
 
 func (c *APIClient) DeleteFrontendApplication(ctx context.Context, projectID, applicationID string) error {
-	return c.remove(ctx,
-		apiPath("projects", projectID, "frontend-applications", applicationID))
+	return c.remove(ctx, apiPath("projects", projectID, "frontend-applications", applicationID))
 }
 
 func (c *APIClient) ListFrontendApplicationTokens(ctx context.Context, projectID, applicationID string) ([]FrontendApplicationToken, error) {
-	return listPages[FrontendApplicationToken](ctx, c, apiPath("projects",
-		projectID, "frontend-applications", applicationID, "tokens"))
+	path := apiPath("projects", projectID, "frontend-applications", applicationID, "tokens")
+	return listPages[FrontendApplicationToken](ctx, c, path)
 }
 
 func (c *APIClient) CreateFrontendApplicationToken(ctx context.Context, projectID, applicationID string) (*FrontendApplicationTokenCreated, error) {
-	return create[FrontendApplicationTokenCreated](ctx, c,
-		apiPath("projects", projectID, "frontend-applications", applicationID,
-			"tokens"),
-		nil, http.StatusCreated)
+	path := apiPath("projects", projectID, "frontend-applications", applicationID, "tokens")
+	return create[FrontendApplicationTokenCreated](ctx, c, path, nil, http.StatusCreated)
 }
 
 func (c *APIClient) RevokeFrontendApplicationToken(ctx context.Context, projectID, applicationID, tokenID string) error {
-	path := apiPath("projects", projectID, "frontend-applications",
-		applicationID, "tokens", tokenID, "revoke")
-	_, err := c.doJSON(
-		ctx, http.MethodPost, path, nil, nil, http.StatusNoContent)
+	path := apiPath(
+		"projects", projectID, "frontend-applications", applicationID, "tokens", tokenID, "revoke")
+	_, err := c.doJSON(ctx, http.MethodPost, path, nil, nil, http.StatusNoContent)
 	return err
 }
 
@@ -1127,7 +1063,6 @@ type DashboardManager struct {
 	ManagedAllowEdits bool    `json:"managed_allow_edits,omitempty"`
 }
 
-// DashboardManager returns the marker for a dashboard this client writes.
 func (c *APIClient) DashboardManager(allowEdits bool) DashboardManager {
 	name := c.dashboardManager
 	m := DashboardManager{
@@ -1173,14 +1108,13 @@ type GetDashboardResponse struct {
 }
 
 func (c *APIClient) CreateDashboard(ctx context.Context, projectID string, in DashboardCreateRequest) (*Dashboard, error) {
-	return create[Dashboard](ctx, c,
-		apiPath("projects", projectID, "dashboards"), in,
-		http.StatusOK, http.StatusCreated)
+	path := apiPath("projects", projectID, "dashboards")
+	return create[Dashboard](ctx, c, path, in, http.StatusOK, http.StatusCreated)
 }
 
 func (c *APIClient) GetDashboard(ctx context.Context, projectID, dashboardID string) (*GetDashboardResponse, int, error) {
-	return getWithStatus[GetDashboardResponse](ctx, c,
-		apiPath("projects", projectID, "dashboards", dashboardID))
+	path := apiPath("projects", projectID, "dashboards", dashboardID)
+	return getWithStatus[GetDashboardResponse](ctx, c, path)
 }
 
 func (c *APIClient) UpdateDashboard(ctx context.Context, projectID, dashboardID string, in DashboardUpdateRequest) (*Dashboard, error) {
@@ -1192,13 +1126,11 @@ func (c *APIClient) UpdateDashboard(ctx context.Context, projectID, dashboardID 
 }
 
 func (c *APIClient) DeleteDashboard(ctx context.Context, projectID, dashboardID string) error {
-	return c.remove(ctx,
-		apiPath("projects", projectID, "dashboards", dashboardID))
+	return c.remove(ctx, apiPath("projects", projectID, "dashboards", dashboardID))
 }
 
 func (c *APIClient) ListDashboards(ctx context.Context, projectID string) ([]DashboardSummary, error) {
-	return list[DashboardSummary](ctx, c,
-		apiPath("projects", projectID, "dashboards"))
+	return list[DashboardSummary](ctx, c, apiPath("projects", projectID, "dashboards"))
 }
 
 // The SLO endpoints are experimental and not yet part of the published Logfire
@@ -1234,15 +1166,12 @@ type SloRead struct {
 	Alerts *SloTierAlerts `json:"alerts,omitempty"`
 }
 
-// SloTierAlerts holds an SLO's three burn-rate alerts. Every SLO has all
-// three keys.
 type SloTierAlerts struct {
 	Fast   SloTierAlert `json:"fast"`
 	Medium SloTierAlert `json:"medium"`
 	Slow   SloTierAlert `json:"slow"`
 }
 
-// Tier returns the alert of a tier name: "fast", "medium" or "slow".
 func (a *SloTierAlerts) Tier(name string) SloTierAlert {
 	switch name {
 	case "fast":
@@ -1254,7 +1183,6 @@ func (a *SloTierAlerts) Tier(name string) SloTierAlert {
 	}
 }
 
-// SloTierAlert is one burn-rate tier's alert as listed on its SLO.
 type SloTierAlert struct {
 	// AlertID is nil only for an SLO created before every SLO kept all three
 	// tier alerts; the SLO's next update creates the alert.
@@ -1320,7 +1248,6 @@ type SloAlertsDelivery struct {
 	Slow   *SloTierDelivery `json:"slow,omitempty"`
 }
 
-// Tier returns the field for a tier name: "fast", "medium" or "slow".
 func (d *SloAlertsDelivery) Tier(name string) **SloTierDelivery {
 	switch name {
 	case "fast":
@@ -1332,24 +1259,21 @@ func (d *SloAlertsDelivery) Tier(name string) **SloTierDelivery {
 	}
 }
 
-// SloTierDelivery is one tier alert's delivery, in the alert API's shape.
 type SloTierDelivery struct {
 	ChannelAssignments []ChannelAssignment `json:"channel_assignments"`
 }
 
 func (c *APIClient) CreateSlo(ctx context.Context, projectID string, in SloCreate) (*SloRead, error) {
-	return create[SloRead](ctx, c, apiPath("projects", projectID, "slos"), in,
-		http.StatusCreated)
+	return create[SloRead](ctx, c, apiPath("projects", projectID, "slos"), in, http.StatusCreated)
 }
 
 func (c *APIClient) GetSlo(ctx context.Context, projectID, id string) (*SloRead, int, error) {
-	return getWithStatus[SloRead](ctx, c,
-		apiPath("projects", projectID, "slos", id))
+	return getWithStatus[SloRead](ctx, c, apiPath("projects", projectID, "slos", id))
 }
 
 func (c *APIClient) UpdateSlo(ctx context.Context, projectID, id string, in SloUpdate) (*SloRead, error) {
-	return request[SloRead](ctx, c, http.MethodPatch,
-		apiPath("projects", projectID, "slos", id), in)
+	path := apiPath("projects", projectID, "slos", id)
+	return request[SloRead](ctx, c, http.MethodPatch, path, in)
 }
 
 func (c *APIClient) DeleteSlo(ctx context.Context, projectID, id string) error {
@@ -1412,15 +1336,12 @@ func (c *APIClient) doSchedule(ctx context.Context, method, id string, in, out a
 		suffix = url.PathEscape(id) + "/"
 	}
 	if !c.shared.legacySchedules.Load() {
-		resp, err := c.doJSON(
-			ctx, method, notificationWindowsPath+suffix, in, out, expected)
+		resp, err := c.doJSON(ctx, method, notificationWindowsPath+suffix, in, out, expected)
 		// A route that looks up an item answers a missing item with its own
 		// detail, while FastAPI answers a missing route with "Not Found" and a
 		// proxy may send no detail at all.
 		var apiErr *APIError
-		notFound := errors.As(err, &apiErr) &&
-			apiErr.StatusCode == http.StatusNotFound
-		if !notFound {
+		if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
 			return resp, err
 		}
 		var body struct {
@@ -1431,8 +1352,7 @@ func (c *APIClient) doSchedule(ctx context.Context, method, id string, in, out a
 			return resp, err
 		}
 	}
-	resp, err := c.doJSON(
-		ctx, method, legacySchedulesPath+suffix, in, out, expected)
+	resp, err := c.doJSON(ctx, method, legacySchedulesPath+suffix, in, out, expected)
 	if err == nil {
 		c.shared.legacySchedules.Store(true)
 	}
@@ -1445,14 +1365,12 @@ func (c *APIClient) doSchedule(ctx context.Context, method, id string, in, out a
 func (c *APIClient) CreateSchedule(ctx context.Context, in ScheduleCreate) (*ScheduleRead, error) {
 	var out ScheduleRead
 	ctx = disableAutomaticRetries(ctx)
-	_, err := c.doSchedule(
-		ctx, http.MethodPost, "", in, &out, http.StatusCreated)
-	if err != nil {
+	if _, err := c.doSchedule(ctx, http.MethodPost, "", in, &out, http.StatusCreated); err != nil {
 		// Schedules have no list route and unknown ids live under /{id}/, so a
 		// 404 on a create from both routes means the instance predates the
 		// schedules API rather than an unknown schedule.
-		return nil, unavailableIfNotFound(err, http.MethodPost,
-			notificationWindowsPath, "v2026-09-23.01", "logfire-0.13.47")
+		return nil, unavailableIfNotFound(
+			err, http.MethodPost, notificationWindowsPath, "v2026-09-23.01", "logfire-0.13.47")
 	}
 	return &out, nil
 }
@@ -1465,15 +1383,13 @@ func (c *APIClient) GetSchedule(ctx context.Context, id string) (*ScheduleRead, 
 
 func (c *APIClient) UpdateSchedule(ctx context.Context, id string, in ScheduleUpdate) (*ScheduleRead, error) {
 	var out ScheduleRead
-	_, err := c.doSchedule(ctx, http.MethodPut, id, in, &out, http.StatusOK)
-	if err != nil {
+	if _, err := c.doSchedule(ctx, http.MethodPut, id, in, &out, http.StatusOK); err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
 func (c *APIClient) DeleteSchedule(ctx context.Context, id string) error {
-	_, err := c.doSchedule(
-		ctx, http.MethodDelete, id, nil, nil, http.StatusNoContent)
+	_, err := c.doSchedule(ctx, http.MethodDelete, id, nil, nil, http.StatusNoContent)
 	return err
 }
