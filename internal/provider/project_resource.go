@@ -232,8 +232,18 @@ func (r *ProjectResource) Read(ctx context.Context, req resource.ReadRequest, re
 		return
 	}
 
+	getProject := func(client *logclient.APIClient) (*logclient.ProjectRead, int, error) {
+		out, status, err := client.GetProject(ctx, state.ID.ValueString())
+		// The server answers 403 for a project outside the token's organization.
+		// An exchanged token has the scopes the provider asked for, so with one
+		// the 403 means the project is not in the organization.
+		if status == http.StatusForbidden && knownString(state.OrganizationID) {
+			status = http.StatusNotFound
+		}
+		return out, status, err
+	}
 	client := r.clientFor(state.Organization, state.OrganizationID)
-	out, status, err := client.GetProject(ctx, state.ID.ValueString())
+	out, status, err := getProject(client)
 	if knownString(state.OrganizationID) && (logclient.IsInvalidTargetError(err) || status == http.StatusNotFound) {
 		// The name may no longer belong to the project's organization: it was
 		// renamed, possibly with another organization taking the old name, or it
@@ -249,7 +259,7 @@ func (r *ProjectResource) Read(ctx context.Context, req resource.ReadRequest, re
 			return
 		case current.OrganizationName != state.Organization.ValueString():
 			client = r.client.ForOrganization(current.OrganizationName)
-			out, status, err = client.GetProject(ctx, state.ID.ValueString())
+			out, status, err = getProject(client)
 		case logclient.IsInvalidTargetError(err):
 			resp.Diagnostics.AddError("Read project failed", exchangeCause(err).Error())
 			return

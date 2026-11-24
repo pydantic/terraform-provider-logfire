@@ -217,7 +217,8 @@ func (api *organizationInstance) serve(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(r.URL.Path, "/api/v1/projects/"):
 		project := api.projects[id]
 		if project == nil || project.OrganizationID != callerOrganization {
-			reply(http.StatusNotFound, map[string]string{"detail": "Project not found"})
+			// Like the server, answer 403 for a missing project or one in another organization.
+			reply(http.StatusForbidden, map[string]string{"detail": "You do not have permission to access this project"})
 			return
 		}
 		switch r.Method {
@@ -423,6 +424,21 @@ func TestLifecycleProjectLeavesStateWhenItsOrganizationIsDeleted(t *testing.T) {
 			ExpectError: regexp.MustCompile(`(?s)Create project failed.*does not exist`),
 		},
 	})
+}
+
+func TestLifecycleProjectDeletedOutsideTerraformIsCreatedAgain(t *testing.T) {
+	api := newOrganizationInstance(t, "team-a")
+	config := providerBlock(api, "team-a") + projectBlock("svc", "name = \"svc\"")
+	runProjectLifecycle(t, []tfresource.TestStep{
+		{Config: config},
+		{
+			PreConfig: func() { clear(api.projects) },
+			Config:    config,
+		},
+	})
+	if api.creates != 2 {
+		t.Errorf("creates = %d, want the deleted project created again", api.creates)
+	}
 }
 
 func TestLifecycleProjectWithoutOrganizationUsesTheKey(t *testing.T) {
