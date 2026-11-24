@@ -282,8 +282,8 @@ func TestLifecycleGroupMappingsCreateRefusals(t *testing.T) {
 }
 
 // A create whose PUT committed but whose response was lost leaves the planned mapping stored.
-// The next create adopts it without another write instead of failing with "already exist".
-func TestLifecycleGroupMappingsCreateAdoptsTheMappingOfALostResponse(t *testing.T) {
+// The next create refuses it like any stored mapping, because it cannot tell who wrote it.
+func TestLifecycleGroupMappingsCreateRefusesTheMappingOfALostResponse(t *testing.T) {
 	t.Parallel()
 	server, api := newGroupMappingsAPI(t)
 	config := groupMappingsConfig(server.URL, groupMappingsOpsGroup, groupMappingsDevGroup)
@@ -303,21 +303,17 @@ func TestLifecycleGroupMappingsCreateAdoptsTheMappingOfALostResponse(t *testing.
 					api.lostPutResponses = false
 					putsBeforeRetry = len(api.puts)
 				},
-				Config: config,
-				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr(groupMappingsResourceName, "mapping.#", "2"),
-					resource.TestCheckResourceAttr(groupMappingsResourceName, "api_mapping_status", "active"),
-					func(*terraform.State) error {
-						api.Lock()
-						defer api.Unlock()
-						if len(api.puts) != putsBeforeRetry {
-							return fmt.Errorf("the adopting create sent %d PUT request(s)", len(api.puts)-putsBeforeRetry)
-						}
-						return nil
-					},
-				),
+				Config:      config,
+				ExpectError: regexp.MustCompile(`Group mappings already exist`),
+				Check: func(*terraform.State) error {
+					api.Lock()
+					defer api.Unlock()
+					if len(api.puts) != putsBeforeRetry {
+						return fmt.Errorf("the refused create sent %d PUT request(s)", len(api.puts)-putsBeforeRetry)
+					}
+					return nil
+				},
 			},
-			{Config: config, PlanOnly: true},
 		},
 	})
 }

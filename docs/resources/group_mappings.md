@@ -81,11 +81,15 @@ and the API answers a missing name with a 400.
 ## Create, update, and destroy
 
 Create reads the stored mapping first. It fails when the instance already stores a
-mapping that differs from the plan, so Terraform does not replace access rules that
-someone else wrote. The API itself would accept the write, so this check belongs to
-the provider. Import the stored mapping, copy it into the configuration, and apply.
-When the stored mapping equals the plan, as an earlier create leaves when its response
-was lost, create adopts it and writes nothing.
+mapping, so Terraform does not replace access rules that someone else wrote. The API
+itself would accept the write, so this check belongs to the provider. Import the stored
+mapping, copy it into the configuration, and apply. Import it the same way after a
+create that failed once the instance had stored the mapping.
+
+To move the resource to another address, use a `moved` block. Without one, Terraform
+destroys the old address, which stores an empty mapping, and creates the new one in the
+same apply. The create fails if it runs before the destroy, and the next apply stores
+the mapping again.
 
 Create and update replace the whole mapping, in the order of the list. The API has
 no version and no lock, so when two writers update the mapping, the last write wins.

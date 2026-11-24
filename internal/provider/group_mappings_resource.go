@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
@@ -161,8 +160,7 @@ func (r *GroupMappingsResource) Configure(ctx context.Context, req resource.Conf
 }
 
 // Create refuses to replace a mapping that someone else stored, because the API replaces the
-// whole document and a replaced mapping changes access at the next sign-in. A stored mapping
-// that equals the plan is adopted, which is what an earlier create leaves when its response was lost.
+// whole document and a replaced mapping changes access at the next sign-in.
 func (r *GroupMappingsResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan GroupMappingsModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -179,16 +177,6 @@ func (r *GroupMappingsResource) Create(ctx context.Context, req resource.CreateR
 		return
 	}
 	if len(current.GroupOrganizationMapping) > 0 {
-		planned := groupMappingsToAPI(plan.Mapping)
-		if slices.EqualFunc(current.GroupOrganizationMapping, planned, groupMappingEqual) {
-			out := GroupMappingsModel{
-				ID:               types.StringValue(groupMappingsID),
-				Mapping:          groupMappingsFromAPI(current.GroupOrganizationMapping),
-				APIMappingStatus: types.StringValue(current.APIMappingStatus),
-			}
-			resp.Diagnostics.Append(resp.State.Set(ctx, &out)...)
-			return
-		}
 		resp.Diagnostics.AddError("Group mappings already exist", fmt.Sprintf(
 			"The instance already stores a mapping for %d group(s). Creating this resource would replace it and change "+
 				"access at the next sign-in. Import the stored mapping with "+
@@ -278,16 +266,6 @@ func (r *GroupMappingsResource) apply(
 		APIMappingStatus: types.StringValue(logclient.GroupMappingsStatusActive),
 	}
 	diags.Append(state.Set(ctx, &out)...)
-}
-
-// groupMappingEqual compares two groups in the order that the instance keeps, and treats a
-// missing project_roles as an empty one.
-func groupMappingEqual(a, b logclient.GroupMapping) bool {
-	return a.GroupID == b.GroupID && slices.EqualFunc(a.OrganizationRoles, b.OrganizationRoles,
-		func(x, y logclient.GroupMappingOrganizationRole) bool {
-			return x.OrganizationName == y.OrganizationName && x.Role == y.Role &&
-				slices.EqualFunc(x.ProjectRoles, y.ProjectRoles, func(m, n logclient.GroupMappingProjectRole) bool { return m == n })
-		})
 }
 
 func appendGroupMappingsOverriddenError(diags *diag.Diagnostics, summary string) {

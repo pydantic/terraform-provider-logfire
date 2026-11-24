@@ -5,7 +5,7 @@ one singleton resource. The API replaces the whole mapping on every write.
 
 ## Sub-features
 
-- `group-mappings-create` creates the mapping on an empty instance, adopts a stored mapping that equals the plan, and refuses a different stored mapping or the Helm override.
+- `group-mappings-create` creates the mapping on an empty instance, and refuses a stored mapping or the Helm override.
 - `group-mappings-update` replaces the whole mapping, keeps its order, and maps the 400 and 409 answers to errors.
 - `group-mappings-import` imports the stored mapping by the fixed ID `instance`.
 - `group-mappings-destroy` stores an empty mapping.
@@ -30,8 +30,8 @@ TF_ACC= TMPDIR="$RUN_DIR/scratch" go test -v -count=1 -run 'GroupMappings' \
 ```
 
 Require every `TestLifecycleGroupMappings*` case to appear and pass. They cover create,
-no-op plan, import, reorder, drift, destroy sending `[]`, a create refused on a different stored mapping
-and on the Helm override, a create that adopts the mapping of a lost response, a 409 on update and destroy, the 400 messages, and an older instance.
+no-op plan, import, reorder, drift, destroy sending `[]`, a create refused on a stored mapping
+and on the Helm override, a create refused after a lost response, a 409 on update and destroy, the 400 messages, and an older instance.
 The local API checks the raw key and fails the test on a token exchange.
 
 For live acceptance, use a disposable self-hosted instance with an identity provider that
