@@ -3,12 +3,12 @@
 page_title: "logfire_organization Resource - logfire"
 subcategory: ""
 description: |-
-  Manages a Logfire organization. This resource is only available for self-hosted deployments and requires an API key created in the admin organization (the one with the admin panel) carrying the organization:admin scope. A key minted inside another organization cannot manage organizations regardless of its scopes. Reading, updating, and deleting an organization authenticates with a short-lived organization-scoped token exchanged from that key, and the same exchange backs setting billing_email at creation, so every operation beyond creating and listing requires a Logfire backend from 2026-06-25 (v2026-06-25.01) or newer; creating and listing organizations require 2026-06-03 (v2026-06-03.01) or newer.
+  Manages a Logfire organization. This resource is only available for self-hosted deployments and requires an API key created in the admin organization (the one with the admin panel) carrying the organization:admin scope. A key minted inside another organization cannot manage organizations regardless of its scopes. Reading, updating, and deleting an organization authenticates with a short-lived organization-scoped token exchanged from that key, so every operation beyond creating and listing requires a Logfire backend from 2026-06-25 (v2026-06-25.01) or newer; creating and listing organizations require 2026-06-03 (v2026-06-03.01) or newer.
 ---
 
 # logfire_organization (Resource)
 
-Manages a Logfire organization. This resource is only available for self-hosted deployments and requires an API key created in the admin organization (the one with the admin panel) carrying the `organization:admin` scope. A key minted inside another organization cannot manage organizations regardless of its scopes. Reading, updating, and deleting an organization authenticates with a short-lived organization-scoped token exchanged from that key, and the same exchange backs setting `billing_email` at creation, so every operation beyond creating and listing requires a Logfire backend from 2026-06-25 (v2026-06-25.01) or newer; creating and listing organizations require 2026-06-03 (v2026-06-03.01) or newer.
+Manages a Logfire organization. This resource is only available for self-hosted deployments and requires an API key created in the admin organization (the one with the admin panel) carrying the `organization:admin` scope. A key minted inside another organization cannot manage organizations regardless of its scopes. Reading, updating, and deleting an organization authenticates with a short-lived organization-scoped token exchanged from that key, so every operation beyond creating and listing requires a Logfire backend from 2026-06-25 (v2026-06-25.01) or newer; creating and listing organizations require 2026-06-03 (v2026-06-03.01) or newer.
 
 ## Example Usage
 
@@ -35,7 +35,7 @@ resource "logfire_organization" "example" {
 ### Optional
 
 - `avatar` (String) Avatar URL.
-- `billing_email` (String) Billing contact email.
+- `billing_email` (String, Deprecated) Logfire no longer stores a billing email for an organization. The provider does not send this value to Logfire and keeps the configured value only in state. It will be removed in v0.4.0.
 - `deletion_protection` (Boolean) Prevents accidental destroy when true (defaults to true). Set to false and apply before deleting this resource.
 - `description` (String) Organization description.
 - `display_name` (String) Display name shown in the UI.

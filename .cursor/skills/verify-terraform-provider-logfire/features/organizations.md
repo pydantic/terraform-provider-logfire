@@ -22,12 +22,14 @@ Preconditions: Launch and the [API-contract review](api-contract.md) are complet
 Run the existing credential-free organization request and resource checks:
 
 ```bash
-TF_ACC= go test -v -count=1 -run 'Organization|TestLifecyclePartialCreateRecovery/organization' \
+TF_ACC= go test -v -count=1 -run 'Organization' \
   ./internal/client/ ./internal/provider/
 ```
 
-Require the affected route, token exchange, identity, import, deletion, and
-recovery checks to pass. The live `TestAccOrganizationResource` case is skipped.
+Require the affected route, token exchange, identity, import, and deletion checks
+to pass. `TestLifecycleOrganizationBillingEmail` checks that the provider never
+sends the deprecated `billing_email`, keeps its configured value in state, and
+rejects destruction while deletion protection is enabled. The live `TestAccOrganizationResource` case is skipped.
 Use live acceptance when runtime admin API behavior needs proof or the task
 requests it. Doctor then identifies an owned disposable self-hosted instance.
 The API key belongs to its admin-panel organization and holds `organization:admin`.
@@ -41,8 +43,8 @@ TF_ACC=1 LOGFIRE_TEST_ORGANIZATIONS=1 TMPDIR="$RUN_DIR/scratch" \
 Require creation, import, and the display-name update to pass. Confirm the created
 organization is absent after cleanup through the instance organizations API.
 For the protection failure path, run the local CLI recipe's
-`TestLifecyclePartialCreateRecovery/organization`. It checks protection after a
-failed follow-up and recovery. A live protection change additionally needs a
+`TestLifecycleOrganizationBillingEmail`. It checks that a protected organization
+rejects destruction. A live protection change additionally needs a
 run-owned fixture with protection enabled, a rejected destroy, and confirmation
 that the same organization still exists. Disable protection, apply, and destroy
 only that fixture after proof.

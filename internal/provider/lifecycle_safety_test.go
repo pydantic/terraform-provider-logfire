@@ -56,8 +56,8 @@ func normalizeEmail(address string) string {
 	return local + "@" + domain
 }
 
-// Only channel and organization recovery need a stateful local API. Ordinary
-// resource lifecycles are covered by the live acceptance tests.
+// The channel and organization lifecycle tests need a stateful local API.
+// Ordinary resource lifecycles are covered by the live acceptance tests.
 func newLifecycleAPI(t *testing.T, kind string) (*httptest.Server, *lifecycleAPI) {
 	t.Helper()
 	api := &lifecycleAPI{}
@@ -84,6 +84,9 @@ func newLifecycleAPI(t *testing.T, kind string) (*httptest.Server, *lifecycleAPI
 				t.Errorf("request body: %v", err)
 				w.WriteHeader(http.StatusBadRequest)
 				return
+			}
+			if _, sent := payload["billing_email"]; sent && kind == "organization" {
+				t.Errorf("Logfire no longer accepts billing_email, but the provider sent it: %v", payload)
 			}
 			if config, ok := payload["config"].(map[string]any); ok && config["type"] == "email" {
 				recipients, _ := config["recipients"].([]any)
@@ -293,49 +296,79 @@ func TestLifecycleEmailRecipientMappedDomain(t *testing.T) {
 }
 
 func TestLifecyclePartialCreateRecovery(t *testing.T) {
-	for _, kind := range []string{"organization", "channel"} {
-		t.Run(kind, func(t *testing.T) {
-			t.Parallel()
-			server, api := newLifecycleAPI(t, kind)
-			importID := "acme"
-			body, attribute, expected := "name = \"acme\"\nbilling_email = \"billing@example.com\"", "billing_email", "billing@example.com"
-			if kind == "channel" {
-				importID = "channel-1"
-				body, attribute, expected = "name = \"channel\"\nactive = false\n"+lifecycleWebhook, "active", "false"
-			}
-			config, address := lifecycleConfig(server.URL, kind, body), "logfire_"+kind+".test"
-			api.failFollowup = true
-			steps := []resource.TestStep{{Config: config, ExpectError: regexp.MustCompile("saved in state")}}
-			if kind == "organization" {
-				steps = append(steps, resource.TestStep{Config: config, ExpectError: regexp.MustCompile("Organization deletion is protected")})
-			}
-			steps = append(steps, resource.TestStep{
+	t.Parallel()
+	server, api := newLifecycleAPI(t, "channel")
+	const address = "logfire_channel.test"
+	config := lifecycleConfig(server.URL, "channel", "name = \"channel\"\nactive = false\n"+lifecycleWebhook)
+	api.failFollowup = true
+	resource.Test(t, resource.TestCase{
+		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: config, ExpectError: regexp.MustCompile("saved in state")},
+			{
 				Config:           fmt.Sprintf("provider \"logfire\" {\nbase_url = %q\napi_key = \"test-token\"\n}\nremoved {\nfrom = %s\nlifecycle { destroy = false }\n}", server.URL, address),
-				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{partialCreateStateCheck{kind: kind}}},
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{partialCreateStateCheck{}}},
 				PreConfig: func() {
 					api.Lock()
 					defer api.Unlock()
 					api.failFollowup = false
 				},
-			})
-			steps = append(steps, resource.TestStep{
-				Config: config, ResourceName: address, ImportState: true, ImportStatePersist: true, ImportStateId: importID,
-			})
-			if kind == "organization" {
-				config = lifecycleConfig(server.URL, kind, body+"\ndeletion_protection = false")
-			}
-			steps = append(steps, resource.TestStep{
+			},
+			{Config: config, ResourceName: address, ImportState: true, ImportStatePersist: true, ImportStateId: "channel-1"},
+			{
 				Config:           config,
 				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction(address, plancheck.ResourceActionUpdate)}},
-				Check:            resource.ComposeTestCheckFunc(resource.TestCheckResourceAttr(address, "id", kind+"-1"), resource.TestCheckResourceAttr(address, attribute, expected)),
-			})
-			resource.Test(t, resource.TestCase{IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories, Steps: steps})
-			api.Lock()
-			defer api.Unlock()
-			if api.creates != 1 || api.deletes != 1 || api.item != nil {
-				t.Fatalf("recovery must update the same resource, then destroy it: creates=%d, deletes=%d, item=%v", api.creates, api.deletes, api.item)
-			}
-		})
+				Check:            resource.ComposeTestCheckFunc(resource.TestCheckResourceAttr(address, "id", "channel-1"), resource.TestCheckResourceAttr(address, "active", "false")),
+			},
+		},
+	})
+	api.Lock()
+	defer api.Unlock()
+	if api.creates != 1 || api.deletes != 1 || api.item != nil {
+		t.Fatalf("recovery must update the same resource, then destroy it: creates=%d, deletes=%d, item=%v", api.creates, api.deletes, api.item)
+	}
+}
+
+// Logfire no longer stores billing_email. The provider must not send it, and a
+// configured value must not cause an inconsistent result or drift.
+func TestLifecycleOrganizationBillingEmail(t *testing.T) {
+	t.Parallel()
+	server, api := newLifecycleAPI(t, "organization")
+	const address = "logfire_organization.test"
+	protected := lifecycleConfig(server.URL, "organization", "name = \"acme\"\nbilling_email = \"billing@example.com\"")
+	config := func(extra string) string {
+		return lifecycleConfig(server.URL, "organization", "name = \"acme\"\ndeletion_protection = false\n"+extra)
+	}
+	emptyPlan := resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}}
+	resource.Test(t, resource.TestCase{
+		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: protected, Check: resource.TestCheckResourceAttr(address, "billing_email", "billing@example.com")},
+			{Config: protected, ConfigPlanChecks: emptyPlan},
+			{
+				Config:      fmt.Sprintf("provider \"logfire\" {\nbase_url = %q\napi_key = \"test-token\"\n}", server.URL),
+				ExpectError: regexp.MustCompile("Organization deletion is protected"),
+			},
+			{Config: config(`billing_email = "billing@example.com"`), Check: resource.TestCheckResourceAttr(address, "billing_email", "billing@example.com")},
+			{Config: config(`billing_email = "finance@example.com"`), Check: resource.TestCheckResourceAttr(address, "billing_email", "finance@example.com")},
+			{
+				// This update reaches the API, which does not return billing_email.
+				Config: config(`billing_email = "accounts@example.com"` + "\ndisplay_name = \"Acme\""),
+				Check:  resource.ComposeTestCheckFunc(resource.TestCheckResourceAttr(address, "display_name", "Acme"), resource.TestCheckResourceAttr(address, "billing_email", "accounts@example.com")),
+			},
+			{
+				// Removing the argument clears the value from state.
+				Config: config(`display_name = "Acme"`),
+				Check:  resource.ComposeTestCheckFunc(resource.TestCheckResourceAttr(address, "id", "organization-1"), resource.TestCheckNoResourceAttr(address, "billing_email")),
+			},
+			{Config: config(`display_name = "Acme"`), ConfigPlanChecks: emptyPlan},
+			{Config: config(`display_name = "Acme"`), ResourceName: address, ImportState: true, ImportStateId: "acme", ImportStateVerify: true, ImportStateVerifyIgnore: []string{"deletion_protection"}},
+		},
+	})
+	api.Lock()
+	defer api.Unlock()
+	if api.creates != 1 || api.deletes != 1 || api.item != nil {
+		t.Fatalf("creates=%d, deletes=%d, item=%v; want one organization, then its destroy", api.creates, api.deletes, api.item)
 	}
 }
 
@@ -359,23 +392,18 @@ func TestLifecycleCreateAfterRateLimitRefusal(t *testing.T) {
 	}
 }
 
-type partialCreateStateCheck struct{ kind string }
+type partialCreateStateCheck struct{}
 
-func (check partialCreateStateCheck) CheckPlan(_ context.Context, req plancheck.CheckPlanRequest, resp *plancheck.CheckPlanResponse) {
+func (partialCreateStateCheck) CheckPlan(_ context.Context, req plancheck.CheckPlanRequest, resp *plancheck.CheckPlanResponse) {
 	if req.Plan.PriorState != nil && req.Plan.PriorState.Values != nil && req.Plan.PriorState.Values.RootModule != nil {
 		for _, saved := range req.Plan.PriorState.Values.RootModule.Resources {
-			if saved.Address != "logfire_"+check.kind+".test" {
+			if saved.Address != "logfire_channel.test" {
 				continue
 			}
-			if saved.AttributeValues["id"] != check.kind+"-1" || !saved.Tainted {
+			if saved.AttributeValues["id"] != "channel-1" || !saved.Tainted {
 				resp.Error = fmt.Errorf("failed creation must retain the created ID and tainted state: %+v", saved)
-			} else if check.kind == "organization" && saved.AttributeValues["deletion_protection"] != true {
-				resp.Error = fmt.Errorf("failed creation lost deletion protection: %v", saved.AttributeValues)
-			} else if check.kind == "channel" {
-				config, ok := saved.AttributeValues["config"].(map[string]any)
-				if !ok || config["url"] != "https://example.com/hook" {
-					resp.Error = fmt.Errorf("failed creation lost the webhook secret: %v", saved.AttributeValues)
-				}
+			} else if config, ok := saved.AttributeValues["config"].(map[string]any); !ok || config["url"] != "https://example.com/hook" {
+				resp.Error = fmt.Errorf("failed creation lost the webhook secret: %v", saved.AttributeValues)
 			}
 			return
 		}
