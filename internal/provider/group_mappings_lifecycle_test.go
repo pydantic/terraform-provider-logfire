@@ -16,6 +16,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
 	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
 )
 
@@ -30,8 +31,10 @@ type groupMappingsAPI struct {
 	stored        []logclient.GroupMapping
 	overridden    bool
 	routesMissing bool
-	gets          int
-	puts          []json.RawMessage
+	// lostPutResponses makes a PUT commit its mapping and then answer 503.
+	lostPutResponses bool
+	gets             int
+	puts             []json.RawMessage
 }
 
 func newGroupMappingsAPI(t *testing.T) (*httptest.Server, *groupMappingsAPI) {
@@ -91,6 +94,11 @@ func newGroupMappingsAPI(t *testing.T) (*httptest.Server, *groupMappingsAPI) {
 				return
 			}
 			api.stored = body.Mapping
+			if api.lostPutResponses {
+				w.Header().Set("Retry-After", "0")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"group_organization_mapping": api.stored})
 		default:
 			t.Errorf("unexpected method %s", r.Method)
@@ -236,6 +244,18 @@ func TestLifecycleGroupMappingsCreateRefusals(t *testing.T) {
 			},
 			error: `terraform\s+import\s+logfire_group_mappings\.<name>\s+instance`,
 		},
+		"stored mapping that differs from the plan in one role": {
+			setup: func(api *groupMappingsAPI) {
+				api.stored = []logclient.GroupMapping{{
+					GroupID: "platform-ops",
+					OrganizationRoles: []logclient.GroupMappingOrganizationRole{{
+						OrganizationName: "team-a", Role: "member",
+						ProjectRoles: []logclient.GroupMappingProjectRole{{ProjectName: "api", Role: "read"}, {ProjectName: "worker", Role: "write"}},
+					}},
+				}}
+			},
+			error: `terraform\s+import\s+logfire_group_mappings\.<name>\s+instance`,
+		},
 		"environment override": {
 			setup: func(api *groupMappingsAPI) { api.overridden = true },
 			error: `Helm\s+value\s+` + "`groupOrganizationMapping`",
@@ -259,6 +279,47 @@ func TestLifecycleGroupMappingsCreateRefusals(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A create whose PUT committed but whose response was lost leaves the planned mapping stored.
+// The next create adopts it without another write instead of failing with "already exist".
+func TestLifecycleGroupMappingsCreateAdoptsTheMappingOfALostResponse(t *testing.T) {
+	t.Parallel()
+	server, api := newGroupMappingsAPI(t)
+	config := groupMappingsConfig(server.URL, groupMappingsOpsGroup, groupMappingsDevGroup)
+	var putsBeforeRetry int
+	resource.Test(t, resource.TestCase{
+		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				PreConfig:   func() { api.Lock(); api.lostPutResponses = true; api.Unlock() },
+				Config:      config,
+				ExpectError: regexp.MustCompile(`Create group mappings failed`),
+			},
+			{
+				PreConfig: func() {
+					api.Lock()
+					defer api.Unlock()
+					api.lostPutResponses = false
+					putsBeforeRetry = len(api.puts)
+				},
+				Config: config,
+				Check: resource.ComposeTestCheckFunc(
+					resource.TestCheckResourceAttr(groupMappingsResourceName, "mapping.#", "2"),
+					resource.TestCheckResourceAttr(groupMappingsResourceName, "api_mapping_status", "active"),
+					func(*terraform.State) error {
+						api.Lock()
+						defer api.Unlock()
+						if len(api.puts) != putsBeforeRetry {
+							return fmt.Errorf("the adopting create sent %d PUT request(s)", len(api.puts)-putsBeforeRetry)
+						}
+						return nil
+					},
+				),
+			},
+			{Config: config, PlanOnly: true},
+		},
+	})
 }
 
 // Importing the stored mapping adopts it without a write, and the first plan is empty.

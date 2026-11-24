@@ -20,17 +20,22 @@ description: |-
 ## Conflict with the Helm value
 
 The Helm value `groupOrganizationMapping` overrides the mapping that the API stores.
-While it is set, sign-in ignores this resource, create and update fail with a 409,
-and a refresh warns and sets `api_mapping_status` to `overridden_by_environment`.
-Remove the Helm value to manage the mapping with Terraform.
+While it is set, sign-in and SCIM group updates ignore this resource. Create fails
+before it writes, because it reads `api_mapping_status` first. Update and destroy
+fail on the 409 that the API answers to a write. A refresh warns and sets
+`api_mapping_status` to `overridden_by_environment`. Remove the Helm value to manage
+the mapping with Terraform.
 
 ## When the mapping applies
 
-The mapping applies at each user's next sign-in. For every organization and project
-that it lists, the sign-in changes or removes the user's access to match the user's
-identity-provider groups. When several groups grant a role in the same scope, the
-most permissive role applies. Membership in a user's own personal organization is
-never removed. Organizations that the mapping does not list stay unchanged. In a
+The mapping applies at each user's next sign-in. A SCIM group `PATCH` that adds or
+removes a member applies the mapping to that member at once. For every organization
+and project that it lists, the change adds, changes, or removes the user's access to
+match the user's identity-provider groups. When several groups grant a role in the
+same scope, the most permissive role applies. Membership in a user's own personal
+organization is never removed. Neither a sign-in nor a SCIM update removes the last
+admin of an organization or lowers that admin's role. The instance skips that change
+and logs a warning. Organizations that the mapping does not list stay unchanged. In a
 listed organization, sign-in manages only the projects listed in `project_roles`,
 with one exception. When a sign-in removes the user from a listed organization, it
 also removes all of the user's project memberships in that organization, including
@@ -47,12 +52,19 @@ and the API answers a missing name with a 400.
 ## Create, update, and destroy
 
 Create reads the stored mapping first. It fails when the instance already stores a
-mapping, so Terraform does not replace access rules that someone else wrote. Import
-the stored mapping, copy it into the configuration, and apply.
+mapping that differs from the plan, so Terraform does not replace access rules that
+someone else wrote. The API itself would accept the write, so this check belongs to
+the provider. Import the stored mapping, copy it into the configuration, and apply.
+When the stored mapping equals the plan, as an earlier create leaves when its response
+was lost, create adopts it and writes nothing.
 
 Create and update replace the whole mapping, in the order of the list. The API has
 no version and no lock, so when two writers update the mapping, the last write wins.
-Declare this resource in one Terraform configuration per instance.
+Declare this resource in one Terraform configuration per instance. The provider
+cannot detect a second declaration in another configuration or workspace. The create
+check sees only what is stored when it runs, so two declarations that create before
+either stores a mapping both pass it. After that, each apply replaces the other's
+mapping, and the last apply wins.
 
 Destroy stores an empty mapping. It stops managing the scopes that the mapping
 listed. It does not restore access that earlier sign-ins changed or removed.
