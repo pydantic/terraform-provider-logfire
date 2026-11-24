@@ -6,6 +6,7 @@ package provider
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -396,6 +397,29 @@ func TestLifecycleProjectMoveFailsAtPlanWhenTheExchangeFails(t *testing.T) {
 	}
 }
 
+// A move into an organization that already has a project of that name fails at
+// plan, before the replacement deletes the project.
+func TestLifecycleProjectMoveFailsAtPlanOnANameTaken(t *testing.T) {
+	api := newOrganizationInstance(t, "team-b")
+	config := providerBlock(api, "") + projectBlock("svc", "name = \"svc\"")
+	runProjectLifecycle(t, []tfresource.TestStep{
+		{Config: config},
+		{
+			PreConfig: func() {
+				api.Lock()
+				api.projects["taken"] = &testProject{ID: "taken", Name: "svc", Visibility: "public", OrganizationID: "org-team-b"}
+				api.Unlock()
+			},
+			Config:      providerBlock(api, "") + projectBlock("svc", "organization = \"team-b\"\nname = \"svc\""),
+			ExpectError: regexp.MustCompile(`(?s)Cannot move the project.*already has a project named "svc"`),
+		},
+		{Config: config, ConfigPlanChecks: expectNoChange},
+	})
+	if api.creates != 1 || api.deletes != 1 {
+		t.Errorf("creates = %d, deletes = %d, want the project kept until the final destroy", api.creates, api.deletes)
+	}
+}
+
 func TestLifecycleProjectFollowsAnOrganizationRename(t *testing.T) {
 	api := newOrganizationInstance(t, "team-a")
 	const address = "logfire_project.svc"
@@ -516,6 +540,61 @@ func TestAPIKeysRefuseAnOrganization(t *testing.T) {
 				ExpectError: regexp.MustCompile(`Not available through an organization`),
 			}})
 		})
+	}
+}
+
+// Every operation of the API key resources refuses an organization client. On
+// refresh the guard keeps a personal key in state instead of dropping it.
+func TestAPIKeyOperationsRefuseAnOrganization(t *testing.T) {
+	c, err := logclient.NewAPIClient("https://example.invalid", testAPIKey, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c = c.ForOrganization("team-a")
+	ctx := t.Context()
+	type keyResource interface {
+		resource.Resource
+		resource.ResourceWithImportState
+	}
+	for name, r := range map[string]keyResource{
+		"logfire_api_key":         &APIKeyResource{client: c},
+		"logfire_gateway_api_key": &GatewayAPIKeyResource{client: c},
+	} {
+		ops := map[string]func() diag.Diagnostics{
+			"create": func() diag.Diagnostics {
+				resp := &resource.CreateResponse{}
+				r.Create(ctx, resource.CreateRequest{}, resp)
+				return resp.Diagnostics
+			},
+			"read": func() diag.Diagnostics {
+				resp := &resource.ReadResponse{}
+				r.Read(ctx, resource.ReadRequest{}, resp)
+				return resp.Diagnostics
+			},
+			"update": func() diag.Diagnostics {
+				resp := &resource.UpdateResponse{}
+				r.Update(ctx, resource.UpdateRequest{}, resp)
+				return resp.Diagnostics
+			},
+			"delete": func() diag.Diagnostics {
+				resp := &resource.DeleteResponse{}
+				r.Delete(ctx, resource.DeleteRequest{}, resp)
+				return resp.Diagnostics
+			},
+			"import": func() diag.Diagnostics {
+				resp := &resource.ImportStateResponse{}
+				r.ImportState(ctx, resource.ImportStateRequest{ID: "k"}, resp)
+				return resp.Diagnostics
+			},
+		}
+		for op, run := range ops {
+			t.Run(name+"/"+op, func(t *testing.T) {
+				diags := run()
+				if !diags.HasError() || diags.Errors()[0].Summary() != "Not available through an organization" {
+					t.Errorf("diagnostics = %v, want the organization refused", diags)
+				}
+			})
+		}
 	}
 }
 

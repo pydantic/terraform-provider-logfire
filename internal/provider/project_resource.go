@@ -544,10 +544,21 @@ func (r *ProjectResource) ModifyPlan(ctx context.Context, req resource.ModifyPla
 	}
 	// The replacement deletes the project before it creates the new one, so
 	// check now that the provider can act in the new organization.
-	if _, err := r.client.ForOrganization(name).ListProjects(ctx); err != nil {
+	existing, err := r.client.ForOrganization(name).ListProjects(ctx)
+	if err != nil {
 		resp.Diagnostics.AddError("Cannot move the project", fmt.Sprintf(
 			"Moving the project to organization %q replaces it, but the provider cannot act in that organization: %v", name, err))
 		return
+	}
+	var projectName types.String
+	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root("name"), &projectName)...)
+	for _, p := range existing {
+		if knownString(projectName) && p.ProjectName == projectName.ValueString() {
+			resp.Diagnostics.AddError("Cannot move the project", fmt.Sprintf(
+				"Organization %q already has a project named %q, so the replacement would delete this project and then fail to create it.",
+				name, p.ProjectName))
+			return
+		}
 	}
 	resp.RequiresReplace = append(resp.RequiresReplace, path.Root("organization"))
 }
