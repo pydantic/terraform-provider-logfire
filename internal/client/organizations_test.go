@@ -27,7 +27,7 @@ func formBody(req *http.Request) url.Values {
 
 const organizationReadBody = `{"id":"9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff","organization_name":"acme",
 	"subscription_plan":null,"has_admin_panel":true,"created_at":"2026-01-01T00:00:00Z",
-	"updated_at":"2026-01-01T00:00:00Z","billing_email":null,"organization_display_name":null,
+	"updated_at":"2026-01-01T00:00:00Z","organization_display_name":null,
 	"github_handle":null,"location":null,"avatar":null,"links":[],"description":null,
 	"spending_cap":null,"spending_cap_reached_at":null,"planless_grace_period_ends_at":null,
 	"gateway_enabled":false,"ai_enabled":false}`

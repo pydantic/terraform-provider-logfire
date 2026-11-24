@@ -28,11 +28,11 @@ TF_ACC= TMPDIR="$RUN_DIR/scratch" make test-e2e
 ```
 
 Require `TestLifecycleSlackSettings`, `TestLifecyclePartialCreateRecovery`,
-`TestLifecycleFailedCreates`, `TestLifecycleDashboardNullDefinition`,
+`TestLifecycleOrganizationBillingEmail`, `TestLifecycleFailedCreates`, `TestLifecycleDashboardNullDefinition`,
 `TestLifecycleProjectImportIDCollision`, and the organization tests
 of [Organization context](organization-context.md) to pass. Save the transcript and exit code.
 The assertions check state values, import results, one create per resource,
-and one final deletion for channel and organization recovery.
+and one final deletion for channel recovery and the organization lifecycle.
 
 ## Gotchas
 

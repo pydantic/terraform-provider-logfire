@@ -26,7 +26,7 @@ const exchangeOKBody = `{"access_token":"exchanged-token","token_type":"Bearer",
 // and ID, as returned by the instance organization list route.
 const organizationListBody = `[{"id":"9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff","organization_name":"acme",
 	"subscription_plan":"non_stripe","has_admin_panel":false,"created_at":"2026-01-01T00:00:00Z",
-	"updated_at":"2026-01-01T00:00:00Z","billing_email":null,"organization_display_name":null,
+	"updated_at":"2026-01-01T00:00:00Z","organization_display_name":null,
 	"github_handle":null,"location":null,"avatar":null,"links":[],"description":null,
 	"spending_cap":null,"spending_cap_reached_at":null,"planless_grace_period_ends_at":null,
 	"gateway_enabled":false,"ai_enabled":false}]`
@@ -205,7 +205,7 @@ func TestOrganizationReadFailsOnExternalRename(t *testing.T) {
 	t.Parallel()
 	list := `[{"id":"9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff","organization_name":"renamed-elsewhere",
 		"subscription_plan":"non_stripe","has_admin_panel":false,"created_at":"2026-01-01T00:00:00Z",
-		"updated_at":"2026-01-01T00:00:00Z","billing_email":null,"organization_display_name":null,
+		"updated_at":"2026-01-01T00:00:00Z","organization_display_name":null,
 		"github_handle":null,"location":null,"avatar":null,"links":[],"description":null,
 		"spending_cap":null,"spending_cap_reached_at":null,"planless_grace_period_ends_at":null,
 		"gateway_enabled":false,"ai_enabled":false}]`
@@ -234,7 +234,7 @@ func TestOrganizationReadFailsOnExternalRename(t *testing.T) {
 // unrelated organization that inherited the state's name.
 const organizationReusedNameContextBody = `{"id":"33333333-3333-3333-3333-333333333333","organization_name":"acme",
 	"subscription_plan":"non_stripe","has_admin_panel":false,"created_at":"2026-01-01T00:00:00Z",
-	"updated_at":"2026-01-01T00:00:00Z","billing_email":null,"organization_display_name":null,
+	"updated_at":"2026-01-01T00:00:00Z","organization_display_name":null,
 	"github_handle":null,"location":null,"avatar":null,"links":[],"description":null,
 	"spending_cap":null,"spending_cap_reached_at":null,"planless_grace_period_ends_at":null,
 	"gateway_enabled":false,"ai_enabled":false}`
@@ -247,13 +247,13 @@ func TestOrganizationImportPrefersIDMatchOverUUIDShapedName(t *testing.T) {
 	list := `[
 		{"id":"11111111-1111-1111-1111-111111111111","organization_name":"9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff",
 		 "subscription_plan":"non_stripe","has_admin_panel":false,"created_at":"2026-01-01T00:00:00Z",
-		 "updated_at":"2026-01-01T00:00:00Z","billing_email":null,"organization_display_name":null,
+		 "updated_at":"2026-01-01T00:00:00Z","organization_display_name":null,
 		 "github_handle":null,"location":null,"avatar":null,"links":[],"description":null,
 		 "spending_cap":null,"spending_cap_reached_at":null,"planless_grace_period_ends_at":null,
 		 "gateway_enabled":false,"ai_enabled":false},
 		{"id":"9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff","organization_name":"acme",
 		 "subscription_plan":"non_stripe","has_admin_panel":false,"created_at":"2026-01-01T00:00:00Z",
-		 "updated_at":"2026-01-01T00:00:00Z","billing_email":null,"organization_display_name":null,
+		 "updated_at":"2026-01-01T00:00:00Z","organization_display_name":null,
 		 "github_handle":null,"location":null,"avatar":null,"links":[],"description":null,
 		 "spending_cap":null,"spending_cap_reached_at":null,"planless_grace_period_ends_at":null,
 		 "gateway_enabled":false,"ai_enabled":false}

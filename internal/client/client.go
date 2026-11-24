@@ -621,7 +621,6 @@ type OrganizationRead struct {
 	HasAdminPanel             bool               `json:"has_admin_panel"`
 	CreatedAt                 string             `json:"created_at"`
 	UpdatedAt                 string             `json:"updated_at"`
-	BillingEmail              *string            `json:"billing_email"`
 	OrganizationDisplayName   *string            `json:"organization_display_name"`
 	GithubHandle              *string            `json:"github_handle"`
 	Location                  *string            `json:"location"`
@@ -647,7 +646,6 @@ type OrganizationCreate struct {
 
 type OrganizationUpdate struct {
 	OrganizationName        *string             `json:"organization_name,omitempty"`
-	BillingEmail            *string             `json:"billing_email,omitempty"`
 	OrganizationDisplayName *string             `json:"organization_display_name,omitempty"`
 	GithubHandle            *string             `json:"github_handle,omitempty"`
 	Location                *string             `json:"location,omitempty"`

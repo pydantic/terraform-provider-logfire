@@ -61,9 +61,8 @@ func (r *OrganizationResource) Schema(ctx context.Context, req resource.SchemaRe
 			"and requires an API key created in the admin organization (the one with the admin panel) " +
 			"carrying the `organization:admin` scope. A key minted inside another organization cannot " +
 			"manage organizations regardless of its scopes. Reading, updating, and deleting an organization " +
-			"authenticates with a short-lived organization-scoped token exchanged from that key, and the same " +
-			"exchange backs setting `billing_email` at creation, so every operation beyond creating and listing " +
-			"requires a Logfire backend from 2026-06-25 (v2026-06-25.01) or newer; creating and listing " +
+			"authenticates with a short-lived organization-scoped token exchanged from that key, so every " +
+			"operation beyond creating and listing requires a Logfire backend from 2026-06-25 (v2026-06-25.01) or newer; creating and listing " +
 			"organizations require 2026-06-03 (v2026-06-03.01) or newer.",
 		Attributes: map[string]rschema.Attribute{
 			"id": rschema.StringAttribute{
@@ -87,12 +86,11 @@ func (r *OrganizationResource) Schema(ctx context.Context, req resource.SchemaRe
 				},
 			},
 			"billing_email": rschema.StringAttribute{
-				Optional:            true,
-				Computed:            true,
-				MarkdownDescription: "Billing contact email.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
+				Optional: true,
+				MarkdownDescription: "Logfire no longer stores a billing email for an organization. The provider does not " +
+					"send this value to Logfire and keeps the configured value only in state. It will be removed in v0.4.0.",
+				DeprecationMessage: "Logfire no longer stores an organization billing email, so the provider ignores billing_email. " +
+					"Remove it from the configuration. The attribute will be removed in v0.4.0.",
 			},
 			"github_handle": rschema.StringAttribute{
 				Optional:            true,
@@ -203,19 +201,8 @@ func (r *OrganizationResource) Create(ctx context.Context, req resource.CreateRe
 	}
 	var state OrganizationModel
 	organizationReadToModel(out, &state)
+	state.BillingEmail = ignoredBillingEmail(plan.BillingEmail)
 	state.DeletionProtection = normalizeDeletionProtection(plan.DeletionProtection)
-
-	if billingEmail := terraformStringPointer(plan.BillingEmail); billingEmail != nil {
-		updated, updateErr := r.client.UpdateOrganizationContext(ctx, out.OrganizationName, logclient.OrganizationUpdate{
-			BillingEmail: billingEmail,
-		})
-		if updateErr != nil {
-			resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
-			resp.Diagnostics.AddError("Create organization failed", fmt.Sprintf("setting billing_email: %v. The created organization %q is saved in state and Terraform will mark it tainted. After fixing the error and verifying the saved organization, untaint this resource before applying again to update it without replacement.", updateErr, state.ID.ValueString()))
-			return
-		}
-		organizationReadToModel(updated, &state)
-	}
 
 	tflog.Trace(ctx, "created organization", map[string]any{"id": state.ID.ValueString(), "name": state.Name.ValueString()})
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -265,6 +252,7 @@ func (r *OrganizationResource) Read(ctx context.Context, req resource.ReadReques
 		return
 	}
 
+	// Logfire does not return billing_email, so the read keeps the saved value.
 	organizationReadToModel(out, &state)
 	state.DeletionProtection = currentDeletionProtection
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -307,9 +295,6 @@ func (r *OrganizationResource) Update(ctx context.Context, req resource.UpdateRe
 	if updateStringField(plan.DisplayName, state.DisplayName, &payload.OrganizationDisplayName) {
 		changed = true
 	}
-	if updateStringField(plan.BillingEmail, state.BillingEmail, &payload.BillingEmail) {
-		changed = true
-	}
 	if updateStringField(plan.GithubHandle, state.GithubHandle, &payload.GithubHandle) {
 		changed = true
 	}
@@ -324,6 +309,7 @@ func (r *OrganizationResource) Update(ctx context.Context, req resource.UpdateRe
 	}
 
 	if !changed {
+		state.BillingEmail = ignoredBillingEmail(plan.BillingEmail)
 		state.DeletionProtection = normalizeDeletionProtection(plan.DeletionProtection)
 		resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 		return
@@ -371,6 +357,7 @@ func (r *OrganizationResource) Update(ctx context.Context, req resource.UpdateRe
 
 	var newState OrganizationModel
 	organizationReadToModel(out, &newState)
+	newState.BillingEmail = ignoredBillingEmail(plan.BillingEmail)
 	newState.DeletionProtection = normalizeDeletionProtection(plan.DeletionProtection)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &newState)...)
 }
@@ -607,7 +594,6 @@ func organizationReadToModel(o *logclient.OrganizationRead, m *OrganizationModel
 	m.ID = types.StringValue(o.ID)
 	m.Name = types.StringValue(o.OrganizationName)
 	m.DisplayName = optionalStringToTerraform(o.OrganizationDisplayName)
-	m.BillingEmail = optionalStringToTerraform(o.BillingEmail)
 	m.GithubHandle = optionalStringToTerraform(o.GithubHandle)
 	m.Location = optionalStringToTerraform(o.Location)
 	m.Avatar = optionalStringToTerraform(o.Avatar)
@@ -625,6 +611,15 @@ func organizationReadToModel(o *logclient.OrganizationRead, m *OrganizationModel
 	} else {
 		m.UpdatedAt = types.StringValue(o.UpdatedAt)
 	}
+}
+
+// ignoredBillingEmail returns the state value of the deprecated billing_email.
+// Logfire neither stores nor returns it, so state holds the planned value.
+func ignoredBillingEmail(planned types.String) types.String {
+	if planned.IsUnknown() {
+		return types.StringNull()
+	}
+	return planned
 }
 
 func normalizeDeletionProtection(in types.Bool) types.Bool {

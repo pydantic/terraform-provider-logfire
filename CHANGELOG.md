@@ -12,6 +12,9 @@ BUG FIXES:
 - A 2xx answer with an empty body, on a route whose body the provider reads, is now an error. A list route that answered 200 with no body used to read as an empty list, and a refresh then dropped every resource in it.
 - A create that the Logfire public API rate limit refuses is retried after the `Retry-After` delay. The server refuses such a request before it handles it, so the retry cannot create a second resource. Several Terraform runs against one organization share its limit, so this refusal can occur even with the provider's own pacing. Other 429 responses to a create still fail without a retry, as in 0.2.2. Retries stop before the 90-second request timeout.
 
+DEPRECATIONS:
+- `logfire_organization`: `billing_email` is deprecated and will be removed in v0.4.0. Logfire v2026-10-29.02 and newer no longer store an organization billing email, so an apply that set it failed with an inconsistent result. The provider no longer sends the value to Logfire, including to older instances, and keeps a configured value only in state. Remove the attribute from your configuration. If the state holds a billing email that the configuration does not set, the next plan shows a one-time update that clears it from state without a request to Logfire. If an earlier apply failed while setting `billing_email`, the created organization is in state as tainted. Check that its `id` matches the organization in Logfire, then run `terraform untaint` so the next apply does not plan a replacement.
+
 ## 0.3.0
 
 BREAKING CHANGES:
