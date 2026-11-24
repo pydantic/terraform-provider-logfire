@@ -9,7 +9,7 @@ for the organization.
 - `context-provider` sends an organization token on every organization request when the provider sets `organization` or `LOGFIRE_ORGANIZATION`, and keeps the key on `/api/v1/instance/` routes and when no organization is set.
 - `context-exchange` shares one exchange per organization among concurrent requests, replaces a rejected token once, retries a create's exchange, drops `expires_in` when the instance caps the lifetime, and reports a missing token endpoint or a key without `instance:admin` by name.
 - `context-project` creates, imports, updates, and destroys a `logfire_project` in the organization it names, and records `organization_id`.
-- `context-follow` replaces a project when `organization` names another organization, updates it in place for a rename, fails a replacement into a missing organization at plan, updates `organization` on refresh after a rename, and drops the project from state after the organization is deleted.
+- `context-follow` replaces a project when `organization` names another existing organization, updates it in place for a rename, for an unknown name, and for a name the instance does not list yet (a failed update deletes nothing), updates `organization` on refresh after a rename, and drops the project from state after the organization is deleted.
 
 ## How to get to it (user POV)
 

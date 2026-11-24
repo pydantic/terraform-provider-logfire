@@ -47,6 +47,11 @@ func splitImportParts(raw string, allowedCounts ...int) ([]string, error) {
 	return parts, nil
 }
 
+// projectNotFoundError means the project list answered and has no such project.
+type projectNotFoundError struct{ key string }
+
+func (e *projectNotFoundError) Error() string { return fmt.Sprintf("project %q not found", e.key) }
+
 func findProjectByNameOrID(ctx context.Context, c *client.APIClient, key string) (string, string, error) {
 	list, err := c.ListProjects(ctx)
 	if err != nil {
@@ -62,5 +67,5 @@ func findProjectByNameOrID(ctx context.Context, c *client.APIClient, key string)
 			return project.ID, project.ProjectName, nil
 		}
 	}
-	return "", "", fmt.Errorf("project %q not found", key)
+	return "", "", &projectNotFoundError{key: key}
 }

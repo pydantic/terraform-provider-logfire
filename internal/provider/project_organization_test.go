@@ -40,6 +40,10 @@ type organizationInstance struct {
 	creates       int
 	deletes       int
 	nextProject   int
+	// exchangeNeedsAdmin makes the token endpoint refuse the key as a non-admin key.
+	exchangeNeedsAdmin bool
+	// projectListRefused makes the project list answer 403.
+	projectListRefused bool
 }
 
 func newOrganizationInstance(t *testing.T, names ...string) *organizationInstance {
@@ -111,6 +115,10 @@ func (api *organizationInstance) serve(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/api/oauth/token" {
 		_ = r.ParseForm()
 		api.exchanges++
+		if api.exchangeNeedsAdmin {
+			reply(http.StatusBadRequest, map[string]string{"error": "invalid_scope", "error_description": "subject_token must include instance:admin"})
+			return
+		}
 		name := strings.TrimPrefix(r.PostForm.Get("audience"), "http://"+r.Host+"/")
 		for id, organizationName := range api.organizations {
 			if organizationName == name {
@@ -126,6 +134,16 @@ func (api *organizationInstance) serve(w http.ResponseWriter, r *http.Request) {
 			reply(http.StatusForbidden, map[string]string{"detail": "instance:admin is required"})
 			return
 		}
+		if r.Method == http.MethodPost {
+			var in struct {
+				Name string `json:"organization_name"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			id := "org-" + in.Name
+			api.organizations[id] = in.Name
+			reply(http.StatusCreated, map[string]any{"id": id, "organization_name": in.Name})
+			return
+		}
 		var list []map[string]any
 		for id, name := range api.organizations {
 			list = append(list, map[string]any{"id": id, "organization_name": name})
@@ -138,8 +156,32 @@ func (api *organizationInstance) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if r.URL.Path == "/api/v1/organization/" {
+		organization := map[string]any{"id": callerOrganization, "organization_name": api.organizations[callerOrganization]}
+		switch r.Method {
+		case http.MethodGet:
+			reply(http.StatusOK, organization)
+		case http.MethodPut:
+			var in struct {
+				Name *string `json:"organization_name"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			if in.Name != nil {
+				api.organizations[callerOrganization] = *in.Name
+			}
+			organization["organization_name"] = api.organizations[callerOrganization]
+			reply(http.StatusOK, organization)
+		case http.MethodDelete:
+			delete(api.organizations, callerOrganization)
+			reply(http.StatusNoContent, nil)
+		}
+		return
+	}
+
 	id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/projects/"), "/")
 	switch {
+	case r.URL.Path == "/api/v1/projects/" && r.Method == http.MethodGet && api.projectListRefused:
+		reply(http.StatusForbidden, map[string]string{"detail": "This token is missing the required scope: project:read."})
 	case r.URL.Path == "/api/v1/projects/" && r.Method == http.MethodGet:
 		list := []map[string]any{}
 		for _, project := range api.projects {
@@ -280,14 +322,14 @@ func TestLifecycleProjectOrganizationArgument(t *testing.T) {
 	}
 }
 
-func TestLifecycleProjectReplacementIntoMissingOrganizationFailsAtPlan(t *testing.T) {
+func TestLifecycleProjectMoveIntoMissingOrganizationFailsAtApplyAndDeletesNothing(t *testing.T) {
 	api := newOrganizationInstance(t, "team-a")
 	config := func(organization string) string {
 		return providerBlock(api, "") + projectBlock("svc", fmt.Sprintf("organization = %q\nname = \"svc\"", organization))
 	}
 	runProjectLifecycle(t, []tfresource.TestStep{
 		{Config: config("team-a")},
-		{Config: config("team-gone"), ExpectError: regexp.MustCompile(`Organization "team-gone" does not exist`)},
+		{Config: config("team-gone"), ExpectError: regexp.MustCompile(`(?s)Update project failed.*team-gone`)},
 		{
 			Config: config("team-a"), ConfigPlanChecks: expectNoChange,
 			Check: func(*terraform.State) error {
@@ -329,8 +371,8 @@ func TestLifecycleProjectFollowsAnOrganizationRename(t *testing.T) {
 				},
 			),
 		},
-		// The old name no longer exists, so a configuration that still has it stops at plan.
-		{Config: argument("team-a"), ExpectError: regexp.MustCompile(`Organization "team-a" does not exist`)},
+		// The old name no longer exists, so a configuration that still has it plans an in-place update that fails.
+		{Config: argument("team-a"), ExpectError: regexp.MustCompile(`(?s)Update project failed.*team-a`)},
 		{Config: argument("team-z"), ConfigPlanChecks: expectNoChange},
 	})
 	if api.creates != 1 {
@@ -389,7 +431,7 @@ func TestProjectOrganizationNamesAreValidated(t *testing.T) {
 // A new organization name replaces the project only when it is another
 // organization. Refresh updates the name after a rename, so a plan without
 // refresh is the only way to reach the rename case through Terraform.
-func TestProjectPlanTreatsARenameAsInPlace(t *testing.T) {
+func TestProjectPlanReplacesOnlyForAnotherKnownOrganization(t *testing.T) {
 	api := newOrganizationInstance(t, "team-a", "team-b")
 	api.rename("team-a", "team-renamed")
 	client, err := logclient.NewAPIClient(api.URL, testAPIKey, nil)
@@ -420,8 +462,8 @@ func TestProjectPlanTreatsARenameAsInPlace(t *testing.T) {
 	}{
 		"same organization under its new name": {planned: types.StringValue("team-renamed")},
 		"another organization":                 {planned: types.StringValue("team-b"), wantReplace: true},
-		"a name that is not known yet":         {planned: types.StringUnknown(), wantReplace: true},
-		"a name no organization has":           {planned: types.StringValue("nobody"), wantError: `Organization "nobody" does not exist`},
+		"a name that is not known yet":         {planned: types.StringUnknown()},
+		"a name no organization has":           {planned: types.StringValue("nobody")},
 	} {
 		t.Run(name, func(t *testing.T) {
 			response := resource.ModifyPlanResponse{Plan: plan(tc.planned)}
@@ -442,4 +484,65 @@ func TestProjectPlanTreatsARenameAsInPlace(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The organization of a project can be renamed in the same apply that renames the
+// organization resource. At plan the instance still knows the old name only.
+func TestLifecycleProjectFollowsAManagedOrganizationRename(t *testing.T) {
+	api := newOrganizationInstance(t)
+	config := func(name string) string {
+		return providerBlock(api, "") +
+			fmt.Sprintf("resource \"logfire_organization\" \"team\" {\nname = %q\ndeletion_protection = false\n}\n", name) +
+			projectBlock("svc", "organization = logfire_organization.team.name\nname = \"svc\"")
+	}
+	const address = "logfire_project.svc"
+	var projectID string
+	runProjectLifecycle(t, []tfresource.TestStep{
+		{Config: config("team-a"), Check: func(s *terraform.State) error {
+			projectID = s.RootModule().Resources[address].Primary.ID
+			return nil
+		}},
+		{
+			Config:           config("team-z"),
+			ConfigPlanChecks: expectPlan(address, plancheck.ResourceActionUpdate),
+			Check: tfresource.ComposeTestCheckFunc(
+				tfresource.TestCheckResourceAttr(address, "organization", "team-z"),
+				func(s *terraform.State) error {
+					if got := s.RootModule().Resources[address].Primary.ID; got != projectID {
+						return fmt.Errorf("project ID = %s, want %s", got, projectID)
+					}
+					return nil
+				},
+			),
+		},
+		{Config: config("team-z"), ConfigPlanChecks: expectNoChange},
+	})
+	if api.creates != 1 {
+		t.Errorf("creates = %d, want the rename to keep the project", api.creates)
+	}
+}
+
+func TestProjectImportReportsTheFailureOfTheTargetOrganization(t *testing.T) {
+	t.Run("a key without instance:admin cannot reach another organization", func(t *testing.T) {
+		api := newOrganizationInstance(t, "team-b")
+		api.exchangeNeedsAdmin = true
+		runProjectLifecycle(t, []tfresource.TestStep{{
+			Config:        providerBlock(api, "") + projectBlock("svc", "name = \"svc\""),
+			ResourceName:  "logfire_project.svc",
+			ImportState:   true,
+			ImportStateId: "team-b/svc",
+			ExpectError:   regexp.MustCompile(`instance-admin\s+API key`),
+		}})
+	})
+	t.Run("a bare import reports a failed project list", func(t *testing.T) {
+		api := newOrganizationInstance(t, "team-b")
+		api.projectListRefused = true
+		runProjectLifecycle(t, []tfresource.TestStep{{
+			Config:        providerBlock(api, "team-b") + projectBlock("svc", "name = \"svc\""),
+			ResourceName:  "logfire_project.svc",
+			ImportState:   true,
+			ImportStateId: "svc",
+			ExpectError:   regexp.MustCompile(`project:read`),
+		}})
+	})
 }

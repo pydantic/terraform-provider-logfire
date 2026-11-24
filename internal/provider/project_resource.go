@@ -5,6 +5,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -63,7 +64,8 @@ func (r *ProjectResource) Schema(ctx context.Context, req resource.SchemaRequest
 				Computed: true,
 				MarkdownDescription: "Organization name. Defaults to the provider `organization`, else the organization of the provider credential. " +
 					"Setting it acts in that organization through the instance-admin token exchange (self-hosted only). " +
-					"Changing it replaces the project, unless the new name belongs to the same organization, which Terraform checks by `organization_id`. " +
+					"Changing it replaces the project when the new name is another existing organization than `organization_id`. " +
+					"A new name for the same organization, a name that is not known yet, or a name the instance does not list yet updates in place. " +
 					"After an organization is renamed, a refresh updates this value.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
@@ -331,7 +333,11 @@ func (r *ProjectResource) Update(ctx context.Context, req resource.UpdateRequest
 		}
 	}
 
-	out, err := r.clientFor(plan.Organization, state.OrganizationID).UpdateProject(ctx, state.ID.ValueString(), payload)
+	client := r.clientFor(plan.Organization, state.OrganizationID)
+	if knownString(plan.Organization) && !plan.Organization.Equal(state.Organization) {
+		client = r.client.ForOrganization(plan.Organization.ValueString())
+	}
+	out, err := client.UpdateProject(ctx, state.ID.ValueString(), payload)
 	if err != nil {
 		resp.Diagnostics.AddError("Update project failed", err.Error())
 		return
@@ -407,11 +413,16 @@ terraform import logfire_project.prod "acme/prod-logs"`,
 		projectID, client = id, found
 	case 1:
 		id, _, err := findProjectByNameOrID(ctx, r.client, parts[0])
-		if err != nil {
+		var notFound *projectNotFoundError
+		if errors.As(err, &notFound) {
 			resp.Diagnostics.AddError(
 				"Import project failed",
 				fmt.Sprintf("Project %q not found. Use the project UUID or the \"organization/name\" shorthand.", rawID),
 			)
+			return
+		}
+		if err != nil {
+			resp.Diagnostics.AddError("Import project failed", err.Error())
 			return
 		}
 		projectID = id
@@ -450,22 +461,19 @@ func (r *ProjectResource) findProject(ctx context.Context, org, name string) (st
 	default:
 		candidates = []*logclient.APIClient{r.client.ForOrganization(org)}
 	}
+	// The last candidate is the target organization, so its failure is the answer
+	// when nothing is found.
 	var lastErr error
-	listed := false
 	for _, c := range candidates {
 		list, err := c.ListProjects(ctx)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		listed = true
+		lastErr = err
 		for _, project := range list {
 			if project.ProjectName == name && project.OrganizationName == org {
 				return project.ID, c, nil
 			}
 		}
 	}
-	if !listed {
+	if lastErr != nil {
 		return "", nil, lastErr
 	}
 	return "", nil, fmt.Errorf("project %q/%q not found", org, name)
@@ -481,11 +489,13 @@ func (r *ProjectResource) clientFor(organization, organizationID types.String) *
 	return r.client
 }
 
-// ModifyPlan decides whether a new organization name replaces the project. A
-// name that resolves to the organization of organization_id is a rename and
-// updates in place. A name that no organization has fails the plan, because
-// Terraform would delete the project before the create failed. A name that is
-// not known yet replaces, as any changed value does.
+// ModifyPlan replaces the project only when the planned organization name is
+// known and the instance list gives it another ID than organization_id. Any other
+// change, an unknown name, a name the list does not have yet, or a rename of the
+// same organization, updates in place. A name that is missing only because the
+// same apply creates or renames the organization must not delete the project, and
+// Update fails without deleting anything when the project is not in the planned
+// organization.
 func (r *ProjectResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
 	if r.client == nil || req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
 		return
@@ -494,24 +504,16 @@ func (r *ProjectResource) ModifyPlan(ctx context.Context, req resource.ModifyPla
 	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("organization"), &prior)...)
 	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root("organization"), &planned)...)
 	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("organization_id"), &priorID)...)
-	if resp.Diagnostics.HasError() || planned.Equal(prior) {
-		return
-	}
-	organization := path.Root("organization")
-	if planned.IsUnknown() {
-		resp.RequiresReplace = append(resp.RequiresReplace, organization)
+	if resp.Diagnostics.HasError() || planned.IsUnknown() || planned.Equal(prior) {
 		return
 	}
 	name := planned.ValueString()
 	found, err := findOrganization(ctx, r.client, func(o logclient.OrganizationRead) bool { return o.OrganizationName == name })
 	if err != nil || found == nil {
-		resp.Diagnostics.AddAttributeError(organization, "Cannot replace the project",
-			organizationLookupMessage(name, err)+" Terraform stops here, because it would delete the project before the create failed. "+
-				"If the organization was renamed, set organization to its new name.")
 		return
 	}
 	if !knownString(priorID) || found.ID != priorID.ValueString() {
-		resp.RequiresReplace = append(resp.RequiresReplace, organization)
+		resp.RequiresReplace = append(resp.RequiresReplace, path.Root("organization"))
 	}
 }
 

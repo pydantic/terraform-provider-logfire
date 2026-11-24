@@ -81,7 +81,7 @@ Each resource states the scopes its calls need. The summary below is the single 
 | `logfire_gateway_spending_limits` | `organization:read_gateway` / `organization:write_gateway` (`organization:read` / `organization:write` are also accepted) | Organization-wide key |
 | `logfire_gateway_project_spending_limits` | `organization:read_gateway` / `organization:write_gateway` (`organization:read` / `organization:write` are also accepted) | A key that can reach the project |
 | `logfire_organization` | `organization:admin` | A key created in the admin-panel organization (self-hosted only) |
-| Any resource, when the provider or `logfire_project` sets `organization` | `instance:admin` | A key created in the admin-panel organization (self-hosted only). The exchanged token holds a fixed scope set, listed under "Managing several organizations on a self-hosted instance". |
+| Any resource, when the provider sets `organization`. `logfire_project` also, when it sets `organization`. | `instance:admin` | A key created in the admin-panel organization (self-hosted only). The exchanged token holds a fixed scope set, listed under "Managing several organizations on a self-hosted instance". The `organization` of a project reaches that project only. |
 
 Two rules decide what a credential can do:
 
@@ -167,7 +167,7 @@ project:read project:write project:read_token project:write_token
 project:read_dashboard project:write_dashboard project:read_alert project:write_alert
 ```
 
-Terraform cannot loop over provider blocks, so use one provider alias per organization. Set `organization` on the provider, or use `LOGFIRE_ORGANIZATION` for the default provider.
+Terraform cannot loop over provider blocks, so use one provider alias per organization. Set `organization` on each provider. A provider that omits `organization`, an alias included, uses `LOGFIRE_ORGANIZATION` when it is set.
 
 ```terraform
 provider "logfire" {
@@ -192,12 +192,12 @@ resource "logfire_project" "api" {
 }
 ```
 
-`logfire_project` also takes an `organization` argument that overrides the provider's, so one provider can create projects in several organizations. `organization_id` holds the ID of the organization when the project is in a named organization, and is null for a project in the organization of the key.
+`logfire_project` also takes an `organization` argument that overrides the provider's, so one provider can create projects in several organizations. It reaches the project only. Resources that reference the project, such as write tokens, alerts, and dashboards, use the organization of their own provider, so they need the alias of the project's organization. `organization_id` holds the ID of the organization when the project is in a named organization, and is null for a project in the organization of the key.
 
-- Changing a project's `organization` replaces it. If the new name is the same organization under another name, the project updates in place.
-- A plan that replaces a project into an organization that does not exist fails before Terraform deletes anything.
+- Changing a project's `organization` replaces it when the new name is a known, existing organization with another ID than `organization_id`. If the new name is unknown at plan time, is the same organization under another name, or is not in the instance yet, the project updates in place. If the project is not in the named organization, the apply fails and deletes nothing.
+- A project moved into an organization that the same apply creates therefore fails at apply. Apply the organization first, for example with `terraform apply -target`, and then change the project.
 - After an organization is renamed outside Terraform, a refresh updates the project's `organization` to the new name. After an organization is deleted, a refresh removes its projects from state.
-- A project stays in the organization recorded in its state. Changing the provider `organization` does not move it. Set `organization` on the project to replace it into the new organization.
+- A project with an `organization_id` stays in the organization recorded in its state. Changing the provider `organization` does not move it. Set `organization` on the project to replace it into the new organization. A project created without a named organization has a null `organization_id` and follows the provider `organization` like other resources.
 - Changing the provider `organization` does not move other resources either. Terraform sees them as missing and plans to create them in the newly targeted organization. A singleton such as `logfire_gateway_spending_limits` then applies to that organization instead.
 - `logfire_api_key` and `logfire_gateway_api_key` do not work through an organization. The instance refuses to create an API key for a token without a user. Create those keys with a key from the target organization.
 

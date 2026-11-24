@@ -29,7 +29,7 @@ resource "logfire_project" "example" {
 ### Optional
 
 - `description` (String) Project description.
-- `organization` (String) Organization name. Defaults to the provider `organization`, else the organization of the provider credential. Setting it acts in that organization through the instance-admin token exchange (self-hosted only). Changing it replaces the project, unless the new name belongs to the same organization, which Terraform checks by `organization_id`. After an organization is renamed, a refresh updates this value.
+- `organization` (String) Organization name. Defaults to the provider `organization`, else the organization of the provider credential. Setting it acts in that organization through the instance-admin token exchange (self-hosted only). Changing it replaces the project when the new name is another existing organization than `organization_id`. A new name for the same organization, a name that is not known yet, or a name the instance does not list yet updates in place. After an organization is renamed, a refresh updates this value.
 - `visibility` (String) Project visibility (`public` or `private`).
 
 ### Read-Only
