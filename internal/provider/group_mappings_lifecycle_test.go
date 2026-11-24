@@ -16,6 +16,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
 	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
 )
 
@@ -176,6 +177,31 @@ func groupMappingsConfig(serverURL string, groups ...string) string {
 		body += "\n" + group + ","
 	}
 	return lifecycleConfig(serverURL, "group_mappings", body+"\n]")
+}
+
+// The PUT body uses the instance's field names. The fake decodes with the client's
+// own types, so only this exact body pins them.
+func TestLifecycleGroupMappingsWireNames(t *testing.T) {
+	t.Parallel()
+	server, api := newGroupMappingsAPI(t)
+	const want = `{"group_organization_mapping":[` +
+		`{"group_id":"platform-ops","organization_roles":[{"organization_name":"team-a","role":"guest","project_roles":[` +
+		`{"project_name":"api","role":"read"},{"project_name":"worker","role":"write"}]}]},` +
+		`{"group_id":"dev","organization_roles":[` +
+		`{"organization_name":"team-a","role":"member","project_roles":[]},` +
+		`{"organization_name":"team-b","role":"guest","project_roles":[]}]}]}`
+	resource.Test(t, resource.TestCase{
+		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{{
+			Config: groupMappingsConfig(server.URL, groupMappingsOpsGroup, groupMappingsDevGroup),
+			Check: func(*terraform.State) error {
+				if got := api.lastPut(t); got != want {
+					return fmt.Errorf("PUT body = %s, want %s", got, want)
+				}
+				return nil
+			},
+		}},
+	})
 }
 
 func TestLifecycleGroupMappings(t *testing.T) {

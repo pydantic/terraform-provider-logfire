@@ -146,3 +146,17 @@ func TestSetGroupMappingsErrors(t *testing.T) {
 		}
 	})
 }
+
+// The instance always sends the list, so an answer without it fails instead of
+// reading as an empty mapping.
+func TestGroupMappingsAnswerWithoutTheList(t *testing.T) {
+	t.Parallel()
+	get := groupMappingsClient(t, http.StatusOK, `{"api_mapping_status":"active"}`, nil)
+	if _, err := get.GetGroupMappings(context.Background()); err == nil || !strings.Contains(err.Error(), "has no group_organization_mapping") {
+		t.Errorf("GET err = %v, want the missing list reported", err)
+	}
+	put := groupMappingsClient(t, http.StatusOK, `{}`, nil)
+	if _, err := put.SetGroupMappings(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "has no group_organization_mapping") {
+		t.Errorf("PUT err = %v, want the missing list reported", err)
+	}
+}

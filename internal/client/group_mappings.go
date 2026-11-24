@@ -53,6 +53,19 @@ type groupMappingsWrite struct {
 	GroupOrganizationMapping []GroupMapping `json:"group_organization_mapping"`
 }
 
+// groupMappingsAnswer decodes a read or write answer. The instance always sends the
+// list, so a nil pointer means the answer came from something else, such as a proxy.
+type groupMappingsAnswer struct {
+	GroupOrganizationMapping *[]GroupMapping `json:"group_organization_mapping"`
+	APIMappingStatus         string          `json:"api_mapping_status"`
+}
+
+func errGroupMappingsMissing(method string) error {
+	return fmt.Errorf("the answer to %s %s has no group_organization_mapping, so it did not come from the "+
+		"Logfire API. Check that base_url reaches the instance without a proxy or redirect that rewrites it",
+		method, groupMappingsPath)
+}
+
 // ErrGroupMappingsOverridden is the 409 that a write gets while the Helm value
 // groupOrganizationMapping overrides the API.
 var ErrGroupMappingsOverridden = errors.New("the group mapping is configured through the environment")
@@ -67,7 +80,7 @@ func (e *GroupMappingsInvalidError) Error() string { return e.Detail }
 
 // GetGroupMappings reads the stored mapping and whether the Helm value overrides it.
 func (c *APIClient) GetGroupMappings(ctx context.Context) (*GroupMappingsRead, error) {
-	var out GroupMappingsRead
+	var out groupMappingsAnswer
 	_, err := c.doJSON(ctx, http.MethodGet, groupMappingsPath, nil, &out, http.StatusOK)
 	if err != nil {
 		// The collection route has no item ID, so a 404 means that the route is missing.
@@ -89,9 +102,9 @@ func (c *APIClient) GetGroupMappings(ctx context.Context) (*GroupMappingsRead, e
 			groupMappingsMinimumRelease, groupMappingsMinimumChart)
 	}
 	if out.GroupOrganizationMapping == nil {
-		out.GroupOrganizationMapping = []GroupMapping{}
+		return nil, errGroupMappingsMissing(http.MethodGet)
 	}
-	return &out, nil
+	return &GroupMappingsRead{GroupOrganizationMapping: *out.GroupOrganizationMapping, APIMappingStatus: out.APIMappingStatus}, nil
 }
 
 // SetGroupMappings replaces the whole stored mapping and returns what the instance stored.
@@ -100,7 +113,7 @@ func (c *APIClient) SetGroupMappings(ctx context.Context, mapping []GroupMapping
 	if mapping == nil {
 		mapping = []GroupMapping{}
 	}
-	var out groupMappingsWrite
+	var out groupMappingsAnswer
 	_, err := c.doJSON(ctx, http.MethodPut, groupMappingsPath, groupMappingsWrite{mapping}, &out, http.StatusOK)
 	if err != nil {
 		var apiErr *APIError
@@ -115,9 +128,9 @@ func (c *APIClient) SetGroupMappings(ctx context.Context, mapping []GroupMapping
 		return nil, err
 	}
 	if out.GroupOrganizationMapping == nil {
-		out.GroupOrganizationMapping = []GroupMapping{}
+		return nil, errGroupMappingsMissing(http.MethodPut)
 	}
-	return out.GroupOrganizationMapping, nil
+	return *out.GroupOrganizationMapping, nil
 }
 
 // apiErrorDetail returns the FastAPI detail string of an error body, or the raw body.
