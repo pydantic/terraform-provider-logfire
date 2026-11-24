@@ -63,6 +63,12 @@ func (api *organizationInstance) rename(oldName, newName string) {
 	api.organizations["org-"+oldName] = newName
 }
 
+func (api *organizationInstance) addOrganization(id, name string) {
+	api.Lock()
+	defer api.Unlock()
+	api.organizations[id] = name
+}
+
 func (api *organizationInstance) deleteOrganization(name string) {
 	api.Lock()
 	defer api.Unlock()
@@ -377,6 +383,30 @@ func TestLifecycleProjectFollowsAnOrganizationRename(t *testing.T) {
 	})
 	if api.creates != 1 {
 		t.Errorf("creates = %d, want the rename to keep the project", api.creates)
+	}
+}
+
+func TestLifecycleProjectFollowsARenameWhenAnotherOrganizationTakesTheOldName(t *testing.T) {
+	api := newOrganizationInstance(t, "team-a")
+	const address = "logfire_project.svc"
+	config := providerBlock(api, "team-a") + projectBlock("svc", "name = \"svc\"")
+	runProjectLifecycle(t, []tfresource.TestStep{
+		{Config: config},
+		{
+			PreConfig: func() {
+				api.rename("team-a", "team-z")
+				api.addOrganization("org-team-a-new", "team-a")
+			},
+			Config:           config,
+			ConfigPlanChecks: expectNoChange,
+			Check: tfresource.ComposeTestCheckFunc(
+				tfresource.TestCheckResourceAttr(address, "organization", "team-z"),
+				tfresource.TestCheckResourceAttr(address, "organization_id", "org-team-a"),
+			),
+		},
+	})
+	if api.creates != 1 {
+		t.Errorf("creates = %d, want the project kept in the renamed organization", api.creates)
 	}
 }
 

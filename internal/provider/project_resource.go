@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"regexp"
 	"strings"
 
@@ -233,10 +234,10 @@ func (r *ProjectResource) Read(ctx context.Context, req resource.ReadRequest, re
 
 	client := r.clientFor(state.Organization, state.OrganizationID)
 	out, status, err := client.GetProject(ctx, state.ID.ValueString())
-	if logclient.IsInvalidTargetError(err) && knownString(state.OrganizationID) {
-		// The exchange knows no organization of this name. Either the organization
-		// was renamed, and the ID gives its new name, or it was deleted with its
-		// projects.
+	if knownString(state.OrganizationID) && (logclient.IsInvalidTargetError(err) || status == http.StatusNotFound) {
+		// The name may no longer belong to the project's organization: it was
+		// renamed, possibly with another organization taking the old name, or it
+		// was deleted with its projects. The ID tells which.
 		id := state.OrganizationID.ValueString()
 		current, lookupErr := findOrganization(ctx, r.client, func(o logclient.OrganizationRead) bool { return o.ID == id })
 		switch {
@@ -246,12 +247,13 @@ func (r *ProjectResource) Read(ctx context.Context, req resource.ReadRequest, re
 		case current == nil:
 			resp.State.RemoveResource(ctx)
 			return
-		case current.OrganizationName == state.Organization.ValueString():
+		case current.OrganizationName != state.Organization.ValueString():
+			client = r.client.ForOrganization(current.OrganizationName)
+			out, status, err = client.GetProject(ctx, state.ID.ValueString())
+		case logclient.IsInvalidTargetError(err):
 			resp.Diagnostics.AddError("Read project failed", exchangeCause(err).Error())
 			return
 		}
-		client = r.client.ForOrganization(current.OrganizationName)
-		out, status, err = client.GetProject(ctx, state.ID.ValueString())
 	}
 	if err != nil {
 		if status == 404 {
