@@ -189,10 +189,7 @@ func TestAPIKeyCreateFromPlan(t *testing.T) {
 		Description: types.StringNull(),
 		ExpiresAt:   types.StringNull(),
 	}
-	in, err := apiKeyCreateFromPlan(plan)
-	if err != nil {
-		t.Fatal(err)
-	}
+	in := apiKeyCreateFromPlan(plan)
 	if in.Name != "otel" || len(in.Scopes) != 1 || in.Description != nil || in.ExpiresAt != nil || in.Claims != nil {
 		t.Fatalf("unexpected create payload: %+v", in)
 	}
@@ -205,29 +202,26 @@ func TestAPIKeyCreateFromPlan(t *testing.T) {
 		Scopes:    scopes,
 		ProjectID: types.StringNull(),
 	}
-	in, err = apiKeyCreateFromPlan(orgWide)
-	if err != nil {
-		t.Fatal(err)
-	}
+	in = apiKeyCreateFromPlan(orgWide)
 	if in.ProjectID != nil {
 		t.Fatalf("org-wide key must omit project_id, got %v", *in.ProjectID)
 	}
 
-	badExpiry := &APIKeyModel{
-		Name:      types.StringValue("bad"),
+	padded := &APIKeyModel{
+		Name:      types.StringValue("padded"),
 		Scopes:    scopes,
-		ExpiresAt: types.StringValue("not-a-timestamp"),
+		ExpiresAt: types.StringValue(" 2026-12-31T23:59:59Z "),
 	}
-	if _, err := apiKeyCreateFromPlan(badExpiry); err == nil {
-		t.Fatal("expected an expires_at parse error")
+	in = apiKeyCreateFromPlan(padded)
+	if in.ExpiresAt == nil || *in.ExpiresAt != "2026-12-31T23:59:59Z" {
+		t.Fatalf("expires_at = %+v, want it trimmed", in.ExpiresAt)
 	}
 }
 
 func TestGatewayAPIKeyReadToStateRejectsNonGatewayKey(t *testing.T) {
 	t.Parallel()
 	read := testAPIKeyRead([]string{"project:write_otlp"})
-	var state GatewayAPIKeyModel
-	if err := gatewayAPIKeyReadToState(read, &state, types.StringNull()); err == nil {
+	if _, err := gatewayAPIKeyToModel(read, types.StringNull()); err == nil {
 		t.Fatal("expected a scope mismatch error")
 	}
 }

@@ -4,8 +4,8 @@
 package provider
 
 import (
+	"cmp"
 	"context"
-	"fmt"
 
 	stringvalidator "github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -14,11 +14,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
 )
-
-var _ datasource.DataSource = &PagerDutyServiceDataSource{}
-var _ datasource.DataSourceWithConfigure = &PagerDutyServiceDataSource{}
-
-func NewPagerDutyServiceDataSource() datasource.DataSource { return &PagerDutyServiceDataSource{} }
 
 type PagerDutyServiceDataSource struct {
 	client *logclient.APIClient
@@ -33,24 +28,13 @@ type PagerDutyServiceDataSourceModel struct {
 	ServiceName        types.String `tfsdk:"service_name"`
 }
 
-func (d *PagerDutyServiceDataSource) Metadata(
-	ctx context.Context,
-	req datasource.MetadataRequest,
-	resp *datasource.MetadataResponse,
-) {
+func (d *PagerDutyServiceDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_pagerduty_service"
 }
 
-func (d *PagerDutyServiceDataSource) Schema(
-	ctx context.Context,
-	req datasource.SchemaRequest,
-	resp *datasource.SchemaResponse,
-) {
+func (d *PagerDutyServiceDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Resolves a PagerDuty service approved through a Logfire connection to the IDs required " +
-			"by a `pagerduty-integration` channel. PagerDuty's external service ID is resolved to Logfire's " +
-			"internal installation and resource IDs. The provider API key requires the " +
-			"`organization:read_channel` scope.",
+		MarkdownDescription: "Resolves a PagerDuty service approved through a Logfire connection to the IDs required by a `pagerduty-integration` channel. PagerDuty's external service ID is resolved to Logfire's internal installation and resource IDs. The provider API key requires the `organization:read_channel` scope.",
 		Attributes: map[string]schema.Attribute{
 			"account_subdomain": schema.StringAttribute{
 				Required:            true,
@@ -90,45 +74,20 @@ func (d *PagerDutyServiceDataSource) Schema(
 	}
 }
 
-func (d *PagerDutyServiceDataSource) Configure(
-	ctx context.Context,
-	req datasource.ConfigureRequest,
-	resp *datasource.ConfigureResponse,
-) {
-	if req.ProviderData == nil {
-		return
-	}
-	client, ok := req.ProviderData.(*logclient.APIClient)
-	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected provider data",
-			fmt.Sprintf("expected *APIClient, got %T", req.ProviderData),
-		)
-		return
-	}
-	d.client = client
+func (d *PagerDutyServiceDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, _ *datasource.ConfigureResponse) {
+	d.client, _ = req.ProviderData.(*logclient.APIClient)
 }
 
-func (d *PagerDutyServiceDataSource) Read(
-	ctx context.Context,
-	req datasource.ReadRequest,
-	resp *datasource.ReadResponse,
-) {
+func (d *PagerDutyServiceDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
 	var config PagerDutyServiceDataSourceModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	region := "us"
-	if !config.Region.IsNull() {
-		region = config.Region.ValueString()
-	}
-
+	region := cmp.Or(config.Region.ValueString(), "us")
 	service, err := d.client.GetPagerDutyService(
-		ctx,
-		config.AccountSubdomain.ValueString(),
-		region,
+		ctx, config.AccountSubdomain.ValueString(), region,
 		config.PagerDutyServiceID.ValueString(),
 	)
 	if err != nil {

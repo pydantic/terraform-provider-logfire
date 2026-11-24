@@ -170,7 +170,7 @@ func TestAlertSchemaAppliesDurationValidators(t *testing.T) {
 	t.Parallel()
 
 	resp := &resource.SchemaResponse{}
-	NewAlertResource().Schema(context.Background(), resource.SchemaRequest{}, resp)
+	(&AlertResource{}).Schema(context.Background(), resource.SchemaRequest{}, resp)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("building the alert schema failed: %v", resp.Diagnostics.Errors())
 	}

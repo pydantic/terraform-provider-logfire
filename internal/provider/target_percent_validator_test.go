@@ -34,7 +34,7 @@ func TestTargetPercentValidator(t *testing.T) {
 		{name: "empty rejected", input: types.StringValue(""), wantErr: true},
 	}
 
-	v := newTargetPercentValidator()
+	v := targetPercentValidator{}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

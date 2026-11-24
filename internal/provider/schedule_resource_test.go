@@ -97,7 +97,7 @@ func TestScheduleCreateSendsAndReadsWindows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := &ScheduleResource{client: c}
+	r := &ScheduleResource{configured{c}}
 	schemaResponse, raw := scheduleSchemaState(t)
 
 	plan := tfsdk.Plan{Schema: schemaResponse.Schema, Raw: raw}
@@ -155,7 +155,7 @@ func TestScheduleUpdateSendsEveryField(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := &ScheduleResource{client: c}
+	r := &ScheduleResource{configured{c}}
 	schemaResponse, raw := scheduleSchemaState(t)
 
 	prior := officeHoursModel(t, "08:00", "18:00")
@@ -210,7 +210,7 @@ func TestScheduleImport(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			r := &ScheduleResource{client: c}
+			r := &ScheduleResource{configured{c}}
 			schemaResponse, raw := scheduleSchemaState(t)
 			resp := resource.ImportStateResponse{State: tfsdk.State{Schema: schemaResponse.Schema, Raw: raw}}
 			r.ImportState(t.Context(), resource.ImportStateRequest{ID: tt.id}, &resp)

@@ -14,22 +14,12 @@ import (
 	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
 )
 
-var (
-	_ resource.Resource                   = &GatewayEndpointResource{}
-	_ resource.ResourceWithConfigure      = &GatewayEndpointResource{}
-	_ resource.ResourceWithImportState    = &GatewayEndpointResource{}
-	_ resource.ResourceWithValidateConfig = &GatewayEndpointResource{}
-)
+const defaultGatewayEndpointWeight = 1.0
 
-// NewGatewayEndpointResource returns the organization-owned Gateway endpoint resource.
-func NewGatewayEndpointResource() resource.Resource { return &GatewayEndpointResource{} }
+type GatewayEndpointResource struct{ configured }
 
-// GatewayEndpointResource manages a Gateway endpoint and its provider routing through the public API.
-type GatewayEndpointResource struct {
-	client *logclient.APIClient
-}
-
-// GatewayEndpointModel stores the endpoint and its complete provider configuration.
+// GatewayEndpointModel stores the endpoint and its complete provider
+// configuration.
 type GatewayEndpointModel struct {
 	ID          types.String                   `tfsdk:"id"`
 	Slug        types.String                   `tfsdk:"slug"`
@@ -46,32 +36,12 @@ type GatewayEndpointProviderModel struct {
 	Active     types.Bool    `tfsdk:"active"`
 }
 
-// Metadata returns the Terraform resource type.
-func (r *GatewayEndpointResource) Metadata(
-	ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse,
-) {
+func (r *GatewayEndpointResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_gateway_endpoint"
 }
 
-// Configure receives the authenticated organization client.
-func (r *GatewayEndpointResource) Configure(
-	ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse,
-) {
-	if req.ProviderData == nil {
-		return
-	}
-	client, ok := req.ProviderData.(*logclient.APIClient)
-	if !ok {
-		resp.Diagnostics.AddError("Unexpected provider data", "Expected *APIClient.")
-		return
-	}
-	r.client = client
-}
-
 // Create stores the endpoint and its providers in one request.
-func (r *GatewayEndpointResource) Create(
-	ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse,
-) {
+func (r *GatewayEndpointResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan GatewayEndpointModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
@@ -85,14 +55,14 @@ func (r *GatewayEndpointResource) Create(
 	if err != nil {
 		resp.Diagnostics.AddError("Create Gateway endpoint failed", err.Error()+
 			". A failed request may have stored the endpoint. "+
-			"Check the endpoint list and import it by slug before retrying if the slug already exists.")
+			"Check the endpoint list and import it by slug before retrying "+
+			"if the slug already exists.")
 		return
 	}
 	plan.refresh(out)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-// Read refreshes the endpoint and its providers.
 func (r *GatewayEndpointResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var state GatewayEndpointModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
@@ -112,13 +82,18 @@ func (r *GatewayEndpointResource) Read(ctx context.Context, req resource.ReadReq
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-// Update patches the description and replaces the providers, each only when it changed.
-func (r *GatewayEndpointResource) Update(
-	ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse,
-) {
+// Update patches the description and replaces the providers, each only when it
+// changed.
+func (r *GatewayEndpointResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var plan, state GatewayEndpointModel
+	var planProviders, stateProviders types.Set
+	providersPath := path.Root("providers")
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	resp.Diagnostics.Append(
+		req.Plan.GetAttribute(ctx, providersPath, &planProviders)...)
+	resp.Diagnostics.Append(
+		req.State.GetAttribute(ctx, providersPath, &stateProviders)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -126,23 +101,28 @@ func (r *GatewayEndpointResource) Update(
 	var out *logclient.GatewayEndpointRead
 	var err error
 	if !plan.Description.Equal(state.Description) {
-		out, err = r.client.UpdateGatewayEndpoint(ctx, id, logclient.GatewayEndpointUpdate{
-			Description: plan.Description.ValueStringPointer(),
-		})
+		out, err = r.client.UpdateGatewayEndpoint(ctx, id,
+			logclient.GatewayEndpointUpdate{
+				Description: plan.Description.ValueStringPointer(),
+			})
 		if err != nil {
-			resp.Diagnostics.AddError("Update Gateway endpoint failed", err.Error())
+			resp.Diagnostics.AddError("Update Gateway endpoint failed",
+				err.Error())
 			return
 		}
 	}
-	if !sameGatewayEndpointProviders(plan.Providers, state.Providers) {
-		out, err = r.client.ReplaceGatewayEndpointProviders(ctx, id, plan.apiProviders())
+	if !planProviders.Equal(stateProviders) {
+		out, err = r.client.ReplaceGatewayEndpointProviders(ctx, id,
+			plan.apiProviders())
 		if err != nil {
-			resp.Diagnostics.AddError("Replace Gateway endpoint providers failed", err.Error())
+			resp.Diagnostics.AddError("Replace Gateway endpoint providers failed",
+				err.Error())
 			return
 		}
 	}
 	if out == nil {
-		if out, err = r.client.GetGatewayEndpoint(ctx, id); err != nil {
+		out, err = r.client.GetGatewayEndpoint(ctx, id)
+		if err != nil {
 			resp.Diagnostics.AddError("Read Gateway endpoint failed", err.Error())
 			return
 		}
@@ -151,46 +131,38 @@ func (r *GatewayEndpointResource) Update(
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-// Delete removes the endpoint.
-func (r *GatewayEndpointResource) Delete(
-	ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse,
-) {
+func (r *GatewayEndpointResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var state GatewayEndpointModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if err := r.client.DeleteGatewayEndpoint(ctx, state.ID.ValueString()); err != nil {
+	err := r.client.DeleteGatewayEndpoint(ctx, state.ID.ValueString())
+	if err != nil {
 		resp.Diagnostics.AddError("Delete Gateway endpoint failed", err.Error())
 	}
 }
 
 // ImportState imports an endpoint by its UUID or its organization-unique slug.
-func (r *GatewayEndpointResource) ImportState(
-	ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse,
-) {
-	rawID := strings.TrimSpace(req.ID)
-	if rawID == "" {
-		resp.Diagnostics.AddError(
-			"Missing import ID",
-			`Expected the endpoint UUID or the endpoint slug. Example: terraform import logfire_gateway_endpoint.default "default"`,
-		)
+func (r *GatewayEndpointResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	id := strings.TrimSpace(req.ID)
+	if id == "" {
+		resp.Diagnostics.AddError("Missing import ID",
+			"Expected the endpoint UUID or the endpoint slug. "+
+				"Example: terraform import logfire_gateway_endpoint.default "+
+				`"default"`)
 		return
 	}
-	if uuidPattern.MatchString(rawID) {
-		resource.ImportStatePassthroughID(ctx, path.Root("id"), resource.ImportStateRequest{ID: rawID}, resp)
-		return
+	if !uuidPattern.MatchString(id) {
+		found, err := r.client.FindGatewayEndpointBySlug(ctx, id)
+		if err != nil {
+			resp.Diagnostics.AddError("Import Gateway endpoint failed",
+				err.Error())
+			return
+		}
+		id = found.ID
 	}
-	if r.client == nil {
-		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
-		return
-	}
-	found, err := r.client.FindGatewayEndpointBySlug(ctx, rawID)
-	if err != nil {
-		resp.Diagnostics.AddError("Import Gateway endpoint failed", err.Error())
-		return
-	}
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), found.ID)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), id)...)
 }
 
 func (m *GatewayEndpointModel) apiProviders() []logclient.GatewayEndpointProvider {
@@ -213,10 +185,9 @@ func (m *GatewayEndpointModel) apiProviders() []logclient.GatewayEndpointProvide
 	return providers
 }
 
-const defaultGatewayEndpointWeight = 1.0
-
-// refresh keeps an omitted field null while the API reports its default. Set-nested
-// attributes cannot use schema defaults because Terraform matches set elements by value.
+// refresh keeps an omitted field null while the API reports its default.
+// Set-nested attributes cannot use schema defaults because Terraform matches
+// set elements by value.
 func (m *GatewayEndpointModel) refresh(out *logclient.GatewayEndpointRead) {
 	prior := map[string]GatewayEndpointProviderModel{}
 	for _, p := range m.Providers {
@@ -228,43 +199,33 @@ func (m *GatewayEndpointModel) refresh(out *logclient.GatewayEndpointRead) {
 	m.CreatedAt = types.StringValue(out.CreatedAt)
 	m.Providers = make([]GatewayEndpointProviderModel, 0, len(out.Providers))
 	for _, p := range out.Providers {
-		configured, known := prior[p.ProviderID]
-		// Postgres stores weights as float32, so 0.1 reads back as 0.10000000149011612.
-		weight, _ := strconv.ParseFloat(strconv.FormatFloat(p.Weight, 'g', -1, 32), 64)
+		// A provider that the prior model lacks gets the zero model, whose
+		// fields are all null.
+		configured := prior[p.ProviderID]
+		// Postgres stores weights as float32, so 0.1 reads back as
+		// 0.10000000149011612.
+		weight, _ := strconv.ParseFloat(
+			strconv.FormatFloat(p.Weight, 'g', -1, 32), 64)
 		provider := GatewayEndpointProviderModel{
 			ProviderID: types.StringValue(p.ProviderID),
 			Priority:   types.Int64Value(p.Priority),
 			Weight:     types.Float64Value(weight),
 			Active:     types.BoolValue(p.Active),
 		}
-		if (!known || configured.Priority.IsNull()) && p.Priority == 0 {
+		if configured.Priority.IsNull() && p.Priority == 0 {
 			provider.Priority = types.Int64Null()
 		}
-		if (!known || configured.Weight.IsNull()) && float32(p.Weight) == defaultGatewayEndpointWeight {
-			provider.Weight = types.Float64Null()
-		} else if known && !configured.Weight.IsNull() && float32(configured.Weight.ValueFloat64()) == float32(p.Weight) {
+		apiWeight := float32(p.Weight)
+		if configured.Weight.IsNull() {
+			if apiWeight == defaultGatewayEndpointWeight {
+				provider.Weight = types.Float64Null()
+			}
+		} else if float32(configured.Weight.ValueFloat64()) == apiWeight {
 			provider.Weight = configured.Weight
 		}
-		if (!known || configured.Active.IsNull()) && p.Active {
+		if configured.Active.IsNull() && p.Active {
 			provider.Active = types.BoolNull()
 		}
 		m.Providers = append(m.Providers, provider)
 	}
-}
-
-func sameGatewayEndpointProviders(a, b []GatewayEndpointProviderModel) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	byID := map[string]GatewayEndpointProviderModel{}
-	for _, p := range b {
-		byID[p.ProviderID.ValueString()] = p
-	}
-	for _, p := range a {
-		other, ok := byID[p.ProviderID.ValueString()]
-		if !ok || !p.Priority.Equal(other.Priority) || !p.Weight.Equal(other.Weight) || !p.Active.Equal(other.Active) {
-			return false
-		}
-	}
-	return true
 }

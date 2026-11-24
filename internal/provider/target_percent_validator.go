@@ -7,12 +7,13 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"regexp"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 )
 
-var _ validator.String = targetPercentValidator{}
+var decimalRe = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?$`)
 
 var oneHundred = big.NewRat(100, 1)
 
@@ -43,16 +44,12 @@ func (v targetPercentValidator) ValidateString(_ context.Context, req validator.
 		return
 	}
 
-	val, ok := new(big.Rat).SetString(raw)
-	if !ok || val.Sign() <= 0 || val.Cmp(oneHundred) >= 0 {
+	val, _ := new(big.Rat).SetString(raw)
+	if val.Sign() <= 0 || val.Cmp(oneHundred) >= 0 {
 		resp.Diagnostics.AddAttributeError(
 			req.Path,
 			"Invalid target_percent value",
 			fmt.Sprintf("target_percent must be exclusively between 0 and 100, got %q", raw),
 		)
 	}
-}
-
-func newTargetPercentValidator() validator.String {
-	return targetPercentValidator{}
 }

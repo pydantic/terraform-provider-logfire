@@ -4,6 +4,7 @@
 package provider
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -23,15 +24,7 @@ import (
 	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
 )
 
-var _ resource.Resource = &DashboardResource{}
-var _ resource.ResourceWithConfigure = &DashboardResource{}
-var _ resource.ResourceWithImportState = &DashboardResource{}
-
-func NewDashboardResource() resource.Resource { return &DashboardResource{} }
-
-type DashboardResource struct {
-	client *logclient.APIClient
-}
+type DashboardResource struct{ configured }
 
 type DashboardModel struct {
 	ID         types.String `tfsdk:"id"`
@@ -42,12 +35,12 @@ type DashboardModel struct {
 	AllowEdits types.Bool   `tfsdk:"managed_allow_edits"`
 }
 
-// dashboardAllowEdits reads managed_allow_edits. Null marks a dashboard from before the
-// attribute, which stays editable.
+// dashboardAllowEdits reads managed_allow_edits. Null marks a dashboard from
+// before the attribute, which stays editable.
 func dashboardAllowEdits(v types.Bool) bool { return v.IsNull() || v.ValueBool() }
 
-// dashboardAllowEditsDefault leaves a new dashboard's value to the create response and keeps the
-// stored value of an existing one.
+// dashboardAllowEditsDefault leaves a new dashboard's value to the create
+// response and keeps the stored value of an existing one.
 type dashboardAllowEditsDefault struct{}
 
 func (dashboardAllowEditsDefault) Description(context.Context) string {
@@ -58,9 +51,7 @@ func (m dashboardAllowEditsDefault) MarkdownDescription(ctx context.Context) str
 	return m.Description(ctx)
 }
 
-func (dashboardAllowEditsDefault) PlanModifyBool(
-	_ context.Context, req planmodifier.BoolRequest, resp *planmodifier.BoolResponse,
-) {
+func (dashboardAllowEditsDefault) PlanModifyBool(_ context.Context, req planmodifier.BoolRequest, resp *planmodifier.BoolResponse) {
 	if !req.ConfigValue.IsNull() {
 		return
 	}
@@ -70,8 +61,8 @@ func (dashboardAllowEditsDefault) PlanModifyBool(
 	}
 }
 
-// dashboardLock reads managed_allow_edits from a write response. It is null when the Logfire
-// version has no managed dashboards or has them turned off.
+// dashboardLock reads managed_allow_edits from a write response. It is null
+// when the Logfire version has no managed dashboards or has them turned off.
 func dashboardLock(out *logclient.Dashboard) types.Bool {
 	if out.ManagedBy == nil || *out.ManagedBy == "" || out.ManagedAllowEdits == nil {
 		return types.BoolNull()
@@ -79,27 +70,29 @@ func dashboardLock(out *logclient.Dashboard) types.Bool {
 	return types.BoolValue(*out.ManagedAllowEdits)
 }
 
-// warnIgnoredLock warns when Logfire did not apply a configured managed_allow_edits. With managed
-// dashboards turned off, Logfire leaves the lock unset, or returns the setting a dashboard that
-// already had a manager kept.
+// warnIgnoredLock warns when Logfire did not apply a configured
+// managed_allow_edits. With managed dashboards turned off, Logfire leaves the
+// lock unset, or returns the setting a dashboard that already had a manager
+// kept.
 func warnIgnoredLock(diags *diag.Diagnostics, planned types.Bool, out *logclient.Dashboard) {
 	if !planned.IsNull() && !planned.IsUnknown() && !dashboardLock(out).Equal(planned) {
-		diags.AddAttributeWarning(path.Root("managed_allow_edits"), "Logfire ignored managed_allow_edits",
-			"This Logfire version has no managed dashboards, or has them turned off, so the dashboard keeps its current edit setting. Terraform plans the value again on the next run.")
+		diags.AddAttributeWarning(
+			path.Root("managed_allow_edits"),
+			"Logfire ignored managed_allow_edits",
+			"This Logfire version has no managed dashboards, or has them turned off, "+
+				"so the dashboard keeps its current edit setting. Terraform plans the "+
+				"value again on the next run.",
+		)
 	}
 }
 
-func (r *DashboardResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
+func (r *DashboardResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_dashboard"
 }
 
-func (r *DashboardResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
+func (r *DashboardResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = rschema.Schema{
-		MarkdownDescription: "Manages a Logfire dashboard.\n\n" +
-			"The provider marks the dashboard as managed by the tool that applies it, and Logfire shows a Managed badge on it. " +
-			"A new dashboard is also locked against edits in the Logfire UI and through the Logfire MCP server unless `managed_allow_edits` is `true`. " +
-			"The lock does not cover the dashboards API, which the provider uses. " +
-			"A Logfire instance without managed dashboards ignores the marker. An existing dashboard gets the marker on its next update.",
+		MarkdownDescription: "Manages a Logfire dashboard.\n\nThe provider marks the dashboard as managed by the tool that applies it, and Logfire shows a Managed badge on it. A new dashboard is also locked against edits in the Logfire UI and through the Logfire MCP server unless `managed_allow_edits` is `true`. The lock does not cover the dashboards API, which the provider uses. A Logfire instance without managed dashboards ignores the marker. An existing dashboard gets the marker on its next update.",
 		Attributes: map[string]rschema.Attribute{
 			"id": rschema.StringAttribute{
 				Computed:            true,
@@ -151,32 +144,10 @@ func (r *DashboardResource) Schema(ctx context.Context, req resource.SchemaReque
 	}
 }
 
-func (r *DashboardResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		return
-	}
-	c, ok := req.ProviderData.(*logclient.APIClient)
-	if !ok {
-		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *APIClient, got %T", req.ProviderData))
-		return
-	}
-	r.client = c
-}
-
 func (r *DashboardResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	if r.client == nil {
-		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
-		return
-	}
-
 	var plan DashboardModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	if plan.ProjectID.IsNull() || plan.ProjectID.IsUnknown() || plan.ProjectID.ValueString() == "" {
-		resp.Diagnostics.AddError("Missing project_id", "The dashboard requires a project_id to construct API paths.")
 		return
 	}
 
@@ -187,28 +158,26 @@ func (r *DashboardResource) Create(ctx context.Context, req resource.CreateReque
 		return
 	}
 
-	defRaw, err := dashboardDefinitionForWrite(plan.Definition.ValueString(), plan.Name.ValueString(), projectName)
+	defRaw, err := dashboardDefinitionForWrite(
+		plan.Definition.ValueString(), plan.Name.ValueString(), projectName)
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid dashboard definition", err.Error())
 		return
 	}
 
-	payload := logclient.DashboardCreateRequest{
-		Name:       plan.Name.ValueString(),
-		Slug:       plan.Slug.ValueString(),
-		Definition: defRaw,
-
+	out, err := r.client.CreateDashboard(ctx, projectID, logclient.DashboardCreateRequest{
+		Name:             plan.Name.ValueString(),
+		Slug:             plan.Slug.ValueString(),
+		Definition:       defRaw,
 		DashboardManager: r.client.DashboardManager(dashboardAllowEdits(plan.AllowEdits)),
-	}
-
-	out, err := r.client.CreateDashboard(ctx, projectID, payload)
+	})
 	if err != nil {
 		resp.Diagnostics.AddError("Create dashboard failed", err.Error())
 		return
 	}
 
 	var state DashboardModel
-	if err := dashboardReadToModel(out, &state); err != nil {
+	if err := dashboardReadToModel(out, projectID, &state); err != nil {
 		resp.Diagnostics.AddError("Decode dashboard response", err.Error())
 		return
 	}
@@ -218,9 +187,6 @@ func (r *DashboardResource) Create(ctx context.Context, req resource.CreateReque
 		state.AllowEdits = dashboardLock(out)
 	}
 	warnIgnoredLock(&resp.Diagnostics, plan.AllowEdits, out)
-	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
-		state.ProjectID = types.StringValue(projectID)
-	}
 
 	tflog.Trace(ctx, "created dashboard", map[string]any{
 		"dashboard_id": state.ID.ValueString(),
@@ -231,36 +197,21 @@ func (r *DashboardResource) Create(ctx context.Context, req resource.CreateReque
 }
 
 func (r *DashboardResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	if r.client == nil {
-		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
-		return
-	}
-
 	var state DashboardModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	if state.ID.IsNull() || state.ID.IsUnknown() || state.ID.ValueString() == "" {
+	if state.ID.ValueString() == "" {
 		resp.State.RemoveResource(ctx)
 		return
 	}
 
-	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
-		resp.Diagnostics.AddError("Missing project_id", "Cannot read dashboard because the state is missing a project_id.")
-		return
-	}
-
 	projectID := state.ProjectID.ValueString()
-
 	detail, status, err := r.client.GetDashboard(ctx, projectID, state.ID.ValueString())
 	if err != nil {
-		if status == 404 {
-			resp.State.RemoveResource(ctx)
-			return
-		}
-		if projectMissing(ctx, r.client, projectID) {
+		if status == 404 || projectMissing(ctx, r.client, projectID) {
 			resp.State.RemoveResource(ctx)
 			return
 		}
@@ -273,61 +224,48 @@ func (r *DashboardResource) Read(ctx context.Context, req resource.ReadRequest, 
 		resp.Diagnostics.AddError("Decode dashboard definition", err.Error())
 		return
 	}
-	state.Definition = preserveDashboardDefinition(state.Definition, types.StringValue(string(detail.Dashboard)))
-	if metadata, ok := definition["metadata"].(map[string]any); ok {
-		if name, ok := metadata["name"].(string); ok && name != "" {
-			state.Name = types.StringValue(name)
-		}
+	state.Definition = preserveDashboardDefinition(
+		state.Definition, types.StringValue(string(detail.Dashboard)))
+	metadata, _ := definition["metadata"].(map[string]any)
+	if name, _ := metadata["name"].(string); name != "" {
+		state.Name = types.StringValue(name)
 	}
-	// Only a dashboard with a manager has the lock. Older backends report neither field. Without
-	// a manager nothing locks the dashboard, so a configured value shows as a change and the
-	// next apply tries to set it again.
+	// Only a dashboard with a manager has the lock. Older backends report
+	// neither field. Without a manager nothing locks the dashboard, so a
+	// configured value shows as a change and the next apply tries to set it
+	// again.
 	state.AllowEdits = types.BoolNull()
-	if metadata, ok := definition["metadata"].(map[string]any); ok {
-		allowEdits, ok := metadata["managedAllowEdits"].(bool)
-		if manager, _ := metadata["managedBy"].(string); ok && manager != "" {
-			state.AllowEdits = types.BoolValue(allowEdits)
-		}
+	allowEdits, ok := metadata["managedAllowEdits"].(bool)
+	if manager, _ := metadata["managedBy"].(string); ok && manager != "" {
+		state.AllowEdits = types.BoolValue(allowEdits)
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
 func (r *DashboardResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	if r.client == nil {
-		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
-		return
-	}
-
-	var plan DashboardModel
+	var plan, state DashboardModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	var state DashboardModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	if state.ID.IsNull() || state.ID.IsUnknown() || state.ID.ValueString() == "" {
-		resp.Diagnostics.AddError("Missing dashboard ID", "The dashboard state has no ID. Import the intended dashboard to restore its identity before updating or deleting it.")
-		return
-	}
-
-	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
-		resp.Diagnostics.AddError("Missing project_id", "Cannot update dashboard because the current state has no project_id.")
+	if state.ID.ValueString() == "" {
+		resp.Diagnostics.AddError(
+			"Missing dashboard ID",
+			"The dashboard state has no ID. Import the intended dashboard to restore "+
+				"its identity before updating or deleting it.",
+		)
 		return
 	}
 
 	projectID := state.ProjectID.ValueString()
-	dashboardID := state.ID.ValueString()
-
-	payload := logclient.DashboardUpdateRequest{DashboardManager: r.client.DashboardManager(dashboardAllowEdits(plan.AllowEdits))}
+	payload := logclient.DashboardUpdateRequest{
+		DashboardManager: r.client.DashboardManager(dashboardAllowEdits(plan.AllowEdits)),
+	}
 	if !plan.Name.Equal(state.Name) {
-		name := plan.Name.ValueString()
-		payload.Name = &name
+		payload.Name = plan.Name.ValueStringPointer()
 	}
 	if !dashboardDefinitionsEqual(plan.Definition, state.Definition) {
 		projectName, err := r.projectNameForID(ctx, projectID)
@@ -335,7 +273,8 @@ func (r *DashboardResource) Update(ctx context.Context, req resource.UpdateReque
 			resp.Diagnostics.AddError("Resolve project name", err.Error())
 			return
 		}
-		definition, err := dashboardDefinitionForWrite(plan.Definition.ValueString(), plan.Name.ValueString(), projectName)
+		definition, err := dashboardDefinitionForWrite(
+			plan.Definition.ValueString(), plan.Name.ValueString(), projectName)
 		if err != nil {
 			resp.Diagnostics.AddError("Invalid dashboard definition", err.Error())
 			return
@@ -344,8 +283,10 @@ func (r *DashboardResource) Update(ctx context.Context, req resource.UpdateReque
 		payload.ReplaceLayout = true
 	}
 
-	// Null and true send the same marker, but a dashboard without the marker still needs the write.
-	if payload.Name == nil && payload.Definition == nil && plan.AllowEdits.Equal(state.AllowEdits) {
+	// Null and true send the same marker, but a dashboard without the marker
+	// still needs the write.
+	if payload.Name == nil && payload.Definition == nil &&
+		plan.AllowEdits.Equal(state.AllowEdits) {
 		state.Definition = plan.Definition
 		state.Name = plan.Name
 		state.AllowEdits = plan.AllowEdits
@@ -353,76 +294,55 @@ func (r *DashboardResource) Update(ctx context.Context, req resource.UpdateReque
 		return
 	}
 
-	out, err := r.client.UpdateDashboard(ctx, projectID, dashboardID, payload)
+	out, err := r.client.UpdateDashboard(ctx, projectID, state.ID.ValueString(), payload)
 	if err != nil {
 		resp.Diagnostics.AddError("Update dashboard failed", err.Error())
 		return
 	}
 
 	var newState DashboardModel
-	newState.ProjectID = types.StringValue(projectID)
-	if err := dashboardReadToModel(out, &newState); err != nil {
+	if err := dashboardReadToModel(out, projectID, &newState); err != nil {
 		resp.Diagnostics.AddError("Decode dashboard response", err.Error())
 		return
 	}
 	newState.Definition = preserveDashboardDefinition(plan.Definition, newState.Definition)
 	newState.AllowEdits = plan.AllowEdits
 	warnIgnoredLock(&resp.Diagnostics, plan.AllowEdits, out)
-	if newState.ProjectID.IsNull() || newState.ProjectID.IsUnknown() || newState.ProjectID.ValueString() == "" {
-		newState.ProjectID = types.StringValue(projectID)
-	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &newState)...)
 }
 
 func (r *DashboardResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	if r.client == nil {
-		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
-		return
-	}
-
 	var state DashboardModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	if state.ID.IsNull() || state.ID.IsUnknown() || state.ID.ValueString() == "" {
-		resp.Diagnostics.AddError("Missing dashboard ID", "The dashboard state has no ID. Import the intended dashboard to restore its identity before updating or deleting it.")
-		return
-	}
-
-	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
-		resp.Diagnostics.AddError("Missing project_id", "Cannot delete dashboard because the current state has no project_id.")
+	if state.ID.ValueString() == "" {
+		resp.Diagnostics.AddError(
+			"Missing dashboard ID",
+			"The dashboard state has no ID. Import the intended dashboard to restore "+
+				"its identity before updating or deleting it.",
+		)
 		return
 	}
 
 	projectID := state.ProjectID.ValueString()
-	dashboardID := state.ID.ValueString()
-
-	if err := r.client.DeleteDashboard(ctx, projectID, dashboardID); err != nil {
-		if logclient.IsNotFoundError(err) {
-			// Already gone, treat as successful delete
-			return
-		}
-		if projectMissing(ctx, r.client, projectID) {
-			return
-		}
+	err := r.client.DeleteDashboard(ctx, projectID, state.ID.ValueString())
+	if err != nil && !logclient.IsNotFoundError(err) &&
+		!projectMissing(ctx, r.client, projectID) {
 		resp.Diagnostics.AddError("Delete dashboard failed", err.Error())
 	}
 }
 
 func (r *DashboardResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	if r.client == nil {
-		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
-		return
-	}
-
 	rawID := strings.TrimSpace(req.ID)
 	if rawID == "" {
 		resp.Diagnostics.AddError(
 			"Missing import ID",
-			`Expected a non-empty ID. Use either "project_id/dashboard_id/slug" or "project_name/dashboard_slug" (also accepts "," or "|").`,
+			`Expected a non-empty ID. Use either "project_id/dashboard_id/slug" or `+
+				`"project_name/dashboard_slug" (also accepts "," or "|").`,
 		)
 		return
 	}
@@ -431,13 +351,12 @@ func (r *DashboardResource) ImportState(ctx context.Context, req resource.Import
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Invalid import ID",
-			`Expected "project_id/dashboard_id/slug" or "project_name/dashboard_slug" (also accepts comma or pipe separators).`,
+			`Expected "project_id/dashboard_id/slug" or "project_name/dashboard_slug" `+
+				`(also accepts comma or pipe separators).`,
 		)
 		return
 	}
-
-	projectKey := parts[0]
-	dashboardKey := parts[1]
+	projectKey, dashboardKey := parts[0], parts[1]
 
 	var providedSlug string
 	if len(parts) == 3 {
@@ -452,10 +371,16 @@ func (r *DashboardResource) ImportState(ctx context.Context, req resource.Import
 
 	dashboards, err := r.client.ListDashboards(ctx, projectID)
 	if err != nil {
-		resp.Diagnostics.AddError("Import dashboard failed", fmt.Sprintf("listing dashboards for project %q: %v", projectID, err))
+		resp.Diagnostics.AddError(
+			"Import dashboard failed",
+			fmt.Sprintf("listing dashboards for project %q: %v", projectID, err),
+		)
 		return
 	}
 
+	// If a slug was provided, prefer it; otherwise fall back to matching the
+	// key as slug.
+	slugCandidate := cmp.Or(providedSlug, dashboardKey)
 	var (
 		summary     *logclient.DashboardSummary
 		slugMatches []*logclient.DashboardSummary
@@ -466,11 +391,6 @@ func (r *DashboardResource) ImportState(ctx context.Context, req resource.Import
 			summary = d
 			break
 		}
-		// If a slug was provided, prefer it; otherwise fall back to matching the key as slug.
-		slugCandidate := dashboardKey
-		if providedSlug != "" {
-			slugCandidate = providedSlug
-		}
 		if d.DashboardSlug == slugCandidate {
 			slugMatches = append(slugMatches, d)
 		}
@@ -478,54 +398,56 @@ func (r *DashboardResource) ImportState(ctx context.Context, req resource.Import
 
 	if summary == nil {
 		if len(slugMatches) == 0 {
-			resp.Diagnostics.AddError("Import dashboard failed", fmt.Sprintf("dashboard %q not found in project %q", dashboardKey, projectName))
+			resp.Diagnostics.AddError(
+				"Import dashboard failed",
+				fmt.Sprintf("dashboard %q not found in project %q", dashboardKey, projectName),
+			)
 			return
 		}
 		summary = slugMatches[0]
 		if len(slugMatches) > 1 {
-			resp.Diagnostics.AddWarning("Import dashboard", fmt.Sprintf("multiple dashboards with slug %q in project %q; imported the first match", slugMatches[0].DashboardSlug, projectName))
+			resp.Diagnostics.AddWarning(
+				"Import dashboard",
+				fmt.Sprintf(
+					"multiple dashboards with slug %q in project %q; imported the first match",
+					summary.DashboardSlug, projectName),
+			)
 		}
 	}
 
 	if providedSlug != "" && providedSlug != summary.DashboardSlug {
-		resp.Diagnostics.AddWarning("Import dashboard", fmt.Sprintf("provided slug %q does not match dashboard slug %q; using the dashboard found in the API", providedSlug, summary.DashboardSlug))
+		resp.Diagnostics.AddWarning(
+			"Import dashboard",
+			fmt.Sprintf("provided slug %q does not match dashboard slug %q; "+
+				"using the dashboard found in the API", providedSlug, summary.DashboardSlug),
+		)
 	}
 
 	detail, _, err := r.client.GetDashboard(ctx, projectID, summary.ID)
 	if err != nil {
-		resp.Diagnostics.AddError("Import dashboard failed", fmt.Sprintf("fetching dashboard %q: %v", summary.ID, err))
+		resp.Diagnostics.AddError(
+			"Import dashboard failed",
+			fmt.Sprintf("fetching dashboard %q: %v", summary.ID, err),
+		)
 		return
 	}
 
-	dashboard := &logclient.Dashboard{
+	var state DashboardModel
+	err = dashboardReadToModel(&logclient.Dashboard{
 		ID:            summary.ID,
 		ProjectID:     projectID,
 		DashboardName: summary.DashboardName,
 		DashboardSlug: summary.DashboardSlug,
 		Definition:    detail.Dashboard,
-	}
-
-	var state DashboardModel
-	if err := dashboardReadToModel(dashboard, &state); err != nil {
+	}, projectID, &state)
+	if err != nil {
 		resp.Diagnostics.AddError("Decode dashboard response", err.Error())
 		return
-	}
-	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
-		state.ProjectID = types.StringValue(projectID)
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-// --- Helpers ---
-
 func (r *DashboardResource) projectNameForID(ctx context.Context, projectID string) (string, error) {
-	if r.client == nil {
-		return "", fmt.Errorf("provider is not configured")
-	}
-	if projectID == "" {
-		return "", fmt.Errorf("project_id is empty")
-	}
-
 	project, status, err := r.client.GetProject(ctx, projectID)
 	if err != nil {
 		if status == http.StatusNotFound {
@@ -544,8 +466,8 @@ func dashboardDefinitionForWrite(raw, name, projectName string) (json.RawMessage
 	if err != nil {
 		return nil, err
 	}
-	metadata, ok := payload["metadata"].(map[string]any)
-	if !ok || metadata == nil {
+	metadata, _ := payload["metadata"].(map[string]any)
+	if metadata == nil {
 		metadata = map[string]any{}
 	}
 	metadata["name"] = name
@@ -554,16 +476,14 @@ func dashboardDefinitionForWrite(raw, name, projectName string) (json.RawMessage
 	return json.Marshal(payload)
 }
 
-func dashboardReadToModel(d *logclient.Dashboard, m *DashboardModel) error {
+// dashboardReadToModel maps an API dashboard onto m. projectID is the project
+// the request targeted, for a response that leaves out its own.
+func dashboardReadToModel(d *logclient.Dashboard, projectID string, m *DashboardModel) error {
 	if _, err := decodeDefinitionObject(d.Definition); err != nil {
 		return err
 	}
 	m.ID = types.StringValue(d.ID)
-	if d.ProjectID == "" {
-		m.ProjectID = types.StringNull()
-	} else {
-		m.ProjectID = types.StringValue(d.ProjectID)
-	}
+	m.ProjectID = types.StringValue(cmp.Or(d.ProjectID, projectID))
 	m.Name = types.StringValue(d.DashboardName)
 	m.Slug = types.StringValue(d.DashboardSlug)
 	m.Definition = types.StringValue(string(d.Definition))

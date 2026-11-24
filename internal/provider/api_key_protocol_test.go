@@ -19,9 +19,9 @@ func apiKeySchema(t *testing.T, typeName string) schema.Schema {
 	var r resource.Resource
 	switch typeName {
 	case "logfire_api_key":
-		r = provider.NewAPIKeyResource()
+		r = &provider.APIKeyResource{}
 	case "logfire_gateway_api_key":
-		r = provider.NewGatewayAPIKeyResource()
+		r = &provider.GatewayAPIKeyResource{}
 	default:
 		t.Fatalf("unknown resource %q", typeName)
 	}

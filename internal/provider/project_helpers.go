@@ -14,14 +14,9 @@ import (
 // controller-driven flows such as Upjet/Crossplane, without masking ordinary
 // permission errors when the project still exists.
 func projectMissing(ctx context.Context, c *logclient.APIClient, projectID string) bool {
-	if c == nil || projectID == "" {
+	if projectID == "" {
 		return false
 	}
-
 	_, status, err := c.GetProject(ctx, projectID)
-	if err == nil {
-		return false
-	}
-
-	return status == 404 || logclient.IsNotFoundError(err)
+	return err != nil && (status == 404 || logclient.IsNotFoundError(err))
 }

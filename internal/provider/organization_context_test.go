@@ -113,7 +113,7 @@ func TestOrganizationReadRemovesStateWhenOrgGone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := &OrganizationResource{client: c}
+	r := &OrganizationResource{configured{c}}
 	state := organizationTestState(t)
 	response := resource.ReadResponse{State: state}
 	r.Read(t.Context(), resource.ReadRequest{State: state}, &response)
@@ -141,7 +141,7 @@ func TestOrganizationReadKeepsStateOnAudienceMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := &OrganizationResource{client: c}
+	r := &OrganizationResource{configured{c}}
 	state := organizationTestState(t)
 	response := resource.ReadResponse{State: state}
 	r.Read(t.Context(), resource.ReadRequest{State: state}, &response)
@@ -167,7 +167,7 @@ func TestOrganizationDeleteToleratesGoneOrg(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := &OrganizationResource{client: c}
+	r := &OrganizationResource{configured{c}}
 	state := organizationTestState(t)
 	response := resource.DeleteResponse{State: state}
 	r.Delete(t.Context(), resource.DeleteRequest{State: state}, &response)
@@ -189,7 +189,7 @@ func TestOrganizationDeleteFailsOnAudienceMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := &OrganizationResource{client: c}
+	r := &OrganizationResource{configured{c}}
 	state := organizationTestState(t)
 	response := resource.DeleteResponse{State: state}
 	r.Delete(t.Context(), resource.DeleteRequest{State: state}, &response)
@@ -218,7 +218,7 @@ func TestOrganizationReadFailsOnExternalRename(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := &OrganizationResource{client: c}
+	r := &OrganizationResource{configured{c}}
 	state := organizationTestState(t)
 	response := resource.ReadResponse{State: state}
 	r.Read(t.Context(), resource.ReadRequest{State: state}, &response)
@@ -264,7 +264,7 @@ func TestOrganizationImportPrefersIDMatchOverUUIDShapedName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := &OrganizationResource{client: c}
+	r := &OrganizationResource{configured{c}}
 	var schemaResponse resource.SchemaResponse
 	r.Schema(t.Context(), resource.SchemaRequest{}, &schemaResponse)
 	response := resource.ImportStateResponse{State: tfsdk.State{
@@ -294,7 +294,7 @@ func TestOrganizationReadRefusesNameReuse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := &OrganizationResource{client: c}
+	r := &OrganizationResource{configured{c}}
 	state := organizationTestState(t)
 	response := resource.ReadResponse{State: state}
 	r.Read(t.Context(), resource.ReadRequest{State: state}, &response)
@@ -318,7 +318,7 @@ func TestOrganizationDeleteRefusesNameReuse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := &OrganizationResource{client: c}
+	r := &OrganizationResource{configured{c}}
 	state := organizationTestState(t)
 	response := resource.DeleteResponse{State: state}
 	r.Delete(t.Context(), resource.DeleteRequest{State: state}, &response)

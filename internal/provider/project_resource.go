@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	rschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -24,16 +26,7 @@ import (
 	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
 )
 
-var _ resource.Resource = &ProjectResource{}
-var _ resource.ResourceWithConfigure = &ProjectResource{}
-var _ resource.ResourceWithImportState = &ProjectResource{}
-var _ resource.ResourceWithModifyPlan = &ProjectResource{}
-
-func NewProjectResource() resource.Resource { return &ProjectResource{} }
-
-type ProjectResource struct {
-	client *logclient.APIClient
-}
+type ProjectResource struct{ configured }
 
 type ProjectModel struct {
 	ID             types.String `tfsdk:"id"`
@@ -44,14 +37,13 @@ type ProjectModel struct {
 	Visibility     types.String `tfsdk:"visibility"`
 }
 
-func (r *ProjectResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
+func (r *ProjectResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_project"
 }
 
-func (r *ProjectResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
+func (r *ProjectResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = rschema.Schema{
-		MarkdownDescription: "Manages a Logfire project. By default the credential creates the project in its own organization and must hold `organization:create_project`. " +
-			"On a self-hosted instance, an instance-admin credential creates the project in another organization with the `organization` argument or the provider `organization`.",
+		MarkdownDescription: "Manages a Logfire project. By default the credential creates the project in its own organization and must hold `organization:create_project`. On a self-hosted instance, an instance-admin credential creates the project in another organization with the `organization` argument or the provider `organization`.",
 		Attributes: map[string]rschema.Attribute{
 			"id": rschema.StringAttribute{
 				Computed:            true,
@@ -61,24 +53,17 @@ func (r *ProjectResource) Schema(ctx context.Context, req resource.SchemaRequest
 				},
 			},
 			"organization": rschema.StringAttribute{
-				Optional: true,
-				Computed: true,
-				MarkdownDescription: "Organization name. Defaults to the provider `organization`, else the organization of the provider credential. " +
-					"Setting it acts in that organization through the instance-admin token exchange (self-hosted only). " +
-					"Changing it replaces the project when the new name is another existing organization than `organization_id`. " +
-					"Logfire cannot move a project between organizations, so a replacement deletes the project with all its data " +
-					"and creates an empty project. Set `lifecycle { prevent_destroy = true }` to block it. " +
-					"A new name for the same organization, a name that is not known yet, or a name the instance does not list yet updates in place. " +
-					"After an organization is renamed, a refresh updates this value.",
+				Optional:            true,
+				Computed:            true,
+				MarkdownDescription: "Organization name. Defaults to the provider `organization`, else the organization of the provider credential. Setting it acts in that organization through the instance-admin token exchange (self-hosted only). Changing it replaces the project when the new name is another existing organization than `organization_id`. Logfire cannot move a project between organizations, so a replacement deletes the project with all its data and creates an empty project. Set `lifecycle { prevent_destroy = true }` to block it. A new name for the same organization, a name that is not known yet, or a name the instance does not list yet updates in place. After an organization is renamed, a refresh updates this value.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
 				Validators: organizationNameValidators(),
 			},
 			"organization_id": rschema.StringAttribute{
-				Computed: true,
-				MarkdownDescription: "ID of the organization that the project is in. Set when the project is in a named organization, " +
-					"through the `organization` argument or the provider `organization`. Null for a project in the organization of the credential.",
+				Computed:            true,
+				MarkdownDescription: "ID of the organization that the project is in. Set when the project is in a named organization, through the `organization` argument or the provider `organization`. Null for a project in the organization of the credential.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
@@ -90,7 +75,8 @@ func (r *ProjectResource) Schema(ctx context.Context, req resource.SchemaRequest
 					stringvalidator.LengthAtLeast(2),
 					stringvalidator.RegexMatches(
 						regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`),
-						"must use lowercase letters, numbers, and internal hyphens (no spaces or uppercase characters)",
+						"must use lowercase letters, numbers, and internal hyphens "+
+							"(no spaces or uppercase characters)",
 					),
 				},
 			},
@@ -117,75 +103,20 @@ func (r *ProjectResource) Schema(ctx context.Context, req resource.SchemaRequest
 	}
 }
 
-func (r *ProjectResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		return
-	}
-	c, ok := req.ProviderData.(*logclient.APIClient)
-	if !ok {
-		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *APIClient, got %T", req.ProviderData))
-		return
-	}
-	r.client = c
-}
-
-// --- Helpers ---
-
-func projectModelToCreate(m *ProjectModel) logclient.ProjectCreate {
-	var desc *string
-	if !m.Description.IsNull() && !m.Description.IsUnknown() {
-		value := m.Description.ValueString()
-		if value != "" {
-			desc = &value
-		}
-	}
-	var visibility *string
-	if !m.Visibility.IsNull() && !m.Visibility.IsUnknown() {
-		value := m.Visibility.ValueString()
-		visibility = &value
-	}
-	return logclient.ProjectCreate{
-		ProjectName: m.Name.ValueString(),
-		Description: desc,
-		Visibility:  visibility,
-	}
-}
-
 func projectReadToModel(p *logclient.ProjectRead, m *ProjectModel) {
 	m.ID = types.StringValue(p.ID)
-	if p.OrganizationName == "" {
-		m.Organization = types.StringNull()
-	} else {
-		m.Organization = types.StringValue(p.OrganizationName)
-	}
+	m.Organization = stringOrNull(&p.OrganizationName)
 	m.Name = types.StringValue(p.ProjectName)
-	if p.Description == nil || *p.Description == "" {
-		m.Description = types.StringNull()
-	} else {
-		m.Description = types.StringValue(*p.Description)
-	}
-	if p.Visibility == "" {
-		m.Visibility = types.StringNull()
-	} else {
-		m.Visibility = types.StringValue(p.Visibility)
-	}
+	m.Description = stringOrNull(p.Description)
+	m.Visibility = stringOrNull(&p.Visibility)
 }
 
-// --- CRUD ---
-
 func (r *ProjectResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	if r.client == nil {
-		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
-		return
-	}
-
 	var plan ProjectModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-
-	in := projectModelToCreate(&plan)
 
 	client := r.client
 	if knownString(plan.Organization) {
@@ -195,15 +126,18 @@ func (r *ProjectResource) Create(ctx context.Context, req resource.CreateRequest
 	// before anything exists.
 	organizationID := types.StringNull()
 	if name := client.Organization(); name != "" {
-		found, err := findOrganization(ctx, r.client, func(o logclient.OrganizationRead) bool { return o.OrganizationName == name })
-		if err != nil || found == nil {
-			resp.Diagnostics.AddError("Create project failed", organizationLookupMessage(name, err))
+		id, ok := r.organizationID(ctx, name, "Create project failed", &resp.Diagnostics)
+		if !ok {
 			return
 		}
-		organizationID = types.StringValue(found.ID)
+		organizationID = types.StringValue(id)
 	}
 
-	out, err := client.CreateProject(ctx, in)
+	out, err := client.CreateProject(ctx, logclient.ProjectCreate{
+		ProjectName: plan.Name.ValueString(),
+		Description: plan.Description.ValueStringPointer(),
+		Visibility:  plan.Visibility.ValueStringPointer(),
+	})
 	if err != nil {
 		resp.Diagnostics.AddError("Create project failed", err.Error())
 		return
@@ -213,24 +147,16 @@ func (r *ProjectResource) Create(ctx context.Context, req resource.CreateRequest
 	projectReadToModel(out, &state)
 	state.OrganizationID = organizationID
 
-	tflog.Trace(ctx, "created project", map[string]any{"id": state.ID.ValueString(), "org": state.Organization.ValueString()})
+	tflog.Trace(ctx, "created project", map[string]any{
+		"id": state.ID.ValueString(), "org": state.Organization.ValueString(),
+	})
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
 func (r *ProjectResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	if r.client == nil {
-		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
-		return
-	}
-
 	var state ProjectModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	if state.ID.IsUnknown() || state.ID.IsNull() || state.ID.ValueString() == "" {
-		resp.State.RemoveResource(ctx)
 		return
 	}
 
@@ -248,15 +174,19 @@ func (r *ProjectResource) Read(ctx context.Context, req resource.ReadRequest, re
 	}
 	client := r.clientFor(state.Organization, state.OrganizationID)
 	out, status, err := getProject(client)
-	if knownString(state.OrganizationID) && (logclient.IsInvalidTargetError(err) || status == http.StatusNotFound) {
+	if knownString(state.OrganizationID) &&
+		(logclient.IsInvalidTargetError(err) || status == http.StatusNotFound) {
 		// The name may no longer belong to the project's organization: it was
 		// renamed, possibly with another organization taking the old name, or it
 		// was deleted with its projects. The ID tells which.
 		id := state.OrganizationID.ValueString()
-		current, lookupErr := findOrganization(ctx, r.client, func(o logclient.OrganizationRead) bool { return o.ID == id })
+		current, lookupErr := findOrganization(ctx, r.client,
+			func(o logclient.OrganizationRead) bool { return o.ID == id })
 		switch {
 		case lookupErr != nil:
-			resp.Diagnostics.AddError("Read project failed", fmt.Sprintf("%v. Listing the organizations to follow a rename failed: %v", err, lookupErr))
+			resp.Diagnostics.AddError("Read project failed", fmt.Sprintf(
+				"%v. Listing the organizations to follow a rename failed: %v",
+				err, lookupErr))
 			return
 		case current == nil:
 			resp.State.RemoveResource(ctx)
@@ -269,84 +199,42 @@ func (r *ProjectResource) Read(ctx context.Context, req resource.ReadRequest, re
 			return
 		}
 	}
+	if status == http.StatusNotFound {
+		resp.State.RemoveResource(ctx)
+		return
+	}
 	if err != nil {
-		if status == 404 {
-			resp.State.RemoveResource(ctx)
-			return
-		}
 		resp.Diagnostics.AddError("Read project failed", err.Error())
 		return
 	}
 
 	projectReadToModel(out, &state)
 	if name := client.Organization(); name != "" && !knownString(state.OrganizationID) {
-		found, err := findOrganization(ctx, r.client, func(o logclient.OrganizationRead) bool { return o.OrganizationName == name })
-		if err != nil || found == nil {
-			resp.Diagnostics.AddError("Read project failed", organizationLookupMessage(name, err))
+		id, ok := r.organizationID(ctx, name, "Read project failed", &resp.Diagnostics)
+		if !ok {
 			return
 		}
-		state.OrganizationID = types.StringValue(found.ID)
+		state.OrganizationID = types.StringValue(id)
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
 func (r *ProjectResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	if r.client == nil {
-		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
-		return
-	}
-
-	var plan ProjectModel
+	var plan, state ProjectModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	var state ProjectModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if state.ID.IsNull() || state.ID.IsUnknown() {
-		resp.Diagnostics.AddError("Missing ID", "Cannot update project because the current state has no ID.")
-		return
-	}
 
-	// Build partial update payload
-	var payload logclient.ProjectUpdate
-	if !plan.Name.IsNull() && !plan.Name.IsUnknown() {
-		v := plan.Name.ValueString()
-		payload.ProjectName = &v
+	payload := logclient.ProjectUpdate{ProjectName: plan.Name.ValueStringPointer()}
+	if !plan.Description.Equal(state.Description) {
+		// The API clears a description when it gets an empty string.
+		payload.Description = logclient.NullableFieldValue(plan.Description.ValueString())
 	}
-
-	if !plan.Description.IsUnknown() {
-		switch {
-		case plan.Description.IsNull():
-			if !state.Description.IsNull() && !state.Description.IsUnknown() {
-				// API clears descriptions when provided an empty string.
-				payload.Description = logclient.NullableFieldValue("")
-			}
-		default:
-			v := plan.Description.ValueString()
-			if state.Description.IsNull() || state.Description.IsUnknown() || state.Description.ValueString() != v {
-				payload.Description = logclient.NullableFieldValue(v)
-			}
-		}
-	}
-
-	if !plan.Visibility.IsUnknown() {
-		switch {
-		case plan.Visibility.IsNull():
-			if !state.Visibility.IsNull() && !state.Visibility.IsUnknown() {
-				payload.Visibility = logclient.NullableFieldNull[string]()
-			}
-		default:
-			v := plan.Visibility.ValueString()
-			if state.Visibility.IsNull() || state.Visibility.IsUnknown() || state.Visibility.ValueString() != v {
-				payload.Visibility = logclient.NullableFieldValue(v)
-			}
-		}
+	if !plan.Visibility.Equal(state.Visibility) {
+		payload.Visibility = logclient.NullableFieldValue(plan.Visibility.ValueString())
 	}
 
 	client := r.clientFor(plan.Organization, state.OrganizationID)
@@ -366,42 +254,27 @@ func (r *ProjectResource) Update(ctx context.Context, req resource.UpdateRequest
 }
 
 func (r *ProjectResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	if r.client == nil {
-		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
-		return
-	}
-
 	var state ProjectModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	if state.ID.IsNull() || state.ID.IsUnknown() {
-		resp.Diagnostics.AddError("Missing ID", "Cannot delete project because the current state has no ID.")
-		return
-	}
-
-	if err := r.clientFor(state.Organization, state.OrganizationID).DeleteProject(ctx, state.ID.ValueString()); err != nil {
-		if logclient.IsNotFoundError(err) {
-			// Already gone, treat as successful delete
-			return
-		}
+	err := r.clientFor(state.Organization, state.OrganizationID).
+		DeleteProject(ctx, state.ID.ValueString())
+	// A project that is already gone is a successful delete.
+	if err != nil && !logclient.IsNotFoundError(err) {
 		resp.Diagnostics.AddError("Delete project failed", err.Error())
 	}
 }
 
 func (r *ProjectResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	if r.client == nil {
-		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
-		return
-	}
-
 	rawID := strings.TrimSpace(req.ID)
 	if rawID == "" {
 		resp.Diagnostics.AddError(
 			"Missing import ID",
-			`Expected a non-empty ID. Use either the project UUID or the "organization/name" shorthand.`,
+			`Expected a non-empty ID. Use either the project UUID or the `+
+				`"organization/name" shorthand.`,
 		)
 		return
 	}
@@ -410,55 +283,52 @@ func (r *ProjectResource) ImportState(ctx context.Context, req resource.ImportSt
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Invalid import ID format",
-			`Expected "organization/name" (also accepts "organization,name" or "organization|name"), or a single project UUID/name. Example:
-terraform import logfire_project.prod "acme/prod-logs"`,
+			`Expected "organization/name" (also accepts "organization,name" or `+
+				`"organization|name"), or a single project UUID/name. Example:`+"\n"+
+				`terraform import logfire_project.prod "acme/prod-logs"`,
 		)
 		return
 	}
 
-	projectID := ""
+	var projectID string
 	client := r.client
-	switch len(parts) {
-	case 2:
-		org, name := parts[0], parts[1]
-		id, found, err := r.findProject(ctx, org, name)
+	if len(parts) == 2 {
+		projectID, client, err = r.findProject(ctx, parts[0], parts[1])
 		if err != nil {
 			resp.Diagnostics.AddError("Lookup project ID failed", err.Error())
 			return
 		}
-		projectID, client = id, found
-	case 1:
-		id, _, err := findProjectByNameOrID(ctx, r.client, parts[0])
+	} else {
+		projectID, _, err = findProjectByNameOrID(ctx, r.client, parts[0])
 		var notFound *projectNotFoundError
-		if errors.As(err, &notFound) {
-			resp.Diagnostics.AddError(
-				"Import project failed",
-				fmt.Sprintf("Project %q not found. Use the project UUID or the \"organization/name\" shorthand.", rawID),
-			)
+		switch {
+		case errors.As(err, &notFound):
+			resp.Diagnostics.AddError("Import project failed", fmt.Sprintf(
+				"Project %q not found. Use the project UUID or the "+
+					"\"organization/name\" shorthand.", rawID))
 			return
-		}
-		if err != nil {
+		case err != nil:
 			resp.Diagnostics.AddError("Import project failed", err.Error())
 			return
 		}
-		projectID = id
 	}
 
 	project, _, err := client.GetProject(ctx, projectID)
 	if err != nil {
-		resp.Diagnostics.AddError("Import project failed", fmt.Sprintf("fetching project %q: %v", projectID, err))
+		resp.Diagnostics.AddError("Import project failed",
+			fmt.Sprintf("fetching project %q: %v", projectID, err))
 		return
 	}
 
 	var state ProjectModel
 	projectReadToModel(project, &state)
 	if client.Organization() != "" {
-		found, err := findOrganization(ctx, r.client, func(o logclient.OrganizationRead) bool { return o.OrganizationName == project.OrganizationName })
-		if err != nil || found == nil {
-			resp.Diagnostics.AddError("Import project failed", organizationLookupMessage(project.OrganizationName, err))
+		id, ok := r.organizationID(
+			ctx, project.OrganizationName, "Import project failed", &resp.Diagnostics)
+		if !ok {
 			return
 		}
-		state.OrganizationID = types.StringValue(found.ID)
+		state.OrganizationID = types.StringValue(id)
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -498,7 +368,8 @@ func (r *ProjectResource) findProject(ctx context.Context, org, name string) (st
 	if len(candidates) > 1 && ownListed && errors.As(lastErr, &adminRequired) {
 		// The key's own list has no match, so the missing instance-admin right
 		// matters only if org is not the key's own organization.
-		return "", nil, fmt.Errorf("project %q was not found with this key; if %q is another organization, an instance-admin key is needed", name, org)
+		return "", nil, fmt.Errorf("project %q was not found with this key; "+
+			"if %q is another organization, an instance-admin key is needed", name, org)
 	}
 	if lastErr != nil {
 		// When the key's own list failed too, its error, such as a missing
@@ -526,22 +397,20 @@ func (r *ProjectResource) clientFor(organization, organizationID types.String) *
 // Update fails without deleting anything when the project is not in the planned
 // organization.
 func (r *ProjectResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
-	if r.client == nil || req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
+	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
 		return
 	}
-	var prior, planned, priorID types.String
-	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("organization"), &prior)...)
-	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root("organization"), &planned)...)
-	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("organization_id"), &priorID)...)
-	if resp.Diagnostics.HasError() || planned.IsUnknown() || planned.Equal(prior) {
+	var state, plan ProjectModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() || plan.Organization.IsUnknown() ||
+		plan.Organization.Equal(state.Organization) {
 		return
 	}
-	name := planned.ValueString()
-	found, err := findOrganization(ctx, r.client, func(o logclient.OrganizationRead) bool { return o.OrganizationName == name })
-	if err != nil || found == nil {
-		return
-	}
-	if knownString(priorID) && found.ID == priorID.ValueString() {
+	name := plan.Organization.ValueString()
+	found, err := findOrganization(ctx, r.client,
+		func(o logclient.OrganizationRead) bool { return o.OrganizationName == name })
+	if err != nil || found == nil || found.ID == state.OrganizationID.ValueString() {
 		return
 	}
 	// The replacement deletes the project before it creates the new one, so
@@ -549,26 +418,25 @@ func (r *ProjectResource) ModifyPlan(ctx context.Context, req resource.ModifyPla
 	existing, err := r.client.ForOrganization(name).ListProjects(ctx)
 	if err != nil {
 		resp.Diagnostics.AddError("Cannot move the project", fmt.Sprintf(
-			"Moving the project to organization %q replaces it, but the provider cannot act in that organization: %v", name, err))
+			"Moving the project to organization %q replaces it, but the provider "+
+				"cannot act in that organization: %v", name, err))
 		return
 	}
-	var projectID, projectName types.String
-	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("id"), &projectID)...)
-	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root("name"), &projectName)...)
 	// A project with a null organization_id is in the key's organization, so a
 	// name for that organization, its own or a new one after a rename, is no move.
+	nameTaken := false
 	for _, p := range existing {
-		if p.ID == projectID.ValueString() {
+		if p.ID == state.ID.ValueString() {
 			return
 		}
+		nameTaken = nameTaken || p.ProjectName == plan.Name.ValueString()
 	}
-	for _, p := range existing {
-		if knownString(projectName) && p.ProjectName == projectName.ValueString() {
-			resp.Diagnostics.AddError("Cannot move the project", fmt.Sprintf(
-				"Organization %q already has a project named %q, so the replacement would delete this project and then fail to create it.",
-				name, p.ProjectName))
-			return
-		}
+	if nameTaken {
+		resp.Diagnostics.AddError("Cannot move the project", fmt.Sprintf(
+			"Organization %q already has a project named %q, so the replacement "+
+				"would delete this project and then fail to create it.",
+			name, plan.Name.ValueString()))
+		return
 	}
 	resp.RequiresReplace = append(resp.RequiresReplace, path.Root("organization"))
 }
@@ -581,19 +449,29 @@ func findOrganization(ctx context.Context, c *logclient.APIClient, match func(lo
 	if err != nil {
 		return nil, err
 	}
-	for i := range list {
-		if match(list[i]) {
-			return &list[i], nil
-		}
+	i := slices.IndexFunc(list, match)
+	if i < 0 {
+		return nil, nil
 	}
-	return nil, nil
+	return &list[i], nil
 }
 
-func organizationLookupMessage(name string, err error) string {
-	if err != nil {
-		return fmt.Sprintf("Listing the instance organizations to find %q failed: %v", name, err)
+// organizationID looks up the ID that the instance list gives an organization
+// name. When it finds none, it adds the diagnostic itself.
+func (r *ProjectResource) organizationID(ctx context.Context, name, summary string, diags *diag.Diagnostics) (string, bool) {
+	found, err := findOrganization(ctx, r.client,
+		func(o logclient.OrganizationRead) bool { return o.OrganizationName == name })
+	switch {
+	case err != nil:
+		diags.AddError(summary, fmt.Sprintf(
+			"Listing the instance organizations to find %q failed: %v", name, err))
+	case found == nil:
+		diags.AddError(summary, fmt.Sprintf(
+			"Organization %q does not exist on this instance.", name))
+	default:
+		return found.ID, true
 	}
-	return fmt.Sprintf("Organization %q does not exist on this instance.", name)
+	return "", false
 }
 
 func knownString(v types.String) bool {

@@ -6,13 +6,14 @@ package provider
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -433,7 +434,7 @@ func TestProjectPlanForTheKeysRenamedOrganizationIsNoMove(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := t.Context()
-	r := &ProjectResource{client: c}
+	r := &ProjectResource{configured{c}}
 	var schemaResp resource.SchemaResponse
 	r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
 	sch := schemaResp.Schema
@@ -596,8 +597,8 @@ func TestAPIKeyOperationsRefuseAnOrganization(t *testing.T) {
 		resource.ResourceWithImportState
 	}
 	for name, r := range map[string]keyResource{
-		"logfire_api_key":         &APIKeyResource{client: c},
-		"logfire_gateway_api_key": &GatewayAPIKeyResource{client: c},
+		"logfire_api_key":         &APIKeyResource{configured{c}},
+		"logfire_gateway_api_key": &GatewayAPIKeyResource{configured{c}},
 	} {
 		ops := map[string]func() diag.Diagnostics{
 			"create": func() diag.Diagnostics {
@@ -679,7 +680,7 @@ func TestProjectPlanReplacesOnlyForAnotherKnownOrganization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := &ProjectResource{client: client}
+	r := &ProjectResource{configured{client}}
 	var schemaResponse resource.SchemaResponse
 	r.Schema(t.Context(), resource.SchemaRequest{}, &schemaResponse)
 	schema := schemaResponse.Schema

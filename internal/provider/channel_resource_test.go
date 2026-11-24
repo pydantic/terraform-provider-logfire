@@ -4,6 +4,7 @@
 package provider
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -174,8 +175,8 @@ func TestIsMaskedOpsgenieAuthKey(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := isMaskedOpsgenieAuthKey(tc.value); got != tc.want {
-				t.Fatalf("isMaskedOpsgenieAuthKey(%q) = %v, want %v", tc.value, got, tc.want)
+			if got := isMaskedSecret(tc.value); got != tc.want {
+				t.Fatalf("isMaskedSecret(%q) = %v, want %v", tc.value, got, tc.want)
 			}
 		})
 	}
@@ -184,10 +185,10 @@ func TestIsMaskedOpsgenieAuthKey(t *testing.T) {
 func TestIsMaskedPagerdutyRoutingKey(t *testing.T) {
 	t.Parallel()
 
-	if !isMaskedPagerdutyRoutingKey("**********c2d3") {
+	if !isMaskedSecret("**********c2d3") {
 		t.Fatal("expected masked PagerDuty routing key to be detected")
 	}
-	if isMaskedPagerdutyRoutingKey("a0b1c2d3e4f5a0b1c2d3e4f5a0b1c2d3") {
+	if isMaskedSecret("a0b1c2d3e4f5a0b1c2d3e4f5a0b1c2d3") {
 		t.Fatal("expected plain PagerDuty routing key not to be detected")
 	}
 }
@@ -304,10 +305,7 @@ func TestPagerdutyChannelConfigMapping(t *testing.T) {
 		t.Fatalf("region = %v, want eu", pagerduty.Region)
 	}
 
-	roundTrip, roundTripDiags := channelConfigAPIToModel(pagerduty)
-	if roundTripDiags.HasError() {
-		t.Fatalf("mapping API to model returned diagnostics: %v", roundTripDiags)
-	}
+	roundTrip := roundTripChannelConfig(t, pagerduty)
 	if roundTrip.RoutingKey.ValueString() != model.RoutingKey.ValueString() {
 		t.Fatalf("round-trip routing key = %q, want configured value", roundTrip.RoutingKey.ValueString())
 	}
@@ -343,10 +341,7 @@ func TestPagerdutyIntegrationChannelConfigMapping(t *testing.T) {
 		t.Fatalf("service id = %v, want configured value", pagerduty.ServiceID)
 	}
 
-	roundTrip, roundTripDiags := channelConfigAPIToModel(pagerduty)
-	if roundTripDiags.HasError() {
-		t.Fatalf("mapping API to model returned diagnostics: %v", roundTripDiags)
-	}
+	roundTrip := roundTripChannelConfig(t, pagerduty)
 	if roundTrip.InstallID.ValueString() != model.InstallID.ValueString() {
 		t.Fatalf("round-trip install id = %q, want configured value", roundTrip.InstallID.ValueString())
 	}
@@ -461,10 +456,7 @@ func TestSlackIntegrationChannelConfigMapping(t *testing.T) {
 		t.Fatalf("include agent prompt = %v, want false", slack.IncludeAgentPrompt)
 	}
 
-	roundTrip, roundTripDiags := channelConfigAPIToModel(slack)
-	if roundTripDiags.HasError() {
-		t.Fatalf("mapping API to model returned diagnostics: %v", roundTripDiags)
-	}
+	roundTrip := roundTripChannelConfig(t, slack)
 	if roundTrip.InstallID.ValueString() != model.InstallID.ValueString() {
 		t.Fatalf("round-trip install id = %q, want configured value", roundTrip.InstallID.ValueString())
 	}
@@ -503,10 +495,7 @@ func TestSlackIntegrationChannelConfigOmittedAgentPrompt(t *testing.T) {
 		t.Fatalf("include agent prompt = %v, want omitted (nil)", slack.IncludeAgentPrompt)
 	}
 
-	roundTrip, roundTripDiags := channelConfigAPIToModel(slack)
-	if roundTripDiags.HasError() {
-		t.Fatalf("mapping API to model returned diagnostics: %v", roundTripDiags)
-	}
+	roundTrip := roundTripChannelConfig(t, slack)
 	if !roundTrip.IncludeAgentPrompt.IsNull() {
 		t.Fatalf("round-trip include agent prompt = %v, want null", roundTrip.IncludeAgentPrompt)
 	}
@@ -599,8 +588,27 @@ func TestSameEmail(t *testing.T) {
 		{"mar\u212aeting@example.com", "marketing@example.com", false},
 		{"mar\u212aeting@example.com", "marKeting@example.com", true},
 	} {
-		if got := sameEmail(tc.configured, tc.stored); got != tc.same {
-			t.Errorf("sameEmail(%q, %q) = %v; want %v", tc.configured, tc.stored, got, tc.same)
+		if got := canonicalEmail(tc.configured) == tc.stored; got != tc.same {
+			t.Errorf("canonicalEmail(%q) == %q = %v; want %v", tc.configured, tc.stored, got, tc.same)
 		}
 	}
+}
+
+// roundTripChannelConfig reads a config the way Logfire returns it, as JSON.
+func roundTripChannelConfig(t *testing.T, cfg any) *ChannelConfigModel {
+	t.Helper()
+
+	body, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var read logclient.ChannelRead
+	if err := json.Unmarshal(body, &read.Config); err != nil {
+		t.Fatal(err)
+	}
+	var channel ChannelModel
+	if diags := channelReadToModel(&read, &channel); diags.HasError() {
+		t.Fatalf("mapping API to model returned diagnostics: %v", diags)
+	}
+	return channel.Config
 }

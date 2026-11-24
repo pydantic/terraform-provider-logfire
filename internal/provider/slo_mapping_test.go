@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
-	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
@@ -575,21 +574,25 @@ func TestDecimalStringsEqual(t *testing.T) {
 	}
 }
 
-func TestSloDurationCompact(t *testing.T) {
+func TestSloReadToModelWindowSpelling(t *testing.T) {
 	t.Parallel()
 
-	cases := []struct {
-		d    time.Duration
-		want string
-	}{
-		{90 * 24 * time.Hour, "90d"},
-		{14 * 24 * time.Hour, "14d"},
-		{time.Hour, "1h"},
-		{90 * time.Minute, "1h30m"},
+	cases := []struct{ iso, want string }{
+		{"P90D", "90d"},
+		{"P14D", "14d"},
+		{"PT1H", "1h"},
+		{"PT1H30M", "1h30m"},
 	}
 	for _, tc := range cases {
-		if got := sloDurationCompact(tc.d); got != tc.want {
-			t.Errorf("sloDurationCompact(%v) = %q, want %q", tc.d, got, tc.want)
+		read := sloRead()
+		read.RollingWindow = tc.iso
+		m := baseSloModel()
+		m.RollingWindow = types.StringNull()
+		if diags := sloReadToModel(context.Background(), read, &m); diags.HasError() {
+			t.Fatalf("unexpected diagnostics: %v", diags)
+		}
+		if got := m.RollingWindow.ValueString(); got != tc.want {
+			t.Errorf("window %s = %q, want %q", tc.iso, got, tc.want)
 		}
 	}
 }

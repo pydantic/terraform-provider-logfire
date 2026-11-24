@@ -61,10 +61,9 @@ func channelAssignmentsAttribute(description string, mode channelAssignmentsMode
 					Validators:          []validator.String{stringvalidator.LengthAtLeast(1)},
 				},
 				"schedule_id": rschema.StringAttribute{
-					Optional: true,
-					MarkdownDescription: "ID of a `logfire_schedule`. The channel is notified only inside the schedule's windows. " +
-						"Omit it to notify the channel at all times.",
-					Validators: []validator.String{stringvalidator.LengthAtLeast(1)},
+					Optional:            true,
+					MarkdownDescription: "ID of a `logfire_schedule`. The channel is notified only inside the schedule's windows. Omit it to notify the channel at all times.",
+					Validators:          []validator.String{stringvalidator.LengthAtLeast(1)},
 				},
 			},
 		},
@@ -76,15 +75,15 @@ func channelAssignmentsAttribute(description string, mode channelAssignmentsMode
 // the next plan would show a diff that no apply can resolve.
 type uniqueChannelIDsValidator struct{}
 
-func (v uniqueChannelIDsValidator) Description(ctx context.Context) string {
+func (uniqueChannelIDsValidator) Description(context.Context) string {
 	return "each channel_id appears at most once"
 }
 
-func (v uniqueChannelIDsValidator) MarkdownDescription(ctx context.Context) string {
+func (uniqueChannelIDsValidator) MarkdownDescription(context.Context) string {
 	return "each `channel_id` appears at most once"
 }
 
-func (v uniqueChannelIDsValidator) ValidateSet(ctx context.Context, req validator.SetRequest, resp *validator.SetResponse) {
+func (uniqueChannelIDsValidator) ValidateSet(ctx context.Context, req validator.SetRequest, resp *validator.SetResponse) {
 	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
 		return
 	}
@@ -103,7 +102,10 @@ func (v uniqueChannelIDsValidator) ValidateSet(ctx context.Context, req validato
 			resp.Diagnostics.AddAttributeError(
 				req.Path,
 				"Duplicate channel assignment",
-				fmt.Sprintf("Channel %q is assigned more than once. Assign each channel once, with at most one schedule_id.", id),
+				fmt.Sprintf(
+					"Channel %q is assigned more than once. "+
+						"Assign each channel once, with at most one schedule_id.", id,
+				),
 			)
 			return
 		}
@@ -122,8 +124,7 @@ func channelAssignmentsToAPI(ctx context.Context, set types.Set) ([]logclient.Ch
 	out := make([]logclient.ChannelAssignment, 0, len(elems))
 	for _, e := range elems {
 		a := logclient.ChannelAssignment{ChannelID: e.ChannelID.ValueString()}
-		if !e.ScheduleID.IsNull() && !e.ScheduleID.IsUnknown() && e.ScheduleID.ValueString() != "" {
-			v := e.ScheduleID.ValueString()
+		if v := e.ScheduleID.ValueString(); v != "" {
 			a.ScheduleID = &v
 		}
 		out = append(out, a)
@@ -135,7 +136,10 @@ func channelAssignmentsToAPI(ctx context.Context, set types.Set) ([]logclient.Ch
 func channelAssignmentsFromAPI(ctx context.Context, in []logclient.ChannelAssignment) (types.Set, diag.Diagnostics) {
 	elems := make([]channelAssignmentModel, 0, len(in))
 	for _, a := range in {
-		m := channelAssignmentModel{ChannelID: types.StringValue(a.ChannelID), ScheduleID: types.StringNull()}
+		m := channelAssignmentModel{
+			ChannelID:  types.StringValue(a.ChannelID),
+			ScheduleID: types.StringNull(),
+		}
 		if a.ScheduleID != nil && *a.ScheduleID != "" {
 			m.ScheduleID = types.StringValue(*a.ScheduleID)
 		}

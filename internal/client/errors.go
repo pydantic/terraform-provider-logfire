@@ -4,51 +4,28 @@
 package client
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 )
 
+func hasStatus(err error, status int) bool {
+	var apiErr *APIError
+	return errors.As(err, &apiErr) && apiErr.StatusCode == status
+}
+
 // IsRateLimitError reports whether the error represents an HTTP 429.
 func IsRateLimitError(err error) bool {
-	var apiErr *APIError
-	if errors.As(err, &apiErr) {
-		return apiErr.StatusCode == http.StatusTooManyRequests
-	}
-	return false
+	return hasStatus(err, http.StatusTooManyRequests)
 }
 
 // IsNotFoundError reports whether the error represents an HTTP 404.
 func IsNotFoundError(err error) bool {
-	var apiErr *APIError
-	if errors.As(err, &apiErr) {
-		return apiErr.StatusCode == http.StatusNotFound
-	}
-	return false
-}
-
-// isMissingRoute reports a 404 for a route the instance does not serve. A route
-// that looks up an item answers a missing item with its own detail, while FastAPI
-// answers a missing route with "Not Found" and a proxy may send no detail at all.
-func isMissingRoute(err error) bool {
-	var apiErr *APIError
-	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
-		return false
-	}
-	var body struct {
-		Detail string `json:"detail"`
-	}
-	_ = json.Unmarshal([]byte(apiErr.Message), &body)
-	return body.Detail == "" || body.Detail == "Not Found"
+	return hasStatus(err, http.StatusNotFound)
 }
 
 // IsConflictError reports whether the error represents an HTTP 409.
 func IsConflictError(err error) bool {
-	var apiErr *APIError
-	if errors.As(err, &apiErr) {
-		return apiErr.StatusCode == http.StatusConflict
-	}
-	return false
+	return hasStatus(err, http.StatusConflict)
 }
 
 // BackendVersionFromError returns the instance's release version reported by an
@@ -78,8 +55,8 @@ type EndpointUnavailableError struct {
 }
 
 func (e *EndpointUnavailableError) Error() string {
-	message := "this Logfire instance does not expose " + e.Method + " " + e.Path +
-		", which requires Logfire " + e.MinimumRelease + " or newer"
+	message := "this Logfire instance does not expose " + e.Method + " " +
+		e.Path + ", which requires Logfire " + e.MinimumRelease + " or newer"
 	if e.MinimumChart != "" {
 		message += " (Helm chart " + e.MinimumChart + " or newer)"
 	}
@@ -87,4 +64,19 @@ func (e *EndpointUnavailableError) Error() string {
 		message += "; the instance reports version " + e.BackendVersion
 	}
 	return message + ". Upgrade the instance, or manage this resource in the Logfire UI until then."
+}
+
+// unavailableIfNotFound turns a 404 from a collection route into an
+// EndpointUnavailableError and returns any other error, or nil, unchanged.
+func unavailableIfNotFound(err error, method, path, minimumRelease, minimumChart string) error {
+	if !IsNotFoundError(err) {
+		return err
+	}
+	return &EndpointUnavailableError{
+		Method:         method,
+		Path:           path,
+		MinimumRelease: minimumRelease,
+		MinimumChart:   minimumChart,
+		BackendVersion: BackendVersionFromError(err),
+	}
 }

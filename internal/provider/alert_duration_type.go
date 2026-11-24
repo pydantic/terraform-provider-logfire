@@ -13,12 +13,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 )
 
-var (
-	_ basetypes.StringTypable                    = alertDurationType{}
-	_ basetypes.StringValuable                   = alertDurationValue{}
-	_ basetypes.StringValuableWithSemanticEquals = alertDurationValue{}
-)
-
 // alertDurationType keeps the spelling a user writes when a new value means
 // the same duration. Read rewrites the attribute to its compact form, so
 // without semantic equality 90m for 1h30m would diff on every plan. It mirrors
@@ -27,7 +21,7 @@ type alertDurationType struct {
 	basetypes.StringType
 }
 
-func (t alertDurationType) Equal(o attr.Type) bool {
+func (alertDurationType) Equal(o attr.Type) bool {
 	_, ok := o.(alertDurationType)
 	return ok
 }
@@ -36,7 +30,7 @@ func (alertDurationType) String() string {
 	return "alertDurationType"
 }
 
-func (t alertDurationType) ValueFromString(_ context.Context, in basetypes.StringValue) (basetypes.StringValuable, diag.Diagnostics) {
+func (alertDurationType) ValueFromString(_ context.Context, in basetypes.StringValue) (basetypes.StringValuable, diag.Diagnostics) {
 	return alertDurationValue{StringValue: in}, nil
 }
 
@@ -45,12 +39,10 @@ func (t alertDurationType) ValueFromTerraform(ctx context.Context, in tftypes.Va
 	if err != nil {
 		return nil, err
 	}
-
 	stringValue, ok := attrValue.(basetypes.StringValue)
 	if !ok {
 		return nil, fmt.Errorf("unexpected value type %T", attrValue)
 	}
-
 	return alertDurationValue{StringValue: stringValue}, nil
 }
 
@@ -95,18 +87,14 @@ func (v alertDurationValue) StringSemanticEquals(ctx context.Context, other base
 
 	prior, err := parseDurationText(v.ValueString())
 	if err != nil {
-		var diags diag.Diagnostics
 		diags.AddError("Invalid duration", err.Error())
 		return false, diags
 	}
-
 	next, err := parseDurationText(otherString.ValueString())
 	if err != nil {
-		var diags diag.Diagnostics
 		diags.AddError("Invalid duration", err.Error())
 		return false, diags
 	}
-
 	return prior == next, nil
 }
 

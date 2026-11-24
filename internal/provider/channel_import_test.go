@@ -55,7 +55,7 @@ func TestChannelImportByUUID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := &ChannelResource{client: c}
+	r := &ChannelResource{configured{c}}
 	response := newChannelImportResponse(t)
 	r.ImportState(t.Context(), resource.ImportStateRequest{ID: "9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff"}, &response)
 	if response.Diagnostics.HasError() {
@@ -75,7 +75,7 @@ func TestChannelImportUUIDShapedLabel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := &ChannelResource{client: c}
+	r := &ChannelResource{configured{c}}
 	response := newChannelImportResponse(t)
 	r.ImportState(t.Context(), resource.ImportStateRequest{ID: "9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff"}, &response)
 	if response.Diagnostics.HasError() {
@@ -93,7 +93,7 @@ func TestChannelImportByLabel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := &ChannelResource{client: c}
+	r := &ChannelResource{configured{c}}
 	response := newChannelImportResponse(t)
 	r.ImportState(t.Context(), resource.ImportStateRequest{ID: " alerts-webhook "}, &response)
 	if response.Diagnostics.HasError() {
@@ -107,7 +107,7 @@ func TestChannelImportByLabelNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := &ChannelResource{client: c}
+	r := &ChannelResource{configured{c}}
 	response := newChannelImportResponse(t)
 	r.ImportState(t.Context(), resource.ImportStateRequest{ID: "missing-channel"}, &response)
 	if !response.Diagnostics.HasError() {

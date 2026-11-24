@@ -26,15 +26,7 @@ import (
 	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
 )
 
-var _ resource.Resource = &ScheduleResource{}
-var _ resource.ResourceWithConfigure = &ScheduleResource{}
-var _ resource.ResourceWithImportState = &ScheduleResource{}
-
-func NewScheduleResource() resource.Resource { return &ScheduleResource{} }
-
-type ScheduleResource struct {
-	client *logclient.APIClient
-}
+type ScheduleResource struct{ configured }
 
 type ScheduleModel struct {
 	ID       types.String `tfsdk:"id"`
@@ -60,21 +52,18 @@ var scheduleWindowObjectType = types.ObjectType{AttrTypes: map[string]attr.Type{
 // so the configuration must be able to hold that value.
 var scheduleTimeRe = regexp.MustCompile(`^([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$`)
 
-func (r *ScheduleResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
+func (r *ScheduleResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_schedule"
 }
 
-func (r *ScheduleResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
+func (r *ScheduleResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	timeValidators := []validator.String{
-		stringvalidator.RegexMatches(scheduleTimeRe, "must be a 24-hour time in HH:MM or HH:MM:SS format"),
+		stringvalidator.RegexMatches(
+			scheduleTimeRe, "must be a 24-hour time in HH:MM or HH:MM:SS format",
+		),
 	}
 	resp.Schema = rschema.Schema{
-		MarkdownDescription: "Manages an organization-level Logfire delivery schedule. " +
-			"A channel assignment with a `schedule_id` notifies its channel only inside the schedule's windows. " +
-			"Use it in `channel_assignments` on `logfire_alert` and in `alerts.<tier>.channel_assignments` on `logfire_slo`. " +
-			"Deleting a schedule makes the channel assignments that use it notify at all times. " +
-			"The provider credential needs `organization:read_channel` and `organization:write_channel`. " +
-			"The schedules API needs " + sloDeliveryRelease + ".",
+		MarkdownDescription: "Manages an organization-level Logfire delivery schedule. A channel assignment with a `schedule_id` notifies its channel only inside the schedule's windows. Use it in `channel_assignments` on `logfire_alert` and in `alerts.<tier>.channel_assignments` on `logfire_slo`. Deleting a schedule makes the channel assignments that use it notify at all times. The provider credential needs `organization:read_channel` and `organization:write_channel`. The schedules API needs " + sloDeliveryRelease + ".",
 		Attributes: map[string]rschema.Attribute{
 			"id": rschema.StringAttribute{
 				Computed:            true,
@@ -110,16 +99,14 @@ func (r *ScheduleResource) Schema(ctx context.Context, req resource.SchemaReques
 							},
 						},
 						"start_time": rschema.StringAttribute{
-							Required: true,
-							MarkdownDescription: "Start of the window, as 24-hour `HH:MM` or `HH:MM:SS` in `timezone`. " +
-								"A read keeps your spelling when it denotes the same time, and shows seconds only when they are not zero.",
-							Validators: timeValidators,
+							Required:            true,
+							MarkdownDescription: "Start of the window, as 24-hour `HH:MM` or `HH:MM:SS` in `timezone`. A read keeps your spelling when it denotes the same time, and shows seconds only when they are not zero.",
+							Validators:          timeValidators,
 						},
 						"end_time": rschema.StringAttribute{
-							Required: true,
-							MarkdownDescription: "End of the window, as 24-hour `HH:MM` or `HH:MM:SS` in `timezone`. " +
-								"A read keeps your spelling when it denotes the same time, and shows seconds only when they are not zero.",
-							Validators: timeValidators,
+							Required:            true,
+							MarkdownDescription: "End of the window, as 24-hour `HH:MM` or `HH:MM:SS` in `timezone`. A read keeps your spelling when it denotes the same time, and shows seconds only when they are not zero.",
+							Validators:          timeValidators,
 						},
 					},
 				},
@@ -127,20 +114,6 @@ func (r *ScheduleResource) Schema(ctx context.Context, req resource.SchemaReques
 		},
 	}
 }
-
-func (r *ScheduleResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		return
-	}
-	c, ok := req.ProviderData.(*logclient.APIClient)
-	if !ok {
-		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *APIClient, got %T", req.ProviderData))
-		return
-	}
-	r.client = c
-}
-
-// --- Helpers ---
 
 func scheduleWindowsToAPI(ctx context.Context, windows types.List) ([]logclient.ScheduleWindow, diag.Diagnostics) {
 	var models []scheduleWindowModel
@@ -180,10 +153,8 @@ func scheduleTimeValue(api string, prior types.String) types.String {
 	if !ok {
 		return types.StringValue(api)
 	}
-	if !prior.IsNull() && !prior.IsUnknown() {
-		if p, ok := parseScheduleTime(prior.ValueString()); ok && p.Equal(t) {
-			return prior
-		}
+	if p, ok := parseScheduleTime(prior.ValueString()); ok && p.Equal(t) {
+		return prior
 	}
 	if t.Second() != 0 {
 		return types.StringValue(t.Format("15:04:05"))
@@ -193,10 +164,8 @@ func scheduleTimeValue(api string, prior types.String) types.String {
 
 func scheduleReadToModel(ctx context.Context, s *logclient.ScheduleRead, m *ScheduleModel) diag.Diagnostics {
 	var prior []scheduleWindowModel
-	if !m.Windows.IsNull() && !m.Windows.IsUnknown() && m.Windows.ElementType(ctx) != nil {
-		if diags := m.Windows.ElementsAs(ctx, &prior, false); diags.HasError() {
-			return diags
-		}
+	if diags := m.Windows.ElementsAs(ctx, &prior, false); diags.HasError() {
+		return diags
 	}
 
 	windows := make([]scheduleWindowModel, 0, len(s.Windows))
@@ -227,14 +196,7 @@ func scheduleReadToModel(ctx context.Context, s *logclient.ScheduleRead, m *Sche
 	return nil
 }
 
-// --- CRUD ---
-
 func (r *ScheduleResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	if r.client == nil {
-		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
-		return
-	}
-
 	var plan ScheduleModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
@@ -267,18 +229,9 @@ func (r *ScheduleResource) Create(ctx context.Context, req resource.CreateReques
 }
 
 func (r *ScheduleResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	if r.client == nil {
-		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
-		return
-	}
-
 	var state ScheduleModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
-		return
-	}
-	if state.ID.IsNull() || state.ID.IsUnknown() || state.ID.ValueString() == "" {
-		resp.State.RemoveResource(ctx)
 		return
 	}
 
@@ -300,19 +253,10 @@ func (r *ScheduleResource) Read(ctx context.Context, req resource.ReadRequest, r
 }
 
 func (r *ScheduleResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	if r.client == nil {
-		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
-		return
-	}
-
 	var plan, state ScheduleModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
-		return
-	}
-	if state.ID.IsNull() || state.ID.IsUnknown() {
-		resp.Diagnostics.AddError("Missing ID", "Cannot update schedule because the current state has no ID.")
 		return
 	}
 
@@ -321,12 +265,10 @@ func (r *ScheduleResource) Update(ctx context.Context, req resource.UpdateReques
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	label := plan.Label.ValueString()
-	timezone := plan.Timezone.ValueString()
 
 	out, err := r.client.UpdateSchedule(ctx, state.ID.ValueString(), logclient.ScheduleUpdate{
-		Label:    &label,
-		Timezone: &timezone,
+		Label:    new(plan.Label.ValueString()),
+		Timezone: new(plan.Timezone.ValueString()),
 		Windows:  &windows,
 	})
 	if err != nil {
@@ -343,11 +285,6 @@ func (r *ScheduleResource) Update(ctx context.Context, req resource.UpdateReques
 }
 
 func (r *ScheduleResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	if r.client == nil {
-		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
-		return
-	}
-
 	var state ScheduleModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
@@ -355,11 +292,9 @@ func (r *ScheduleResource) Delete(ctx context.Context, req resource.DeleteReques
 	}
 
 	if err := r.client.DeleteSchedule(ctx, state.ID.ValueString()); err != nil {
-		if logclient.IsNotFoundError(err) {
-			// Already gone, treat as successful delete
-			return
+		if !logclient.IsNotFoundError(err) {
+			resp.Diagnostics.AddError("Delete schedule failed", err.Error())
 		}
-		resp.Diagnostics.AddError("Delete schedule failed", err.Error())
 	}
 }
 
@@ -367,16 +302,13 @@ func (r *ScheduleResource) Delete(ctx context.Context, req resource.DeleteReques
 // there is no import by label. The schedule is fetched here so that an unknown
 // ID fails the import instead of producing an empty state.
 func (r *ScheduleResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	if r.client == nil {
-		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
-		return
-	}
-
 	id := strings.TrimSpace(req.ID)
 	if id == "" {
 		resp.Diagnostics.AddError(
 			"Missing import ID",
-			`Expected the schedule UUID. Example: terraform import logfire_schedule.office_hours "9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff"`,
+			`Expected the schedule UUID. Example: `+
+				`terraform import logfire_schedule.office_hours `+
+				`"9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff"`,
 		)
 		return
 	}
@@ -386,7 +318,10 @@ func (r *ScheduleResource) ImportState(ctx context.Context, req resource.ImportS
 		if status == 404 {
 			resp.Diagnostics.AddError(
 				"Import schedule failed",
-				fmt.Sprintf("Schedule %q not found in the credential's organization. Import a schedule by its UUID.", id),
+				fmt.Sprintf(
+					"Schedule %q not found in the credential's organization. "+
+						"Import a schedule by its UUID.", id,
+				),
 			)
 			return
 		}

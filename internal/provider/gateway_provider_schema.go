@@ -20,51 +20,48 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-// Schema defines the supported public Gateway provider configuration.
-func (r *GatewayProviderResource) Schema(
-	ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse,
-) {
+func (r *GatewayProviderResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Manages an organization-owned AI Gateway provider. " +
-			"Requires Growth, Enterprise Cloud, or self-hosted and a token with " +
-			"organization:read and organization:write scopes. " +
-			"Built-in providers and arbitrary upstream URLs are not supported. " +
-			"Import accepts the provider UUID or its organization-unique slug.",
+		MarkdownDescription: "Manages an organization-owned AI Gateway provider. Requires Growth, Enterprise Cloud, or self-hosted and a token with organization:read and organization:write scopes. Built-in providers and arbitrary upstream URLs are not supported. Import accepts the provider UUID or its organization-unique slug.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "Provider UUID. Use this identifier to import an existing provider.",
-				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"slug": schema.StringAttribute{
 				Required:            true,
 				MarkdownDescription: "Organization-unique provider slug. Changing it replaces the provider.",
 				Validators: []validator.String{
 					stringvalidator.LengthBetween(1, 64),
-					stringvalidator.RegexMatches(regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`),
-						"must start with a letter or digit and contain only letters, digits, dots, underscores, or hyphens"),
+					stringvalidator.RegexMatches(
+						regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`),
+						"must start with a letter or digit and contain only "+
+							"letters, digits, dots, underscores, or hyphens"),
 				},
-				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
 			"vendor": schema.StringAttribute{
-				Required: true,
-				MarkdownDescription: "Upstream vendor: openai, anthropic, azure, bedrock, doubleword, google-vertex, groq, " +
-					"huggingface, or mistral. Changing it replaces the provider.",
+				Required:            true,
+				MarkdownDescription: "Upstream vendor: openai, anthropic, azure, bedrock, doubleword, google-vertex, groq, huggingface, or mistral. Changing it replaces the provider.",
 				Validators: []validator.String{
-					stringvalidator.OneOf(
-						"openai", "anthropic", "azure", "bedrock", "doubleword", "google-vertex", "groq", "huggingface", "mistral",
-					),
+					stringvalidator.OneOf("openai", "anthropic", "azure",
+						"bedrock", "doubleword", "google-vertex", "groq",
+						"huggingface", "mistral"),
 				},
-				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
 			"api_key": schema.StringAttribute{
-				Required:  true,
-				Sensitive: true,
-				MarkdownDescription: "Upstream API key. For google-vertex, the service account key JSON. " +
-					"Changing it rotates the credential in place. " +
-					"Logfire never returns this value; Terraform retains it in state. " +
-					"External credential changes cannot be detected. After import, the next apply sets the configured key.",
-				Validators: []validator.String{stringvalidator.LengthAtLeast(1)},
+				Required:            true,
+				Sensitive:           true,
+				MarkdownDescription: "Upstream API key. For google-vertex, the service account key JSON. Changing it rotates the credential in place. Logfire never returns this value; Terraform retains it in state. External credential changes cannot be detected. After import, the next apply sets the configured key.",
+				Validators:          []validator.String{stringvalidator.LengthAtLeast(1)},
 			},
 			"require_pricing": schema.BoolAttribute{
 				Optional:            true,
@@ -75,44 +72,47 @@ func (r *GatewayProviderResource) Schema(
 			"bedrock_api": schema.StringAttribute{
 				Optional:            true,
 				MarkdownDescription: "Bedrock API variant: runtime or mantle. Required only for bedrock; can be updated in place.",
-				Validators:          []validator.String{stringvalidator.OneOf("runtime", "mantle")},
+				Validators: []validator.String{
+					stringvalidator.OneOf("runtime", "mantle"),
+				},
 			},
 			"bedrock_region": schema.StringAttribute{
-				Optional: true,
-				MarkdownDescription: "AWS region used to derive the Bedrock endpoint, for example us-east-1. " +
-					"Required only for bedrock; can be updated in place.",
+				Optional:            true,
+				MarkdownDescription: "AWS region used to derive the Bedrock endpoint, for example us-east-1. Required only for bedrock; can be updated in place.",
 				Validators: []validator.String{
 					stringvalidator.LengthBetween(3, 63),
-					stringvalidator.RegexMatches(regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)+$`),
+					stringvalidator.RegexMatches(
+						regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)+$`),
 						"must be a lowercase AWS region such as us-east-1"),
 				},
 			},
 			"endpoint": schema.StringAttribute{
-				Optional: true,
-				MarkdownDescription: "Upstream endpoint URL, for example https://my-resource.openai.azure.com or " +
-					"https://us-central1-aiplatform.googleapis.com. Required only for azure and google-vertex; " +
-					"can be updated in place.",
+				Optional:            true,
+				MarkdownDescription: "Upstream endpoint URL, for example https://my-resource.openai.azure.com or https://us-central1-aiplatform.googleapis.com. Required only for azure and google-vertex; can be updated in place.",
 				Validators: []validator.String{
-					stringvalidator.RegexMatches(regexp.MustCompile(`^https://[^\s/]+(?:/\S*[^/\s])?$`),
+					stringvalidator.RegexMatches(
+						regexp.MustCompile(`^https://[^\s/]+(?:/\S*[^/\s])?$`),
 						"must be an https URL without a trailing slash"),
 				},
 			},
 			"created_at": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "Timestamp when the provider was created.",
-				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 		},
 	}
 }
 
-// ValidateConfig checks that each vendor sets exactly the endpoint settings it uses.
-func (r *GatewayProviderResource) ValidateConfig(
-	ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse,
-) {
+// ValidateConfig checks that each vendor sets exactly the endpoint settings it
+// uses.
+func (r *GatewayProviderResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
 	var config GatewayProviderModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
-	if resp.Diagnostics.HasError() || config.Vendor.IsUnknown() || config.Vendor.IsNull() {
+	if resp.Diagnostics.HasError() || config.Vendor.IsUnknown() ||
+		config.Vendor.IsNull() {
 		return
 	}
 	vendor := config.Vendor.ValueString()
@@ -129,12 +129,15 @@ func (r *GatewayProviderResource) ValidateConfig(
 		}
 		required := slices.Contains(setting.vendors, vendor)
 		if required && setting.value.IsNull() {
-			resp.Diagnostics.AddAttributeError(path.Root(name), "Missing provider configuration",
+			resp.Diagnostics.AddAttributeError(path.Root(name),
+				"Missing provider configuration",
 				name+" is required when vendor is "+vendor+".")
 		}
 		if !required && !setting.value.IsNull() {
-			resp.Diagnostics.AddAttributeError(path.Root(name), "Unexpected provider configuration",
-				name+" can only be set when vendor is "+strings.Join(setting.vendors, " or ")+".")
+			resp.Diagnostics.AddAttributeError(path.Root(name),
+				"Unexpected provider configuration",
+				name+" can only be set when vendor is "+
+					strings.Join(setting.vendors, " or ")+".")
 		}
 	}
 }

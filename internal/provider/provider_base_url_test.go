@@ -52,6 +52,11 @@ func TestInferBaseURLFromAPIKey(t *testing.T) {
 			apiKey:  "pylf_v2_us_missing-token",
 			wantErr: "invalid api_key format",
 		},
+		{
+			name:    "unsupported version",
+			apiKey:  "pylf_v3_us_abc123",
+			wantErr: `unsupported api_key format "v3"`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -75,17 +80,5 @@ func TestInferBaseURLFromAPIKey(t *testing.T) {
 				t.Fatalf("inferBaseURLFromAPIKey(%q) = %q, want %q", tt.apiKey, got, tt.want)
 			}
 		})
-	}
-}
-
-func TestAPIKeyRegionRejectsUnknownVersion(t *testing.T) {
-	t.Parallel()
-
-	_, err := apiKeyRegion("pylf_v3_us_abc123")
-	if err == nil {
-		t.Fatal("apiKeyRegion succeeded unexpectedly")
-	}
-	if !strings.Contains(err.Error(), `unsupported api_key format "v3"`) {
-		t.Fatalf("apiKeyRegion error = %q", err.Error())
 	}
 }

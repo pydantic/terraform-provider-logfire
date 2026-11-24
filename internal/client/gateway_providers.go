@@ -8,16 +8,17 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 )
 
-// GatewayProviderCredentials contains a write-only upstream API key or service account key.
+// GatewayProviderCredentials contains a write-only upstream API key or service
+// account key.
 type GatewayProviderCredentials struct {
 	Type  string `json:"type"`
 	Value string `json:"value"`
 }
 
-// GatewayProviderConfig contains credentials and the optional Bedrock, Azure, or Vertex endpoint selection.
+// GatewayProviderConfig contains credentials and the optional Bedrock, Azure,
+// or Vertex endpoint selection.
 type GatewayProviderConfig struct {
 	Credentials *GatewayProviderCredentials `json:"credentials,omitempty"`
 	API         string                      `json:"api,omitempty"`
@@ -58,29 +59,24 @@ type GatewayProviderUpdate struct {
 	Pricing  GatewayProviderPricing `json:"pricing"`
 }
 
-// CreateGatewayProvider sends one create attempt because POST is not idempotent.
+const gatewayProvidersPath = "/api/v1/gateway/providers/"
+
+// CreateGatewayProvider sends one create attempt because POST is not
+// idempotent.
 func (c *APIClient) CreateGatewayProvider(ctx context.Context, in GatewayProviderCreate) (*GatewayProviderRead, error) {
-	var out GatewayProviderRead
-	_, err := c.doJSON(
-		disableAutomaticRetries(ctx), http.MethodPost, "/api/v1/gateway/providers/", in, &out, http.StatusCreated,
-	)
-	if err != nil {
-		return nil, gatewayProviderError(err)
-	}
-	return &out, nil
+	out, err := create[GatewayProviderRead](
+		ctx, c, gatewayProvidersPath, in, http.StatusCreated)
+	return out, gatewayProviderError(err)
 }
 
-// GetGatewayProvider reads a provider owned by the authenticated organization.
 func (c *APIClient) GetGatewayProvider(ctx context.Context, id string) (*GatewayProviderRead, error) {
-	var out GatewayProviderRead
-	_, err := c.doJSON(ctx, http.MethodGet, "/api/v1/gateway/providers/"+url.PathEscape(id)+"/", nil, &out, http.StatusOK)
-	if err != nil {
-		return nil, gatewayProviderError(err)
-	}
-	return &out, nil
+	out, err := request[GatewayProviderRead](
+		ctx, c, http.MethodGet, apiPath("gateway", "providers", id), nil)
+	return out, gatewayProviderError(err)
 }
 
-// GatewayProvidersPage is one page of the slug-ordered keyset-paginated provider list.
+// GatewayProvidersPage is one page of the slug-ordered keyset-paginated
+// provider list.
 type GatewayProvidersPage struct {
 	Providers  []GatewayProviderRead `json:"providers"`
 	NextCursor *string               `json:"next_cursor"`
@@ -88,22 +84,20 @@ type GatewayProvidersPage struct {
 
 // ListGatewayProviders returns every provider owned by the authenticated
 // organization, following the list endpoint's keyset pagination. A 404 means
-// the instance predates the Gateway provider management API, so it maps to an
-// upgrade hint rather than a bare API error.
+// the instance predates the Gateway provider management API, because on the
+// public API this route has no 404 of its own (unknown ids live under /{id}/).
+// It maps to an upgrade hint rather than a bare API error.
 func (c *APIClient) ListGatewayProviders(ctx context.Context) ([]GatewayProviderRead, error) {
 	var providers []GatewayProviderRead
 	cursor := ""
 	for {
-		query := url.Values{"limit": []string{"100"}}
-		if cursor != "" {
-			query.Set("cursor", cursor)
-		}
 		var page GatewayProvidersPage
-		_, err := c.doJSON(
-			ctx, http.MethodGet, "/api/v1/gateway/providers/?"+query.Encode(), nil, &page, http.StatusOK,
-		)
+		_, err := c.doJSON(ctx, http.MethodGet,
+			pagePath(gatewayProvidersPath, cursor), nil, &page, http.StatusOK)
 		if err != nil {
-			return nil, gatewayProvidersEndpointUnavailableError(gatewayProviderError(err))
+			return nil, unavailableIfNotFound(gatewayProviderError(err),
+				http.MethodGet, gatewayProvidersPath,
+				"v2026-08-12.01", "logfire-0.13.40")
 		}
 		providers = append(providers, page.Providers...)
 		if page.NextCursor == nil || *page.NextCursor == "" {
@@ -128,54 +122,34 @@ func (c *APIClient) FindGatewayProviderBySlug(ctx context.Context, slug string) 
 	}
 	return nil, &APIError{
 		StatusCode: http.StatusNotFound,
-		Message:    fmt.Sprintf("Gateway provider with slug %q not found in the credential's organization", slug),
+		Message: fmt.Sprintf("Gateway provider with slug %q not found in the "+
+			"credential's organization", slug),
 	}
 }
 
 // UpdateGatewayProvider patches a provider without changing its slug or vendor.
-func (c *APIClient) UpdateGatewayProvider(
-	ctx context.Context, id string, in GatewayProviderUpdate,
-) (*GatewayProviderRead, error) {
-	var out GatewayProviderRead
-	_, err := c.doJSON(ctx, http.MethodPatch, "/api/v1/gateway/providers/"+url.PathEscape(id)+"/", in, &out, http.StatusOK)
-	if err != nil {
-		return nil, gatewayProviderError(err)
-	}
-	return &out, nil
+func (c *APIClient) UpdateGatewayProvider(ctx context.Context, id string, in GatewayProviderUpdate) (*GatewayProviderRead, error) {
+	out, err := request[GatewayProviderRead](
+		ctx, c, http.MethodPatch, apiPath("gateway", "providers", id), in)
+	return out, gatewayProviderError(err)
 }
 
-// DeleteGatewayProvider idempotently deletes a provider and refreshes Gateway configuration.
+// DeleteGatewayProvider idempotently deletes a provider and refreshes Gateway
+// configuration.
 func (c *APIClient) DeleteGatewayProvider(ctx context.Context, id string) error {
-	_, err := c.doJSON(
-		ctx, http.MethodDelete, "/api/v1/gateway/providers/"+url.PathEscape(id)+"/", nil, nil, http.StatusNoContent,
-	)
-	return gatewayProviderError(err)
+	return gatewayProviderError(
+		c.remove(ctx, apiPath("gateway", "providers", id)))
 }
 
-// gatewayProviderError strips upstream error bodies (which may echo
-// credentials) and maps a missing collection route to a version hint.
+// gatewayProviderError drops the body of an upstream error, which may echo
+// credentials from the request.
 func gatewayProviderError(err error) error {
 	var apiError *APIError
 	if errors.As(err, &apiError) {
-		// An upstream error body may echo credentials from the request.
-		return &APIError{StatusCode: apiError.StatusCode, BackendVersion: apiError.BackendVersion}
+		return &APIError{
+			StatusCode:     apiError.StatusCode,
+			BackendVersion: apiError.BackendVersion,
+		}
 	}
 	return err
-}
-
-// gatewayProvidersEndpointUnavailableError translates a 404 from the provider
-// collection route into an actionable upgrade hint. On the public API that
-// route has no 404 of its own (unknown ids live under /{id}/), so a 404 here
-// means the instance predates the Gateway provider management API.
-func gatewayProvidersEndpointUnavailableError(err error) error {
-	if !IsNotFoundError(err) {
-		return err
-	}
-	return &EndpointUnavailableError{
-		Method:         http.MethodGet,
-		Path:           "/api/v1/gateway/providers/",
-		MinimumRelease: "v2026-08-12.01",
-		MinimumChart:   "logfire-0.13.40",
-		BackendVersion: BackendVersionFromError(err),
-	}
 }

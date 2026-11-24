@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 
 	stringvalidator "github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
@@ -22,16 +21,7 @@ import (
 	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
 )
 
-var _ resource.Resource = &FrontendApplicationResource{}
-var _ resource.ResourceWithConfigure = &FrontendApplicationResource{}
-var _ resource.ResourceWithImportState = &FrontendApplicationResource{}
-var _ resource.ResourceWithModifyPlan = &FrontendApplicationResource{}
-
-func NewFrontendApplicationResource() resource.Resource { return &FrontendApplicationResource{} }
-
-type FrontendApplicationResource struct {
-	client *logclient.APIClient
-}
+type FrontendApplicationResource struct{ configured }
 
 type FrontendApplicationModel struct {
 	ID                       types.String `tfsdk:"id"`
@@ -50,9 +40,10 @@ func (r *FrontendApplicationResource) Metadata(ctx context.Context, req resource
 }
 
 func (r *FrontendApplicationResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
+	useState := []planmodifier.String{stringplanmodifier.UseStateForUnknown()}
 	replace := []planmodifier.String{stringplanmodifier.RequiresReplace()}
-	const renameDescription = "Requires replacement unless the new value is the " +
-		"application's current name in Logfire."
+	nonEmpty := []validator.String{stringvalidator.LengthAtLeast(1)}
+	const renameDescription = "Requires replacement unless the new value is the application's current name in Logfire."
 	// Read keeps the configured name after a UI rename, so the config can catch up.
 	replaceUnlessServerName := stringplanmodifier.RequiresReplaceIf(func(ctx context.Context,
 		req planmodifier.StringRequest, resp *stringplanmodifier.RequiresReplaceIfFuncResponse,
@@ -66,38 +57,51 @@ func (r *FrontendApplicationResource) Schema(ctx context.Context, req resource.S
 		MarkdownDescription: "Experimental: the backing management API is currently enabled only in Logfire staging environments. Manages an immutable Logfire frontend application identity and exposes one active restricted browser token. Use `logfire_frontend_application_token` for two-phase rotation. Creation is not retried automatically because the operation is not idempotent; after an uncertain failure, list the applications and import the matching identity instead of applying again.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
-				Computed: true, MarkdownDescription: "Frontend application identifier.",
-				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+				Computed:            true,
+				MarkdownDescription: "Frontend application identifier.",
+				PlanModifiers:       useState,
 			},
 			"project_id": schema.StringAttribute{
-				Required: true, MarkdownDescription: "UUID of the project that owns the application.", PlanModifiers: replace,
-				Validators: []validator.String{stringvalidator.LengthAtLeast(1)},
+				Required:            true,
+				MarkdownDescription: "UUID of the project that owns the application.",
+				PlanModifiers:       replace,
+				Validators:          nonEmpty,
 			},
 			"name": schema.StringAttribute{
-				Required: true, MarkdownDescription: "Application name. Logfire overwrites `service.name` with this value. The API cannot rename an application, so changing this replaces it, unless the new value is its current name in Logfire. After a rename in the Logfire UI, Terraform keeps the configured name and plans no change. Update this value to the new name to follow the rename without a replacement.",
-				PlanModifiers: []planmodifier.String{replaceUnlessServerName},
-				Validators:    []validator.String{stringvalidator.LengthAtLeast(1)},
+				Required:            true,
+				MarkdownDescription: "Application name. Logfire overwrites `service.name` with this value. The API cannot rename an application, so changing this replaces it, unless the new value is its current name in Logfire. After a rename in the Logfire UI, Terraform keeps the configured name and plans no change. Update this value to the new name to follow the rename without a replacement.",
+				PlanModifiers:       []planmodifier.String{replaceUnlessServerName},
+				Validators:          nonEmpty,
 			},
 			"service_namespace": schema.StringAttribute{
-				Optional: true, MarkdownDescription: "Immutable value used to overwrite `service.namespace` when set.", PlanModifiers: replace,
+				Optional:            true,
+				MarkdownDescription: "Immutable value used to overwrite `service.namespace` when set.",
+				PlanModifiers:       replace,
 			},
 			"environment": schema.StringAttribute{
-				Optional: true, MarkdownDescription: "Immutable value used to overwrite `deployment.environment.name` when set.", PlanModifiers: replace,
+				Optional:            true,
+				MarkdownDescription: "Immutable value used to overwrite `deployment.environment.name` when set.",
+				PlanModifiers:       replace,
 			},
 			"adopt_existing_service_name": schema.BoolAttribute{
-				Optional: true, MarkdownDescription: "Allow creation when telemetry already reports under `name`. Set this before replacing `service_namespace` or `environment` without changing `name`.",
+				Optional:            true,
+				MarkdownDescription: "Allow creation when telemetry already reports under `name`. Set this before replacing `service_namespace` or `environment` without changing `name`.",
 			},
 			"created_at": schema.StringAttribute{
-				Computed: true, MarkdownDescription: "Timestamp when the application was created.",
-				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+				Computed:            true,
+				MarkdownDescription: "Timestamp when the application was created.",
+				PlanModifiers:       useState,
 			},
 			"token_id": schema.StringAttribute{
-				Computed: true, MarkdownDescription: "Identifier of an active restricted browser token.",
-				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+				Computed:            true,
+				MarkdownDescription: "Identifier of an active restricted browser token.",
+				PlanModifiers:       useState,
 			},
 			"token": schema.StringAttribute{
-				Computed: true, Sensitive: true, MarkdownDescription: "An active restricted browser token. The provider recovers this value on refresh and import.",
-				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+				Computed:            true,
+				Sensitive:           true,
+				MarkdownDescription: "An active restricted browser token. The provider recovers this value on refresh and import.",
+				PlanModifiers:       useState,
 			},
 		},
 	}
@@ -107,8 +111,7 @@ func (r *FrontendApplicationResource) ModifyPlan(ctx context.Context, req resour
 	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
 		return
 	}
-	var state FrontendApplicationModel
-	var plan FrontendApplicationModel
+	var state, plan FrontendApplicationModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() || plan.AdoptExistingServiceName.IsUnknown() {
@@ -120,7 +123,12 @@ func (r *FrontendApplicationResource) ModifyPlan(ctx context.Context, req resour
 		resp.Diagnostics.AddAttributeError(
 			path.Root("adopt_existing_service_name"),
 			"Same-name replacement requires adoption",
-			"Set adopt_existing_service_name to true before changing service_namespace or environment without changing name. Use lifecycle.create_before_destroy when environment changes. A namespace-only replacement keeps the same unique identity, so it must use destroy-before-create and interrupts ingestion; use a separately named application for a zero-downtime handoff.",
+			"Set adopt_existing_service_name to true before changing "+
+				"service_namespace or environment without changing name. Use "+
+				"lifecycle.create_before_destroy when environment changes. A "+
+				"namespace-only replacement keeps the same unique identity, so "+
+				"it must use destroy-before-create and interrupts ingestion; use "+
+				"a separately named application for a zero-downtime handoff.",
 		)
 	}
 }
@@ -129,45 +137,17 @@ func (r *FrontendApplicationResource) ModifyPlan(ctx context.Context, req resour
 // rename. A plan that matches either keeps the name, so it still needs adoption. Logfire checks
 // names within one project, so a move to another project never needs it.
 func sameNameIdentityReplacementNeedsAdoption(state, plan FrontendApplicationModel, serverName []byte) bool {
-	if state.Name.IsNull() || state.Name.IsUnknown() || plan.Name.IsNull() || plan.Name.IsUnknown() ||
-		!state.ProjectID.Equal(plan.ProjectID) {
+	if plan.Name.IsUnknown() || !state.ProjectID.Equal(plan.ProjectID) {
 		return false
 	}
 	planned := plan.Name.ValueString()
-	if state.Name.ValueString() != planned && !bytes.Equal(serverName, serverNameValue(planned)) {
+	if state.Name.ValueString() != planned &&
+		!bytes.Equal(serverName, serverNameValue(planned)) {
 		return false
 	}
-	identityChanged := !state.ServiceNamespace.Equal(plan.ServiceNamespace) || !state.Environment.Equal(plan.Environment)
-	adopts := !plan.AdoptExistingServiceName.IsNull() && !plan.AdoptExistingServiceName.IsUnknown() && plan.AdoptExistingServiceName.ValueBool()
-	return identityChanged && !adopts
-}
-
-func (r *FrontendApplicationResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		return
-	}
-	c, ok := req.ProviderData.(*logclient.APIClient)
-	if !ok {
-		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *APIClient, got %T", req.ProviderData))
-		return
-	}
-	r.client = c
-}
-
-func optionalString(value types.String) *string {
-	if value.IsNull() || value.IsUnknown() {
-		return nil
-	}
-	v := value.ValueString()
-	return &v
-}
-
-func setOptionalString(target *types.String, value *string) {
-	if value == nil {
-		*target = types.StringNull()
-	} else {
-		*target = types.StringValue(*value)
-	}
+	identityChanged := !state.ServiceNamespace.Equal(plan.ServiceNamespace) ||
+		!state.Environment.Equal(plan.Environment)
+	return identityChanged && !plan.AdoptExistingServiceName.ValueBool()
 }
 
 const serverNameKey = "server_name"
@@ -178,67 +158,68 @@ func serverNameValue(name string) []byte {
 	return b
 }
 
-func frontendApplicationToModel(application *logclient.FrontendApplication, state *FrontendApplicationModel) {
-	state.ID = types.StringValue(application.ID)
-	state.ProjectID = types.StringValue(application.ProjectID)
-	state.Name = types.StringValue(application.Name)
-	setOptionalString(&state.ServiceNamespace, application.ServiceNamespace)
-	setOptionalString(&state.Environment, application.Environment)
-	state.CreatedAt = types.StringValue(application.CreatedAt)
+func frontendApplicationToModel(a *logclient.FrontendApplication) FrontendApplicationModel {
+	return FrontendApplicationModel{
+		ID:               types.StringValue(a.ID),
+		ProjectID:        types.StringValue(a.ProjectID),
+		Name:             types.StringValue(a.Name),
+		ServiceNamespace: types.StringPointerValue(a.ServiceNamespace),
+		Environment:      types.StringPointerValue(a.Environment),
+		CreatedAt:        types.StringValue(a.CreatedAt),
+	}
 }
 
 func (r *FrontendApplicationResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	if r.client == nil {
-		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
-		return
-	}
 	var plan FrontendApplicationModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	out, err := r.client.CreateFrontendApplication(ctx, plan.ProjectID.ValueString(), logclient.FrontendApplicationCreate{
-		Name: plan.Name.ValueString(), ServiceNamespace: optionalString(plan.ServiceNamespace), Environment: optionalString(plan.Environment),
-		AdoptExistingServiceName: !plan.AdoptExistingServiceName.IsNull() && plan.AdoptExistingServiceName.ValueBool(),
-	})
+	out, err := r.client.CreateFrontendApplication(ctx, plan.ProjectID.ValueString(),
+		logclient.FrontendApplicationCreate{
+			Name:                     plan.Name.ValueString(),
+			ServiceNamespace:         plan.ServiceNamespace.ValueStringPointer(),
+			Environment:              plan.Environment.ValueStringPointer(),
+			AdoptExistingServiceName: plan.AdoptExistingServiceName.ValueBool(),
+		})
 	if err != nil {
 		resp.Diagnostics.AddError("Create frontend application failed", err.Error())
 		return
 	}
-	var state FrontendApplicationModel
-	frontendApplicationToModel(&out.FrontendApplication, &state)
+	state := frontendApplicationToModel(&out.FrontendApplication)
 	state.AdoptExistingServiceName = plan.AdoptExistingServiceName
 	state.TokenID = types.StringValue(out.TokenID)
 	state.Token = types.StringValue(out.Token)
-	tflog.Trace(ctx, "created frontend application", map[string]any{"id": out.ID, "project_id": out.ProjectID})
+	tflog.Trace(ctx, "created frontend application",
+		map[string]any{"id": out.ID, "project_id": out.ProjectID})
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
 func selectActiveFrontendToken(tokens []logclient.FrontendApplicationToken, preferredID string) *logclient.FrontendApplicationToken {
+	var first *logclient.FrontendApplicationToken
 	for i := range tokens {
-		if tokens[i].ID == preferredID && tokens[i].Status == "active" && tokens[i].Token != nil {
-			return &tokens[i]
+		t := &tokens[i]
+		if t.Status != "active" || t.Token == nil {
+			continue
+		}
+		if t.ID == preferredID {
+			return t
+		}
+		if first == nil {
+			first = t
 		}
 	}
-	for i := range tokens {
-		if tokens[i].Status == "active" && tokens[i].Token != nil {
-			return &tokens[i]
-		}
-	}
-	return nil
+	return first
 }
 
 func (r *FrontendApplicationResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	if r.client == nil {
-		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
-		return
-	}
 	var state FrontendApplicationModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	application, status, err := r.client.GetFrontendApplication(ctx, state.ProjectID.ValueString(), state.ID.ValueString())
+	application, status, err := r.client.GetFrontendApplication(ctx,
+		state.ProjectID.ValueString(), state.ID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Read frontend application failed", err.Error())
 		return
@@ -247,41 +228,36 @@ func (r *FrontendApplicationResource) Read(ctx context.Context, req resource.Rea
 		resp.State.RemoveResource(ctx)
 		return
 	}
-	var refreshed FrontendApplicationModel
-	frontendApplicationToModel(application, &refreshed)
+	refreshed := frontendApplicationToModel(application)
 	refreshed.AdoptExistingServiceName = state.AdoptExistingServiceName
-	resp.Diagnostics.Append(resp.Private.SetKey(ctx, serverNameKey, serverNameValue(application.Name))...)
+	resp.Diagnostics.Append(resp.Private.SetKey(
+		ctx, serverNameKey, serverNameValue(application.Name))...)
 	if !state.Name.IsNull() {
 		refreshed.Name = state.Name
 	}
-	tokens, err := r.client.ListFrontendApplicationTokens(ctx, application.ProjectID, application.ID)
+	tokens, err := r.client.ListFrontendApplicationTokens(ctx,
+		application.ProjectID, application.ID)
 	if err != nil {
 		resp.Diagnostics.AddError("Read frontend application tokens failed", err.Error())
 		return
 	}
-	preferredID := ""
-	if !state.TokenID.IsNull() && !state.TokenID.IsUnknown() {
-		preferredID = state.TokenID.ValueString()
-	}
-	active := selectActiveFrontendToken(tokens, preferredID)
+	active := selectActiveFrontendToken(tokens, state.TokenID.ValueString())
 	if active == nil {
-		refreshed.TokenID = types.StringNull()
-		refreshed.Token = types.StringNull()
 		resp.Diagnostics.AddWarning(
 			"Frontend application has no active token",
-			"The application remains managed, but its token outputs are null. Add a logfire_frontend_application_token resource to issue a replacement.",
+			"The application remains managed, but its token outputs are "+
+				"null. Add a logfire_frontend_application_token resource to "+
+				"issue a replacement.",
 		)
-		resp.Diagnostics.Append(resp.State.Set(ctx, &refreshed)...)
-		return
+	} else {
+		refreshed.TokenID = types.StringValue(active.ID)
+		refreshed.Token = types.StringValue(*active.Token)
 	}
-	refreshed.TokenID = types.StringValue(active.ID)
-	refreshed.Token = types.StringValue(*active.Token)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &refreshed)...)
 }
 
 func (r *FrontendApplicationResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var state FrontendApplicationModel
-	var plan FrontendApplicationModel
+	var state, plan FrontendApplicationModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
@@ -293,16 +269,14 @@ func (r *FrontendApplicationResource) Update(ctx context.Context, req resource.U
 }
 
 func (r *FrontendApplicationResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	if r.client == nil {
-		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
-		return
-	}
 	var state FrontendApplicationModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if err := r.client.DeleteFrontendApplication(ctx, state.ProjectID.ValueString(), state.ID.ValueString()); err != nil && !logclient.IsNotFoundError(err) {
+	err := r.client.DeleteFrontendApplication(ctx,
+		state.ProjectID.ValueString(), state.ID.ValueString())
+	if err != nil && !logclient.IsNotFoundError(err) {
 		resp.Diagnostics.AddError("Delete frontend application failed", err.Error())
 	}
 }
@@ -310,7 +284,10 @@ func (r *FrontendApplicationResource) Delete(ctx context.Context, req resource.D
 func (r *FrontendApplicationResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	parts, err := splitImportParts(strings.TrimSpace(req.ID), 2)
 	if err != nil {
-		resp.Diagnostics.AddError("Invalid import ID format", `Expected "project_id/application_id". Example: terraform import logfire_frontend_application.app "project-id/application-id"`)
+		resp.Diagnostics.AddError("Invalid import ID format",
+			`Expected "project_id/application_id". Example: `+
+				`terraform import logfire_frontend_application.app `+
+				`"project-id/application-id"`)
 		return
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("project_id"), parts[0])...)

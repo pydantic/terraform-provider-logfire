@@ -89,7 +89,7 @@ func TestDashboardLifecycleWithMissingID(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				r := &DashboardResource{client: client}
+				r := &DashboardResource{configured{client}}
 				state := dashboardIdentityState(t, r, missing.id)
 				got, diags := runDashboardLifecycleOperation(t, r, state, operation)
 				if operation == "read" {
@@ -142,7 +142,7 @@ func TestDashboardLifecycleDoesNotAdoptReusedSlug(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			r := &DashboardResource{client: client}
+			r := &DashboardResource{configured{client}}
 			state := dashboardIdentityState(t, r, types.StringValue("old-dashboard"))
 			got, diags := runDashboardLifecycleOperation(t, r, state, operation)
 			if operation == "update" {

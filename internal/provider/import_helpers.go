@@ -6,42 +6,27 @@ package provider
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	client "github.com/pydantic/terraform-provider-logfire/internal/client"
 )
 
-const importSeparators = "/,|"
-
+// splitImportParts splits an import ID at "/", "," or "|" and trims each
+// segment. With allowedCounts, the segment count must be one of them.
 func splitImportParts(raw string, allowedCounts ...int) ([]string, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
 		return nil, fmt.Errorf("expected a non-empty import ID")
 	}
-	var parts []string
-	segmentStart := 0
-	for i, r := range trimmed {
-		if !strings.ContainsRune(importSeparators, r) {
-			continue
-		}
-		segment := strings.TrimSpace(trimmed[segmentStart:i])
-		if segment == "" {
+	parts := strings.Split(strings.NewReplacer("/", ",", "|", ",").Replace(trimmed), ",")
+	for i, part := range parts {
+		parts[i] = strings.TrimSpace(part)
+		if parts[i] == "" {
 			return nil, fmt.Errorf("import ID contains empty segment")
 		}
-		parts = append(parts, segment)
-		segmentStart = i + 1
 	}
-	segment := strings.TrimSpace(trimmed[segmentStart:])
-	if segment == "" {
-		return nil, fmt.Errorf("import ID contains empty segment")
-	}
-	parts = append(parts, segment)
-	if len(allowedCounts) > 0 {
-		for _, n := range allowedCounts {
-			if len(parts) == n {
-				return parts, nil
-			}
-		}
+	if len(allowedCounts) > 0 && !slices.Contains(allowedCounts, len(parts)) {
 		return nil, fmt.Errorf("invalid import ID segment count %d", len(parts))
 	}
 	return parts, nil

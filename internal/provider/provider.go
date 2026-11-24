@@ -22,9 +22,6 @@ import (
 	"golang.org/x/net/http/httpguts"
 )
 
-// Interface assertions.
-var _ provider.Provider = &LogfireProvider{}
-
 const (
 	defaultUSBaseURL = "https://logfire-us.pydantic.dev"
 	defaultEUBaseURL = "https://logfire-eu.pydantic.dev"
@@ -71,12 +68,12 @@ type LogfireProviderModel struct {
 	CustomHeaders types.Map    `tfsdk:"custom_headers"`
 }
 
-func (p *LogfireProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
+func (p *LogfireProvider) Metadata(_ context.Context, _ provider.MetadataRequest, resp *provider.MetadataResponse) {
 	resp.TypeName = "logfire"
 	resp.Version = p.version
 }
 
-func (p *LogfireProvider) Schema(ctx context.Context, req provider.SchemaRequest, resp *provider.SchemaResponse) {
+func (p *LogfireProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Configure the Logfire API endpoint and credentials used by all resources.",
 		Attributes: map[string]schema.Attribute{
@@ -90,11 +87,8 @@ func (p *LogfireProvider) Schema(ctx context.Context, req provider.SchemaRequest
 				MarkdownDescription: "Bearer token. If omitted, the LOGFIRE_API_KEY environment variable is used.",
 			},
 			"organization": schema.StringAttribute{
-				Optional: true,
-				MarkdownDescription: "Name of the organization that resources act in. Self-hosted instances only. " +
-					"The provider exchanges the instance-admin `api_key` for a short-lived token for this organization. " +
-					"If omitted, the provider uses LOGFIRE_ORGANIZATION. If neither is set, resources act in the organization of the `api_key`. " +
-					"The `organization` argument of `logfire_project` overrides this value.",
+				Optional:            true,
+				MarkdownDescription: "Name of the organization that resources act in. Self-hosted instances only. The provider exchanges the instance-admin `api_key` for a short-lived token for this organization. If omitted, the provider uses LOGFIRE_ORGANIZATION. If neither is set, resources act in the organization of the `api_key`. The `organization` argument of `logfire_project` overrides this value.",
 			},
 			"custom_headers": schema.MapAttribute{
 				ElementType:         types.StringType,
@@ -109,8 +103,7 @@ func (p *LogfireProvider) Schema(ctx context.Context, req provider.SchemaRequest
 func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureRequest, resp *provider.ConfigureResponse) {
 	tflog.Info(ctx, "Configuring Logfire client")
 	var config LogfireProviderModel
-	diags := req.Config.Get(ctx, &config)
-	resp.Diagnostics.Append(diags...)
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -119,8 +112,11 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 		resp.Diagnostics.AddAttributeError(
 			path.Root("base_url"),
 			"Unknown Logfire API Host",
-			"The provider cannot create the Logfire API client as there is an unknown configuration value for the Logfire API endpoint. "+
-				"Either target apply the source of the value first, set the value statically in the configuration, or use the LOGFIRE_BASE_URL environment variable.",
+			"The provider cannot create the Logfire API client as there is an "+
+				"unknown configuration value for the Logfire API endpoint. "+
+				"Either target apply the source of the value first, set the value "+
+				"statically in the configuration, or use the LOGFIRE_BASE_URL "+
+				"environment variable.",
 		)
 	}
 
@@ -128,8 +124,11 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 		resp.Diagnostics.AddAttributeError(
 			path.Root("api_key"),
 			"Unknown Logfire API token",
-			"The provider cannot create the Logfire API client as there is an unknown configuration value for the Logfire API token. "+
-				"Either target apply the source of the value first, set the value statically in the configuration, or use the LOGFIRE_API_KEY environment variable.",
+			"The provider cannot create the Logfire API client as there is an "+
+				"unknown configuration value for the Logfire API token. "+
+				"Either target apply the source of the value first, set the value "+
+				"statically in the configuration, or use the LOGFIRE_API_KEY "+
+				"environment variable.",
 		)
 	}
 
@@ -137,8 +136,10 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 		resp.Diagnostics.AddAttributeError(
 			path.Root("organization"),
 			"Unknown Logfire organization",
-			"The provider cannot create the Logfire API client as there is an unknown configuration value for organization. "+
-				"Set the value statically in the configuration, use the LOGFIRE_ORGANIZATION environment variable, "+
+			"The provider cannot create the Logfire API client as there is an "+
+				"unknown configuration value for organization. "+
+				"Set the value statically in the configuration, use the "+
+				"LOGFIRE_ORGANIZATION environment variable, "+
 				"or pass a name that Terraform knows at plan time.",
 		)
 	}
@@ -147,8 +148,10 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 		resp.Diagnostics.AddAttributeError(
 			path.Root("custom_headers"),
 			"Unknown custom headers",
-			"The provider cannot create the Logfire API client as there is an unknown configuration value for custom_headers. "+
-				"Either target apply the source of the value first or set the value statically in the configuration.",
+			"The provider cannot create the Logfire API client as there is an "+
+				"unknown configuration value for custom_headers. "+
+				"Either target apply the source of the value first or set the "+
+				"value statically in the configuration.",
 		)
 	}
 
@@ -156,15 +159,14 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 		return
 	}
 
-	base_url := os.Getenv("LOGFIRE_BASE_URL")
-	api_key := os.Getenv("LOGFIRE_API_KEY")
-
+	baseURL := os.Getenv("LOGFIRE_BASE_URL")
 	if !config.BaseUrl.IsNull() {
-		base_url = config.BaseUrl.ValueString()
+		baseURL = config.BaseUrl.ValueString()
 	}
 
+	apiKey := os.Getenv("LOGFIRE_API_KEY")
 	if !config.ApiKey.IsNull() {
-		api_key = config.ApiKey.ValueString()
+		apiKey = config.ApiKey.ValueString()
 	}
 
 	organization := os.Getenv("LOGFIRE_ORGANIZATION")
@@ -175,17 +177,20 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 		resp.Diagnostics.AddAttributeError(
 			path.Root("organization"),
 			"Invalid Logfire organization",
-			fmt.Sprintf("The organization %q (from the provider block or LOGFIRE_ORGANIZATION) is not an organization name. "+
+			fmt.Sprintf("The organization %q (from the provider block or "+
+				"LOGFIRE_ORGANIZATION) is not an organization name. "+
 				"An organization name %s.", organization, organizationNameRule),
 		)
 	}
 
-	if api_key == "" {
+	if apiKey == "" {
 		resp.Diagnostics.AddAttributeError(
 			path.Root("api_key"),
 			"Missing Logfire API Api Key",
-			"The provider cannot create the Logfire API client as there is a missing or empty value for the Logfire API Api Key. "+
-				"Set the api_key value in the configuration or use the LOGFIRE_API_KEY environment variable. "+
+			"The provider cannot create the Logfire API client as there is a "+
+				"missing or empty value for the Logfire API Api Key. "+
+				"Set the api_key value in the configuration or use the "+
+				"LOGFIRE_API_KEY environment variable. "+
 				"If either is already set, ensure the value is not empty.",
 		)
 	}
@@ -194,26 +199,29 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 		return
 	}
 
-	if base_url == "" {
-		inferredBaseURL, err := inferBaseURLFromAPIKey(api_key)
+	if baseURL == "" {
+		inferred, err := inferBaseURLFromAPIKey(apiKey)
 		if err != nil {
 			resp.Diagnostics.AddAttributeError(
 				path.Root("base_url"),
 				"Unable to infer Logfire API Base URL",
-				"The provider cannot create the Logfire API client because base_url was not set and the api_key does not identify a supported Logfire SaaS region. "+
+				"The provider cannot create the Logfire API client because base_url "+
+					"was not set and the api_key does not identify a supported "+
+					"Logfire SaaS region. "+
 					fmt.Sprintf("Reason: %s. ", err)+
-					"Set the base_url value in the configuration or use the LOGFIRE_BASE_URL environment variable. "+
+					"Set the base_url value in the configuration or use the "+
+					"LOGFIRE_BASE_URL environment variable. "+
 					"Self-hosted customers should always set base_url explicitly.",
 			)
 			return
 		}
-		base_url = inferredBaseURL
+		baseURL = inferred
 	}
 
-	tflog.Debug(ctx, "logfire endpoint", map[string]interface{}{"base_url": base_url})
-	ua := "terraform-provider-logfire"
+	tflog.Debug(ctx, "logfire endpoint", map[string]any{"base_url": baseURL})
+	userAgent := "terraform-provider-logfire"
 	if p.version != "" {
-		ua = fmt.Sprintf("%s/%s", ua, p.version)
+		userAgent += "/" + p.version
 	}
 
 	headers, headerDiags := customHeadersFromConfig(ctx, config.CustomHeaders)
@@ -226,13 +234,12 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 	}
 
 	apiClient, err := client.NewAPIClient(
-		base_url,
-		api_key,
+		baseURL,
+		apiKey,
 		nil,
-		client.WithUserAgent(ua),
+		client.WithUserAgent(userAgent),
 		client.WithAdditionalHeaders(headers),
 		client.WithDashboardManager(p.dashboardManager))
-
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid provider configuration", err.Error())
 		return
@@ -247,10 +254,6 @@ func (p *LogfireProvider) Configure(ctx context.Context, req provider.ConfigureR
 func customHeadersFromConfig(ctx context.Context, config types.Map) (http.Header, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	headers := http.Header{}
-	if config.IsNull() {
-		return headers, diags
-	}
-
 	var values map[string]string
 	diags.Append(config.ElementsAs(ctx, &values, false)...)
 	if diags.HasError() {
@@ -259,6 +262,7 @@ func customHeadersFromConfig(ctx context.Context, config types.Map) (http.Header
 
 	for name, value := range values {
 		headerPath := path.Root("custom_headers").AtMapKey(name)
+		_, reserved := reservedCustomHeaders[strings.ToLower(name)]
 		switch {
 		case name == "":
 			diags.AddAttributeError(
@@ -272,11 +276,12 @@ func customHeadersFromConfig(ctx context.Context, config types.Map) (http.Header
 				"Invalid custom header name",
 				fmt.Sprintf("%q is not a valid HTTP header name.", name),
 			)
-		case isReservedCustomHeader(name):
+		case reserved:
 			diags.AddAttributeError(
 				headerPath,
 				"Reserved custom header",
-				fmt.Sprintf("%q is managed by the provider and cannot be configured in custom_headers.", name),
+				fmt.Sprintf("%q is managed by the provider and cannot be configured "+
+					"in custom_headers.", name),
 			)
 		case value == "":
 			diags.AddAttributeError(
@@ -288,7 +293,8 @@ func customHeadersFromConfig(ctx context.Context, config types.Map) (http.Header
 			diags.AddAttributeError(
 				headerPath,
 				"Invalid custom header value",
-				fmt.Sprintf("Custom header %q has a value that is not a valid HTTP header value.", name),
+				fmt.Sprintf("Custom header %q has a value that is not a valid HTTP "+
+					"header value.", name),
 			)
 		default:
 			headers.Set(name, value)
@@ -298,19 +304,18 @@ func customHeadersFromConfig(ctx context.Context, config types.Map) (http.Header
 	return headers, diags
 }
 
-func isReservedCustomHeader(name string) bool {
-	_, ok := reservedCustomHeaders[strings.ToLower(name)]
-	return ok
-}
-
 // Cloud API keys encode the target region as pylf_v{1,2}_{region}_...
 func inferBaseURLFromAPIKey(apiKey string) (string, error) {
-	region, err := apiKeyRegion(apiKey)
-	if err != nil {
-		return "", err
+	parts := strings.SplitN(apiKey, "_", 5)
+	switch {
+	case len(parts) < 4 || parts[0] != "pylf",
+		parts[1] == "v2" && len(parts) < 5:
+		return "", fmt.Errorf("invalid api_key format")
+	case parts[1] != "v1" && parts[1] != "v2":
+		return "", fmt.Errorf("unsupported api_key format %q", parts[1])
 	}
 
-	switch region {
+	switch region := parts[2]; region {
 	case "us":
 		return defaultUSBaseURL, nil
 	case "eu":
@@ -320,50 +325,38 @@ func inferBaseURLFromAPIKey(apiKey string) (string, error) {
 	}
 }
 
-func apiKeyRegion(apiKey string) (string, error) {
-	parts := strings.SplitN(apiKey, "_", 5)
-	if len(parts) < 4 || parts[0] != "pylf" {
-		return "", fmt.Errorf("invalid api_key format")
-	}
-
-	switch parts[1] {
-	case "v1":
-		return parts[2], nil
-	case "v2":
-		if len(parts) < 5 {
-			return "", fmt.Errorf("invalid api_key format")
-		}
-		return parts[2], nil
-	default:
-		return "", fmt.Errorf("unsupported api_key format %q", parts[1])
-	}
-}
-
-func (p *LogfireProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
+func (p *LogfireProvider) DataSources(_ context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
-		NewPagerDutyServiceDataSource,
+		func() datasource.DataSource { return &PagerDutyServiceDataSource{} },
 	}
 }
 
-func (p *LogfireProvider) Resources(ctx context.Context) []func() resource.Resource {
+func (p *LogfireProvider) Resources(_ context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
-		NewAlertResource,
-		NewAPIKeyResource,
-		NewChannelResource,
-		NewDashboardResource,
-		NewFrontendApplicationResource,
-		NewFrontendApplicationTokenResource,
-		NewGatewayAPIKeyResource,
-		NewGatewayEndpointResource,
-		NewGatewayProjectSpendingLimitsResource,
-		NewGatewayProviderResource,
-		NewGatewaySpendingLimitsResource,
-		NewGroupMappingsResource,
-		NewOrganizationResource,
-		NewProjectResource,
+		func() resource.Resource { return &AlertResource{} },
+		func() resource.Resource { return &APIKeyResource{} },
+		func() resource.Resource { return &ChannelResource{} },
+		func() resource.Resource { return &DashboardResource{} },
+		func() resource.Resource { return &FrontendApplicationResource{} },
+		func() resource.Resource { return &FrontendApplicationTokenResource{} },
+		func() resource.Resource { return &GatewayAPIKeyResource{} },
+		func() resource.Resource { return &GatewayEndpointResource{} },
+		func() resource.Resource { return &GatewayProjectSpendingLimitsResource{} },
+		func() resource.Resource { return &GatewayProviderResource{} },
+		func() resource.Resource { return &GatewaySpendingLimitsResource{} },
+		func() resource.Resource { return &GroupMappingsResource{} },
+		func() resource.Resource { return &OrganizationResource{} },
+		func() resource.Resource { return &ProjectResource{} },
 		NewReadTokenResource,
-		NewScheduleResource,
-		NewSloResource,
+		func() resource.Resource { return &ScheduleResource{} },
+		func() resource.Resource { return &SloResource{} },
 		NewWriteTokenResource,
 	}
+}
+
+// configured gives a resource the provider's API client.
+type configured struct{ client *client.APIClient }
+
+func (c *configured) Configure(_ context.Context, req resource.ConfigureRequest, _ *resource.ConfigureResponse) {
+	c.client, _ = req.ProviderData.(*client.APIClient)
 }

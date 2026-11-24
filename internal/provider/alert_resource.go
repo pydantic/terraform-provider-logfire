@@ -29,15 +29,7 @@ import (
 	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
 )
 
-var _ resource.Resource = &AlertResource{}
-var _ resource.ResourceWithConfigure = &AlertResource{}
-var _ resource.ResourceWithImportState = &AlertResource{}
-
-func NewAlertResource() resource.Resource { return &AlertResource{} }
-
-type AlertResource struct {
-	client *logclient.APIClient
-}
+type AlertResource struct{ configured }
 
 // Absolute bounds accepted by the API for alert durations. These are the only
 // limits that hold regardless of the other field; the API additionally caps
@@ -75,13 +67,11 @@ type AlertInstancePolicyModel struct {
 	MissingBehavior types.String   `tfsdk:"missing_behavior"`
 }
 
-func (r *AlertResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
+func (r *AlertResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_alert"
 }
 
-func (r *AlertResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
-	notification_constraint := []string{"has_matches", "has_matches_changed", "matches_changed", "starts_having_matches", "instances_changed"}
-
+func (r *AlertResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = rschema.Schema{
 		MarkdownDescription: "Manages a Logfire alert.",
 		Attributes: map[string]rschema.Attribute{
@@ -118,20 +108,17 @@ func (r *AlertResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 				MarkdownDescription: "SQL / query string used by the alert.",
 			},
 			"time_window": rschema.StringAttribute{
-				CustomType: alertDurationType{},
-				Required:   true,
-				MarkdownDescription: "Lookback window, as a duration from `1m` to `30d` (for example `20m`, `1h30m`, `7d`). " +
-					"The API caps this relative to `frequency` - a longer window requires a less frequent evaluation - and reports that itself. " +
-					"Equivalent spellings are accepted and kept as written.",
+				CustomType:          alertDurationType{},
+				Required:            true,
+				MarkdownDescription: "Lookback window, as a duration from `1m` to `30d` (for example `20m`, `1h30m`, `7d`). The API caps this relative to `frequency` - a longer window requires a less frequent evaluation - and reports that itself. Equivalent spellings are accepted and kept as written.",
 				Validators: []validator.String{
 					alertDurationValidator{min: alertTimeWindowMin, max: alertTimeWindowMax},
 				},
 			},
 			"frequency": rschema.StringAttribute{
-				CustomType: alertDurationType{},
-				Required:   true,
-				MarkdownDescription: "Evaluation frequency, as a duration from `1m` to `24h` (for example `5m`, `20m`, `1h`). " +
-					"Equivalent spellings are accepted and kept as written.",
+				CustomType:          alertDurationType{},
+				Required:            true,
+				MarkdownDescription: "Evaluation frequency, as a duration from `1m` to `24h` (for example `5m`, `20m`, `1h`). Equivalent spellings are accepted and kept as written.",
 				Validators: []validator.String{
 					alertDurationValidator{min: alertFrequencyMin, max: alertFrequencyMax},
 				},
@@ -149,16 +136,20 @@ func (r *AlertResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 				MarkdownDescription: "Deployment environments to scope the query to. Empty = all environments (no filter).",
 			},
 			"channel_assignments": channelAssignmentsAttribute(
-				"Channels to notify, each with an optional delivery schedule. Set it to `[]` to notify no channel. "+
-					"This is the same type as `alerts.<tier>.channel_assignments` on `logfire_slo`, "+
-					"so one value (for example a `locals` entry) can configure both.",
+				"Channels to notify, each with an optional delivery schedule. Set it to "+
+					"`[]` to notify no channel. This is the same type as "+
+					"`alerts.<tier>.channel_assignments` on `logfire_slo`, so one value "+
+					"(for example a `locals` entry) can configure both.",
 				channelAssignmentsRequired,
 			),
 			"notify_when": rschema.StringAttribute{
 				Required:            true,
 				MarkdownDescription: "Notification rule. Must match API enum. `instances_changed` needs `instance_policy`. It sends one notification for each run that opens or closes occurrences, listing them, from Logfire v2026-11-13.01.",
 				Validators: []validator.String{
-					stringvalidator.OneOf(notification_constraint...),
+					stringvalidator.OneOf(
+						"has_matches", "has_matches_changed", "matches_changed",
+						"starts_having_matches", "instances_changed",
+					),
 				},
 			},
 			"active": rschema.BoolAttribute{
@@ -167,11 +158,8 @@ func (r *AlertResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 				MarkdownDescription: "Whether the alert is active (defaults to true on creation).",
 			},
 			"instance_policy": rschema.SingleNestedAttribute{
-				Optional: true,
-				MarkdownDescription: "Track each result row as its own occurrence, keyed by the identity columns, instead of evaluating the whole result as one. " +
-					"Needs an organization with alert instance policies enabled, otherwise the API answers 403 `alert_instances_not_enabled`. " +
-					"Remove the attribute to evaluate the whole result as one again. " +
-					"The API's deprecated `continuity_runs` is not exposed. A new policy gets the value of `missing_runs`, and a change keeps the stored value unless it is lower than `missing_runs`.",
+				Optional:            true,
+				MarkdownDescription: "Track each result row as its own occurrence, keyed by the identity columns, instead of evaluating the whole result as one. Needs an organization with alert instance policies enabled, otherwise the API answers 403 `alert_instances_not_enabled`. Remove the attribute to evaluate the whole result as one again. The API's deprecated `continuity_runs` is not exposed. A new policy gets the value of `missing_runs`, and a change keeps the stored value unless it is lower than `missing_runs`.",
 				Attributes: map[string]rschema.Attribute{
 					"identity_columns": rschema.ListAttribute{
 						ElementType:         types.StringType,
@@ -180,7 +168,9 @@ func (r *AlertResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 						Validators: []validator.List{
 							listvalidator.SizeBetween(1, 8),
 							listvalidator.UniqueValues(),
-							listvalidator.ValueStringsAre(stringvalidator.UTF8LengthBetween(1, 128)),
+							listvalidator.ValueStringsAre(
+								stringvalidator.UTF8LengthBetween(1, 128),
+							),
 						},
 					},
 					"pending_runs": rschema.Int64Attribute{
@@ -196,27 +186,15 @@ func (r *AlertResource) Schema(ctx context.Context, req resource.SchemaRequest, 
 					"missing_behavior": rschema.StringAttribute{
 						Required:            true,
 						MarkdownDescription: "The close reason of an occurrence that is missing for `missing_runs` runs. One of `no_longer_matching` or `expire`.",
-						Validators:          []validator.String{stringvalidator.OneOf("no_longer_matching", "expire")},
+						Validators: []validator.String{
+							stringvalidator.OneOf("no_longer_matching", "expire"),
+						},
 					},
 				},
 			},
 		},
 	}
 }
-
-func (r *AlertResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		return
-	}
-	c, ok := req.ProviderData.(*logclient.APIClient)
-	if !ok {
-		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *APIClient, got %T", req.ProviderData))
-		return
-	}
-	r.client = c
-}
-
-// --- Helpers ---
 
 func durToISO8601(d time.Duration) string {
 	if d < 0 {
@@ -247,33 +225,20 @@ func iso8601ToDuration(s string) (time.Duration, error) {
 	if m == nil {
 		return 0, fmt.Errorf("invalid ISO-8601 duration: %q", s)
 	}
-	parse := func(x string) (int, error) {
+	var n [4]int
+	for i, x := range m[1:] {
 		if x == "" {
-			return 0, nil
+			continue
 		}
-		return strconv.Atoi(x)
+		var err error
+		if n[i], err = strconv.Atoi(x); err != nil {
+			return 0, err
+		}
 	}
-	days, err := parse(m[1])
-	if err != nil {
-		return 0, err
-	}
-	h, err := parse(m[2])
-	if err != nil {
-		return 0, err
-	}
-	mins, err := parse(m[3])
-	if err != nil {
-		return 0, err
-	}
-	sec, err := parse(m[4])
-	if err != nil {
-		return 0, err
-	}
-
-	return time.Duration(days)*24*time.Hour +
-		time.Duration(h)*time.Hour +
-		time.Duration(mins)*time.Minute +
-		time.Duration(sec)*time.Second, nil
+	return time.Duration(n[0])*24*time.Hour +
+		time.Duration(n[1])*time.Hour +
+		time.Duration(n[2])*time.Minute +
+		time.Duration(n[3])*time.Second, nil
 }
 
 func durationCompact(d time.Duration) string {
@@ -309,11 +274,10 @@ const defaultAlertWatermark = 10 * time.Second
 
 func parseDurationText(raw string) (time.Duration, error) {
 	raw = strings.TrimSpace(raw)
-	// Interpret as Go duration string (e.g. "5m30s", "24h").
 	if d, err := time.ParseDuration(raw); err == nil {
 		return d, nil
 	}
-	// Also accept day shorthand used by the provider schema (e.g. "7d", "30d").
+	// Also accept the day shorthand of the provider schema, such as "7d".
 	if strings.HasSuffix(raw, "d") {
 		days, err := strconv.Atoi(strings.TrimSuffix(raw, "d"))
 		if err == nil {
@@ -344,60 +308,54 @@ func alertInstancePolicyToAPI(m *AlertInstancePolicyModel) *logclient.AlertInsta
 // policy, instead of showing its raw problem body.
 func addAlertSaveError(diags *diag.Diagnostics, summary string, err error) {
 	var apiErr *logclient.APIError
-	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusForbidden && strings.Contains(apiErr.Message, "alert_instances_not_enabled") {
-		diags.AddAttributeError(path.Root("instance_policy"), "Alert instance policies are not enabled",
-			"The API refused instance_policy (403 alert_instances_not_enabled): this organization has not enabled instance policies. "+
-				"Ask Logfire support to enable them, or remove instance_policy and use another notify_when value.")
+	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusForbidden &&
+		strings.Contains(apiErr.Message, "alert_instances_not_enabled") {
+		diags.AddAttributeError(
+			path.Root("instance_policy"),
+			"Alert instance policies are not enabled",
+			"The API refused instance_policy (403 alert_instances_not_enabled): this "+
+				"organization has not enabled instance policies. Ask Logfire support to "+
+				"enable them, or remove instance_policy and use another notify_when value.",
+		)
 		return
 	}
 	diags.AddError(summary, err.Error())
 }
 
-// addIgnoredPolicyError reports a Logfire version without instance policies, which saves the
-// alert and drops instance_policy. The caller still saves the alert Logfire returned.
+// addIgnoredPolicyError reports a Logfire version without instance policies,
+// which saves the alert and drops instance_policy. The caller still saves the
+// alert Logfire returned.
 func addIgnoredPolicyError(diags *diag.Diagnostics, planned *AlertInstancePolicyModel, saved *logclient.AlertRead) {
 	if planned != nil && saved.InstancePolicy == nil {
-		diags.AddAttributeError(path.Root("instance_policy"), "Logfire ignored instance_policy",
-			"This Logfire version does not support alert instance policies, so it saved the alert without one. "+
-				"Upgrade Logfire, or remove instance_policy.")
+		diags.AddAttributeError(
+			path.Root("instance_policy"),
+			"Logfire ignored instance_policy",
+			"This Logfire version does not support alert instance policies, so it saved "+
+				"the alert without one. Upgrade Logfire, or remove instance_policy.",
+		)
 	}
 }
 
 func alertModelToCreate(ctx context.Context, m *AlertModel) (logclient.AlertCreate, diag.Diagnostics) {
-	tw, err := parseDurationText(m.TimeWindow.ValueString())
-	if err != nil {
-		return logclient.AlertCreate{}, diag.Diagnostics{diag.NewErrorDiagnostic("Invalid duration", fmt.Sprintf("time_window: %v", err))}
-	}
-	fr, err := parseDurationText(m.Frequency.ValueString())
-	if err != nil {
-		return logclient.AlertCreate{}, diag.Diagnostics{diag.NewErrorDiagnostic("Invalid duration", fmt.Sprintf("frequency: %v", err))}
-	}
-	ch := []logclient.ChannelAssignment{}
-	if !m.ChannelAssignments.IsNull() && !m.ChannelAssignments.IsUnknown() {
-		var diags diag.Diagnostics
-		ch, diags = channelAssignmentsToAPI(ctx, m.ChannelAssignments)
-		if diags.HasError() {
-			return logclient.AlertCreate{}, diags
-		}
+	tw, _ := parseDurationText(m.TimeWindow.ValueString())
+	fr, _ := parseDurationText(m.Frequency.ValueString())
+	ch, diags := channelAssignmentsToAPI(ctx, m.ChannelAssignments)
+	if diags.HasError() {
+		return logclient.AlertCreate{}, diags
 	}
 	var envs []string
-	if !m.Environments.IsNull() && !m.Environments.IsUnknown() {
+	if !m.Environments.IsNull() {
 		if diags := m.Environments.ElementsAs(ctx, &envs, false); diags.HasError() {
 			return logclient.AlertCreate{}, diags
 		}
 	}
-	desc := ""
-	if !m.Description.IsNull() && !m.Description.IsUnknown() {
-		desc = m.Description.ValueString()
-	}
 	var active *bool
-	if !m.Active.IsNull() && !m.Active.IsUnknown() {
-		v := m.Active.ValueBool()
-		active = &v
+	if !m.Active.IsUnknown() {
+		active = m.Active.ValueBoolPointer()
 	}
 	return logclient.AlertCreate{
 		Name:               m.Name.ValueString(),
-		Description:        &desc,
+		Description:        new(m.Description.ValueString()),
 		Active:             active,
 		Query:              m.Query.ValueString(),
 		TimeWindow:         durToISO8601(tw),
@@ -416,33 +374,28 @@ func alertReadToModel(ctx context.Context, a *logclient.AlertRead, m *AlertModel
 		m.ProjectID = types.StringValue(a.ProjectID)
 	}
 	m.Name = types.StringValue(a.Name)
-	if a.Description == nil || (*a.Description == "" && (m.Description.IsNull() || m.Description.IsUnknown())) {
+	if a.Description == nil || (*a.Description == "" && m.Description.IsNull()) {
 		m.Description = types.StringNull()
 	} else {
 		m.Description = types.StringValue(*a.Description)
 	}
 	m.Query = types.StringValue(a.Query)
 
-	if d, err := iso8601ToDuration(a.TimeWindow); err == nil {
-		m.TimeWindow = newAlertDurationValue(durationCompact(d))
-	} else {
-		m.TimeWindow = newAlertDurationValue("")
+	compact := func(iso string) string {
+		d, err := iso8601ToDuration(iso)
+		if err != nil {
+			return ""
+		}
+		return durationCompact(d)
 	}
-	if d, err := iso8601ToDuration(a.Frequency); err == nil {
-		m.Frequency = newAlertDurationValue(durationCompact(d))
-	} else {
-		m.Frequency = newAlertDurationValue("")
-	}
-	if d, err := iso8601ToDuration(a.Watermark); err == nil {
-		m.Watermark = types.StringValue(durationCompact(d))
-	} else {
-		m.Watermark = types.StringValue("")
-	}
+	m.TimeWindow = newAlertDurationValue(compact(a.TimeWindow))
+	m.Frequency = newAlertDurationValue(compact(a.Frequency))
+	m.Watermark = types.StringValue(compact(a.Watermark))
 
 	// The API returns an empty list when the alert is not scoped to any
 	// environment; keep the attribute null when the config omitted it so an
 	// omitted attribute and an empty set round-trip without spurious diffs.
-	if len(a.Environments) == 0 && (m.Environments.IsNull() || m.Environments.IsUnknown()) {
+	if len(a.Environments) == 0 && m.Environments.IsNull() {
 		m.Environments = types.SetNull(types.StringType)
 	} else {
 		envSet, diags := types.SetValueFrom(ctx, types.StringType, a.Environments)
@@ -459,7 +412,9 @@ func alertReadToModel(ctx context.Context, a *logclient.AlertRead, m *AlertModel
 	if assignments == nil {
 		assignments = make([]logclient.ChannelAssignment, 0, len(a.Channels))
 		for _, channel := range a.Channels {
-			assignments = append(assignments, logclient.ChannelAssignment{ChannelID: channel.ID, ScheduleID: channel.ScheduleID})
+			assignments = append(assignments, logclient.ChannelAssignment{
+				ChannelID: channel.ID, ScheduleID: channel.ScheduleID,
+			})
 		}
 	}
 	set, diags := channelAssignmentsFromAPI(ctx, assignments)
@@ -485,22 +440,10 @@ func alertReadToModel(ctx context.Context, a *logclient.AlertRead, m *AlertModel
 	return nil
 }
 
-// --- CRUD ---
-
 func (r *AlertResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	if r.client == nil {
-		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
-		return
-	}
-
 	var plan AlertModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	if plan.ProjectID.IsNull() || plan.ProjectID.IsUnknown() || plan.ProjectID.ValueString() == "" {
-		resp.Diagnostics.AddError("Missing project_id", "The alert requires a project_id to construct API paths.")
 		return
 	}
 
@@ -518,58 +461,34 @@ func (r *AlertResource) Create(ctx context.Context, req resource.CreateRequest, 
 	}
 
 	// Refetch alert to populate its channels.
-	fresh, _, gerr := r.client.GetAlert(ctx, projectID, out.ID)
-	if gerr != nil {
-		fresh = out
+	if fresh, _, err := r.client.GetAlert(ctx, projectID, out.ID); err == nil {
+		out = fresh
 	}
 
 	state := plan
-	state.ProjectID = plan.ProjectID
-	if diags := alertReadToModel(ctx, fresh, &state); diags.HasError() {
+	if diags := alertReadToModel(ctx, out, &state); diags.HasError() {
 		resp.Diagnostics.Append(diags...)
 		return
 	}
-	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
-		state.ProjectID = plan.ProjectID
-	}
-	addIgnoredPolicyError(&resp.Diagnostics, plan.InstancePolicy, fresh)
+	addIgnoredPolicyError(&resp.Diagnostics, plan.InstancePolicy, out)
 
-	tflog.Trace(ctx, "created alert", map[string]any{"id": state.ID.ValueString(), "project_id": projectID})
+	tflog.Trace(ctx, "created alert", map[string]any{
+		"id": state.ID.ValueString(), "project_id": projectID,
+	})
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
 func (r *AlertResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	if r.client == nil {
-		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
-		return
-	}
-
 	var state AlertModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
-		resp.Diagnostics.AddError("Missing project_id", "Cannot read alert because the state is missing a project_id.")
-		return
-	}
-
-	if state.ID.IsNull() || state.ID.IsUnknown() || state.ID.ValueString() == "" {
-		resp.State.RemoveResource(ctx)
-		return
-	}
-
 	projectID := state.ProjectID.ValueString()
-	id := state.ID.ValueString()
-
-	out, status, err := r.client.GetAlert(ctx, projectID, id)
+	out, status, err := r.client.GetAlert(ctx, projectID, state.ID.ValueString())
 	if err != nil {
-		if status == 404 {
-			resp.State.RemoveResource(ctx)
-			return
-		}
-		if projectMissing(ctx, r.client, projectID) {
+		if status == 404 || projectMissing(ctx, r.client, projectID) {
 			resp.State.RemoveResource(ctx)
 			return
 		}
@@ -581,133 +500,62 @@ func (r *AlertResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		resp.Diagnostics.Append(diags...)
 		return
 	}
-	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
-		state.ProjectID = types.StringValue(projectID)
-	}
-
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
 func (r *AlertResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	if r.client == nil {
-		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
-		return
-	}
-
-	var plan AlertModel
+	var plan, state AlertModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	var state AlertModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
-		return
-	}
-	if state.ID.IsNull() || state.ID.IsUnknown() {
-		resp.Diagnostics.AddError("Missing ID", "Cannot update alert because the current state has no ID.")
-		return
-	}
-
-	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
-		resp.Diagnostics.AddError("Missing project_id", "Cannot update alert because the current state has no project_id.")
 		return
 	}
 
 	projectID := state.ProjectID.ValueString()
 	id := state.ID.ValueString()
 
-	var payload logclient.AlertUpdate
-	if !plan.Name.IsNull() && !plan.Name.IsUnknown() {
-		v := plan.Name.ValueString()
-		payload.Name = &v
+	tw, _ := parseDurationText(plan.TimeWindow.ValueString())
+	fr, _ := parseDurationText(plan.Frequency.ValueString())
+	payload := logclient.AlertUpdate{
+		Name:       plan.Name.ValueStringPointer(),
+		Query:      plan.Query.ValueStringPointer(),
+		TimeWindow: new(durToISO8601(tw)),
+		Frequency:  new(durToISO8601(fr)),
+		NotifyWhen: plan.NotifyWhen.ValueStringPointer(),
 	}
-	if !plan.Description.IsUnknown() {
-		switch {
-		case plan.Description.IsNull():
-			if !state.Description.IsNull() && !state.Description.IsUnknown() {
-				empty := ""
-				payload.Description = &empty
-			}
-		default:
-			v := plan.Description.ValueString()
-			if state.Description.IsNull() || state.Description.IsUnknown() || state.Description.ValueString() != v {
-				payload.Description = &v
-			}
-		}
-	} else if !state.Description.IsNull() && !state.Description.IsUnknown() {
-		v := state.Description.ValueString()
-		payload.Description = &v
+	if !plan.Description.Equal(state.Description) {
+		payload.Description = new(plan.Description.ValueString())
 	}
-	if !plan.Active.IsNull() && !plan.Active.IsUnknown() {
-		v := plan.Active.ValueBool()
-		payload.Active = &v
-	}
-	if !plan.Query.IsNull() && !plan.Query.IsUnknown() {
-		v := plan.Query.ValueString()
-		payload.Query = &v
+	if !plan.Active.IsUnknown() {
+		payload.Active = plan.Active.ValueBoolPointer()
 	}
 
-	if !plan.TimeWindow.IsNull() && !plan.TimeWindow.IsUnknown() {
-		d, err := parseDurationText(plan.TimeWindow.ValueString())
-		if err != nil {
-			resp.Diagnostics.AddError("Invalid time_window", err.Error())
-			return
-		}
-		v := durToISO8601(d)
-		payload.TimeWindow = &v
-	}
-	if !plan.Frequency.IsNull() && !plan.Frequency.IsUnknown() {
-		d, err := parseDurationText(plan.Frequency.ValueString())
-		if err != nil {
-			resp.Diagnostics.AddError("Invalid frequency", err.Error())
-			return
-		}
-		v := durToISO8601(d)
-		payload.Frequency = &v
-	}
-
-	if !plan.Environments.IsUnknown() {
-		switch {
-		case plan.Environments.IsNull():
-			if !state.Environments.IsNull() && !state.Environments.IsUnknown() {
-				// Attribute removed from config: clear the environment filter.
-				empty := []string{}
-				payload.Environments = &empty
-			}
-		default:
-			var envs []string
-			if diags := plan.Environments.ElementsAs(ctx, &envs, false); diags.HasError() {
-				resp.Diagnostics.Append(diags...)
-				return
-			}
-			if envs == nil {
-				envs = []string{}
-			}
-			payload.Environments = &envs
-		}
-	}
-
-	if !plan.ChannelAssignments.IsNull() && !plan.ChannelAssignments.IsUnknown() {
-		assignments, diags := channelAssignmentsToAPI(ctx, plan.ChannelAssignments)
-		if diags.HasError() {
+	// Removing the attribute from the config clears the environment filter.
+	if !plan.Environments.IsNull() || !state.Environments.IsNull() {
+		var envs []string
+		if diags := plan.Environments.ElementsAs(ctx, &envs, false); diags.HasError() {
 			resp.Diagnostics.Append(diags...)
 			return
 		}
-		payload.ChannelAssignments = &assignments
+		if envs == nil {
+			envs = []string{}
+		}
+		payload.Environments = &envs
 	}
 
-	if !plan.NotifyWhen.IsNull() && !plan.NotifyWhen.IsUnknown() {
-		v := plan.NotifyWhen.ValueString()
-		payload.NotifyWhen = &v
+	assignments, diags := channelAssignmentsToAPI(ctx, plan.ChannelAssignments)
+	if diags.HasError() {
+		resp.Diagnostics.Append(diags...)
+		return
 	}
+	payload.ChannelAssignments = &assignments
 
 	// An unchanged policy is left out so the API keeps it. A removed one is
 	// sent as null.
-	if want := alertInstancePolicyToAPI(plan.InstancePolicy); !reflect.DeepEqual(want, alertInstancePolicyToAPI(state.InstancePolicy)) {
-		// Logfire releases through v2026-11-05.01 use continuity_runs, so a change keeps the stored
-		// value. The API refuses one below missing_runs.
+	want := alertInstancePolicyToAPI(plan.InstancePolicy)
+	if !reflect.DeepEqual(want, alertInstancePolicyToAPI(state.InstancePolicy)) {
+		// Logfire releases through v2026-11-05.01 use continuity_runs, so a change
+		// keeps the stored value. The API refuses one below missing_runs.
 		if want != nil && state.InstancePolicy != nil {
 			current, _, err := r.client.GetAlert(ctx, projectID, id)
 			if err != nil {
@@ -728,61 +576,35 @@ func (r *AlertResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	}
 
 	newState := plan
-	newState.ProjectID = state.ProjectID
 	if diags := alertReadToModel(ctx, out, &newState); diags.HasError() {
 		resp.Diagnostics.Append(diags...)
 		return
-	}
-	if newState.ProjectID.IsNull() || newState.ProjectID.IsUnknown() || newState.ProjectID.ValueString() == "" {
-		newState.ProjectID = state.ProjectID
 	}
 	addIgnoredPolicyError(&resp.Diagnostics, plan.InstancePolicy, out)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &newState)...)
 }
 
 func (r *AlertResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	if r.client == nil {
-		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
-		return
-	}
-
 	var state AlertModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
-		resp.Diagnostics.AddError("Missing project_id", "Cannot delete alert because the state is missing a project_id.")
-		return
-	}
-
 	projectID := state.ProjectID.ValueString()
-	id := state.ID.ValueString()
-
-	if err := r.client.DeleteAlert(ctx, projectID, id); err != nil {
-		if logclient.IsNotFoundError(err) {
-			// Already gone, treat as successful delete
-			return
-		}
-		if projectMissing(ctx, r.client, projectID) {
-			return
-		}
+	err := r.client.DeleteAlert(ctx, projectID, state.ID.ValueString())
+	if err != nil && !logclient.IsNotFoundError(err) && !projectMissing(ctx, r.client, projectID) {
 		resp.Diagnostics.AddError("Delete alert failed", err.Error())
 	}
 }
 
 func (r *AlertResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	if r.client == nil {
-		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
-		return
-	}
-
 	rawID := strings.TrimSpace(req.ID)
 	if rawID == "" {
 		resp.Diagnostics.AddError(
 			"Missing import ID",
-			`Expected a non-empty ID. Use either "project_id/alert_id" or "project_name/alert_name" (also accepts "," or "|").`,
+			`Expected a non-empty ID. Use either "project_id/alert_id" or `+
+				`"project_name/alert_name" (also accepts "," or "|").`,
 		)
 		return
 	}
@@ -791,15 +613,14 @@ func (r *AlertResource) ImportState(ctx context.Context, req resource.ImportStat
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Invalid import ID",
-			`Expected "project_id/alert_id" or "project_name/alert_name" (also accepts "project,alert" or "project|alert").`,
+			`Expected "project_id/alert_id" or "project_name/alert_name" `+
+				`(also accepts "project,alert" or "project|alert").`,
 		)
 		return
 	}
 
-	projectKey := parts[0]
 	alertKey := parts[1]
-
-	projectID, projectName, err := findProjectByNameOrID(ctx, r.client, projectKey)
+	projectID, projectName, err := findProjectByNameOrID(ctx, r.client, parts[0])
 	if err != nil {
 		resp.Diagnostics.AddError("Import alert failed", err.Error())
 		return
@@ -807,7 +628,10 @@ func (r *AlertResource) ImportState(ctx context.Context, req resource.ImportStat
 
 	alerts, err := r.client.ListAlerts(ctx, projectID)
 	if err != nil {
-		resp.Diagnostics.AddError("Import alert failed", fmt.Sprintf("listing alerts for project %q: %v", projectID, err))
+		resp.Diagnostics.AddError(
+			"Import alert failed",
+			fmt.Sprintf("listing alerts for project %q: %v", projectID, err),
+		)
 		return
 	}
 
@@ -827,29 +651,33 @@ func (r *AlertResource) ImportState(ctx context.Context, req resource.ImportStat
 	}
 	if match == nil {
 		if len(nameMatches) == 0 {
-			resp.Diagnostics.AddError("Import alert failed", fmt.Sprintf("alert %q not found in project %q", alertKey, projectName))
+			resp.Diagnostics.AddError(
+				"Import alert failed",
+				fmt.Sprintf("alert %q not found in project %q", alertKey, projectName),
+			)
 			return
 		}
 		match = nameMatches[0]
 		if len(nameMatches) > 1 {
-			resp.Diagnostics.AddWarning("Import alert", fmt.Sprintf("multiple alerts named %q in project %q; imported the first match", alertKey, projectName))
+			resp.Diagnostics.AddWarning("Import alert", fmt.Sprintf(
+				"multiple alerts named %q in project %q; imported the first match",
+				alertKey, projectName,
+			))
 		}
 	}
 
 	alert, _, err := r.client.GetAlert(ctx, projectID, match.ID)
 	if err != nil {
-		resp.Diagnostics.AddError("Import alert failed", fmt.Sprintf("fetching alert %q: %v", match.ID, err))
+		resp.Diagnostics.AddError(
+			"Import alert failed", fmt.Sprintf("fetching alert %q: %v", match.ID, err),
+		)
 		return
 	}
 
-	var state AlertModel
-	state.ProjectID = types.StringValue(projectID)
+	state := AlertModel{ProjectID: types.StringValue(projectID)}
 	if diags := alertReadToModel(ctx, alert, &state); diags.HasError() {
 		resp.Diagnostics.Append(diags...)
 		return
-	}
-	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
-		state.ProjectID = types.StringValue(projectID)
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }

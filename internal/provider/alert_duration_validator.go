@@ -11,8 +11,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 )
 
-var _ validator.String = alertDurationValidator{}
-
 // alertDurationValidator rejects a duration the API rejects: one that does not
 // parse, or one outside the field's absolute bounds. The API also caps
 // time_window relative to frequency, but that is server-side policy and the
@@ -25,7 +23,10 @@ type alertDurationValidator struct {
 }
 
 func (v alertDurationValidator) Description(_ context.Context) string {
-	return fmt.Sprintf("must be a duration between %s and %s", durationCompact(v.min), durationCompact(v.max))
+	return fmt.Sprintf(
+		"must be a duration between %s and %s",
+		durationCompact(v.min), durationCompact(v.max),
+	)
 }
 
 func (v alertDurationValidator) MarkdownDescription(ctx context.Context) string {
@@ -38,17 +39,18 @@ func (v alertDurationValidator) ValidateString(_ context.Context, req validator.
 	}
 
 	raw := req.ConfigValue.ValueString()
-
 	d, err := parseDurationText(raw)
 	if err != nil {
 		resp.Diagnostics.AddAttributeError(
 			req.Path,
 			"Invalid duration",
-			fmt.Sprintf("%q is not a duration. Use a Go duration such as %q, or day shorthand such as %q.", raw, "20m", "7d"),
+			fmt.Sprintf(
+				"%q is not a duration. Use a Go duration such as %q, or day shorthand such as %q.",
+				raw, "20m", "7d",
+			),
 		)
 		return
 	}
-
 	if d < v.min || d > v.max {
 		resp.Diagnostics.AddAttributeError(
 			req.Path,
