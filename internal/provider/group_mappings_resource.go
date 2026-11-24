@@ -221,7 +221,8 @@ func (r *GroupMappingsResource) Update(ctx context.Context, req resource.UpdateR
 // Delete stores an empty mapping. The instance cannot restore the access that earlier
 // sign-ins changed or removed.
 func (r *GroupMappingsResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	if _, err := r.client.SetGroupMappings(ctx, nil); err != nil {
+	stored, err := r.client.SetGroupMappings(ctx, nil)
+	if err != nil {
 		if errors.Is(err, logclient.ErrGroupMappingsOverridden) {
 			resp.Diagnostics.AddError("Delete group mappings failed",
 				"The Helm value "+groupMappingsHelmValue+" is set, so the API refuses to change the stored mapping. "+
@@ -229,6 +230,14 @@ func (r *GroupMappingsResource) Delete(ctx context.Context, req resource.DeleteR
 			return
 		}
 		resp.Diagnostics.AddError("Delete group mappings failed", err.Error())
+		return
+	}
+	// A redirect turns the PUT into a GET, which answers 200 with the stored mapping.
+	if len(stored) > 0 {
+		resp.Diagnostics.AddError("Delete group mappings failed", fmt.Sprintf(
+			"The instance still reports a mapping for %d group(s), so the empty mapping was not stored. A redirect in "+
+				"front of the instance turns the write into a read. Set base_url to the address that serves the API "+
+				"without a redirect and destroy again.", len(stored)))
 	}
 }
 

@@ -37,8 +37,8 @@ organization is never removed. Neither a sign-in nor a SCIM update removes the l
 admin of an organization or lowers that admin's role. The instance skips that change
 and logs a warning. Organizations that the mapping does not list stay unchanged. In a
 listed organization, sign-in manages only the projects listed in `project_roles`,
-with one exception. When a sign-in removes the user from a listed organization, it
-also removes all of the user's project memberships in that organization, including
+with one exception. When a sign-in or a SCIM update removes the user from a listed
+organization, it also removes all of the user's project memberships in that organization, including
 projects that `project_roles` does not list.
 
 ## Role names are not validated

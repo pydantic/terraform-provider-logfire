@@ -16,7 +16,6 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
-	"github.com/hashicorp/terraform-plugin-testing/terraform"
 	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
 )
 
@@ -33,8 +32,10 @@ type groupMappingsAPI struct {
 	routesMissing bool
 	// lostPutResponses makes a PUT commit its mapping and then answer 503.
 	lostPutResponses bool
-	gets             int
-	puts             []json.RawMessage
+	// redirectPuts answers a PUT with a 301, which the client follows as a GET.
+	redirectPuts bool
+	gets         int
+	puts         []json.RawMessage
 }
 
 func newGroupMappingsAPI(t *testing.T) (*httptest.Server, *groupMappingsAPI) {
@@ -55,6 +56,10 @@ func newGroupMappingsAPI(t *testing.T) (*httptest.Server, *groupMappingsAPI) {
 		}
 		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
 			t.Errorf("Authorization = %q, want the raw provider key", got)
+		}
+		if api.redirectPuts && r.Method == http.MethodPut {
+			http.Redirect(w, r, groupMappingsURL+"?moved=1", http.StatusMovedPermanently)
+			return
 		}
 		if api.routesMissing {
 			w.WriteHeader(http.StatusNotFound)
@@ -305,17 +310,37 @@ func TestLifecycleGroupMappingsCreateRefusesTheMappingOfALostResponse(t *testing
 				},
 				Config:      config,
 				ExpectError: regexp.MustCompile(`Group mappings already exist`),
-				Check: func(*terraform.State) error {
-					api.Lock()
-					defer api.Unlock()
-					if len(api.puts) != putsBeforeRetry {
-						return fmt.Errorf("the refused create sent %d PUT request(s)", len(api.puts)-putsBeforeRetry)
-					}
-					return nil
-				},
 			},
 		},
 	})
+	// A step's Check does not run when the step expects an error, so check here.
+	api.Lock()
+	defer api.Unlock()
+	if len(api.puts) != putsBeforeRetry {
+		t.Errorf("the refused create sent %d PUT request(s)", len(api.puts)-putsBeforeRetry)
+	}
+}
+
+// Behind a redirect the client resends the destroy's PUT as a GET, which answers 200 with
+// the stored mapping. Destroy reports that instead of dropping the resource.
+func TestLifecycleGroupMappingsDestroyThroughARedirectFails(t *testing.T) {
+	t.Parallel()
+	server, api := newGroupMappingsAPI(t)
+	config := groupMappingsConfig(server.URL, groupMappingsOpsGroup)
+	setRedirect := func(on bool) func() { return func() { api.Lock(); api.redirectPuts = on; api.Unlock() } }
+	resource.Test(t, resource.TestCase{
+		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: config},
+			{PreConfig: setRedirect(true), Config: config, Destroy: true, ExpectError: regexp.MustCompile(`still reports a mapping`)},
+			{PreConfig: setRedirect(false), Config: config, PlanOnly: true},
+		},
+	})
+	api.Lock()
+	defer api.Unlock()
+	if len(api.stored) != 0 {
+		t.Errorf("stored = %v after the final destroy, want an empty mapping", api.stored)
+	}
 }
 
 // Importing the stored mapping adopts it without a write, and the first plan is empty.
