@@ -247,7 +247,7 @@ func (r *ProjectResource) Read(ctx context.Context, req resource.ReadRequest, re
 			resp.State.RemoveResource(ctx)
 			return
 		case current.OrganizationName == state.Organization.ValueString():
-			resp.Diagnostics.AddError("Read project failed", err.Error())
+			resp.Diagnostics.AddError("Read project failed", exchangeCause(err).Error())
 			return
 		}
 		client = r.client.ForOrganization(current.OrganizationName)
@@ -464,14 +464,22 @@ func (r *ProjectResource) findProject(ctx context.Context, org, name string) (st
 	// The last candidate is the target organization, so its failure is the answer
 	// when nothing is found.
 	var lastErr error
-	for _, c := range candidates {
+	ownListed := false
+	for i, c := range candidates {
 		list, err := c.ListProjects(ctx)
 		lastErr = err
+		ownListed = ownListed || (i == 0 && err == nil)
 		for _, project := range list {
 			if project.ProjectName == name && project.OrganizationName == org {
 				return project.ID, c, nil
 			}
 		}
+	}
+	var adminRequired *logclient.InstanceAdminRequiredError
+	if len(candidates) > 1 && ownListed && errors.As(lastErr, &adminRequired) {
+		// The key's own list has no match, so the missing instance-admin right
+		// matters only if org is not the key's own organization.
+		return "", nil, fmt.Errorf("project %q was not found with this key; if %q is another organization, an instance-admin key is needed", name, org)
 	}
 	if lastErr != nil {
 		return "", nil, lastErr

@@ -96,6 +96,21 @@ func (e *InstanceAdminRequiredError) Error() string {
 
 func (e *InstanceAdminRequiredError) Unwrap() error { return e.Err }
 
+// UnknownOrganizationError reports that the token exchange knows no
+// organization of this name. The organization never existed, was deleted, or was
+// renamed outside Terraform. The same answer also covers a base_url that differs
+// from the one the instance is configured with.
+type UnknownOrganizationError struct {
+	Organization string
+	Err          *OAuthTokenError
+}
+
+func (e *UnknownOrganizationError) Error() string {
+	return fmt.Sprintf("organization %q does not exist on this instance; if it was renamed, set the new name", e.Organization)
+}
+
+func (e *UnknownOrganizationError) Unwrap() error { return e.Err }
+
 type orgTokenEntry struct {
 	token   string
 	expires time.Time
@@ -163,7 +178,7 @@ func (c *APIClient) exchangeToken(ctx context.Context, orgName string) (string, 
 		err = c.postTokenExchange(ctx, form, &out)
 	}
 	if err != nil {
-		return "", asInstanceAdminRequired(orgName, err)
+		return "", asExchangeError(orgName, err)
 	}
 	if out.AccessToken == "" {
 		return "", fmt.Errorf("token exchange returned no access token")
@@ -220,13 +235,21 @@ func tokenEndpointError(err error) error {
 	return fmt.Errorf("token exchange failed: %s", apiErr.Error())
 }
 
-// asInstanceAdminRequired wraps the answer to a key that is not an instance-admin
-// key. The exchange answers invalid_scope with "subject_token must include
-// instance:admin".
-func asInstanceAdminRequired(orgName string, err error) error {
+// asExchangeError wraps the two refusals of an exchange that users can act on.
+// The exchange answers invalid_scope with "subject_token must include
+// instance:admin" to a key that is not an instance-admin key, and invalid_target
+// to an organization name it does not know. IsInvalidTargetError still holds for
+// the wrapped error.
+func asExchangeError(orgName string, err error) error {
 	var oauthErr *OAuthTokenError
-	if errors.As(err, &oauthErr) && oauthErr.Code == "invalid_scope" && strings.Contains(oauthErr.Description, "instance:admin") {
+	if !errors.As(err, &oauthErr) {
+		return err
+	}
+	switch {
+	case oauthErr.Code == "invalid_scope" && strings.Contains(oauthErr.Description, "instance:admin"):
 		return &InstanceAdminRequiredError{Organization: orgName, Err: oauthErr}
+	case oauthErr.Code == "invalid_target":
+		return &UnknownOrganizationError{Organization: orgName, Err: oauthErr}
 	}
 	return err
 }

@@ -5,6 +5,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -502,6 +503,17 @@ func (r *OrganizationResource) findOrganizationByNameOrID(ctx context.Context, k
 	return nil, false, nil
 }
 
+// exchangeCause returns the token endpoint's own answer. The client words
+// invalid_target as an unknown organization, which is wrong where the caller has
+// found the organization in the instance list.
+func exchangeCause(err error) error {
+	var oauthErr *logclient.OAuthTokenError
+	if errors.As(err, &oauthErr) {
+		return oauthErr
+	}
+	return err
+}
+
 // organizationIdentity classifies an invalid_target token exchange against the
 // instance organization list: the org-context API addresses organizations by
 // name, so the same error covers a missing organization, an externally
@@ -568,7 +580,7 @@ func (r *OrganizationResource) appendOrganizationContextError(
 	identity, entry, listErr := r.classifyOrganization(ctx, state.Name.ValueString(), state.ID.ValueString())
 	if listErr != nil {
 		diags.AddError(summary, fmt.Sprintf(
-			"token exchange rejected the organization audience (%v) and the follow-up organization list failed: %v", err, listErr))
+			"token exchange rejected the organization audience (%v) and the follow-up organization list failed: %v", exchangeCause(err), listErr))
 		return false
 	}
 	switch identity {
@@ -586,7 +598,7 @@ func (r *OrganizationResource) appendOrganizationContextError(
 	default:
 		diags.AddError(summary, fmt.Sprintf(
 			"the organization exists, but the token exchange rejected its audience: %v. "+
-				"Check that the provider base_url matches the instance's configured frontend host.", err))
+				"Check that the provider base_url matches the instance's configured frontend host.", exchangeCause(err)))
 	}
 	return false
 }

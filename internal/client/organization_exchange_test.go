@@ -272,5 +272,9 @@ func TestExchangeFailures(t *testing.T) {
 		if !IsInvalidTargetError(err) {
 			t.Fatalf("err = %v, want invalid_target", err)
 		}
+		const want = `organization "team-a" does not exist on this instance; if it was renamed, set the new name`
+		if err.Error() != want {
+			t.Fatalf("err = %q, want %q", err, want)
+		}
 	})
 }

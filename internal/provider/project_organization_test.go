@@ -372,7 +372,7 @@ func TestLifecycleProjectFollowsAnOrganizationRename(t *testing.T) {
 			),
 		},
 		// The old name no longer exists, so a configuration that still has it plans an in-place update that fails.
-		{Config: argument("team-a"), ExpectError: regexp.MustCompile(`(?s)Update project failed.*team-a`)},
+		{Config: argument("team-a"), ExpectError: regexp.MustCompile(`(?s)Update project failed.*organization\s+"team-a"\s+does\s+not\s+exist\s+on\s+this\s+instance;\s+if\s+it\s+was\s+renamed,\s+set\s+the\s+new\s+name`)},
 		{Config: argument("team-z"), ConfigPlanChecks: expectNoChange},
 	})
 	if api.creates != 1 {
@@ -531,7 +531,19 @@ func TestProjectImportReportsTheFailureOfTheTargetOrganization(t *testing.T) {
 			ResourceName:  "logfire_project.svc",
 			ImportState:   true,
 			ImportStateId: "team-b/svc",
-			ExpectError:   regexp.MustCompile(`instance-admin\s+API key`),
+			ExpectError:   regexp.MustCompile(`"team-b"\s+is\s+another\s+organization,\s+an\s+instance-admin\s+key\s+is\s+needed`),
+		}})
+	})
+	t.Run("a project missing from the key's own organization is not blamed on the key", func(t *testing.T) {
+		api := newOrganizationInstance(t)
+		api.exchangeNeedsAdmin = true
+		runProjectLifecycle(t, []tfresource.TestStep{{
+			Config:        providerBlock(api, "") + projectBlock("svc", "name = \"svc\""),
+			ResourceName:  "logfire_project.svc",
+			ImportState:   true,
+			ImportStateId: "admin/missing",
+			ExpectError: regexp.MustCompile(
+				`(?s)project\s+"missing"\s+was\s+not\s+found\s+with\s+this\s+key;\s+if\s+"admin"\s+is\s+another\s+organization,\s+an\s+instance-admin\s+key\s+is\s+needed`),
 		}})
 	})
 	t.Run("a bare import reports a failed project list", func(t *testing.T) {
