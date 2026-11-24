@@ -277,6 +277,17 @@ func TestExchangeFailures(t *testing.T) {
 			t.Fatalf("err = %q, want the server's base URL message", err)
 		}
 	})
+	t.Run("unknown organization from a path in the base URL keeps the server text", func(t *testing.T) {
+		t.Parallel()
+		in := newExchangeInstance(t)
+		in.exchangeStatus = []int{http.StatusBadRequest}
+		in.exchangeBody = `{"error":"invalid_target","error_description":"unknown organization: 'wrong'"}`
+		_, err := in.client(t, nil).ForOrganization("team-a").ListProjects(t.Context())
+		var unknown *UnknownOrganizationError
+		if errors.As(err, &unknown) || !strings.Contains(err.Error(), "unknown organization: 'wrong'") {
+			t.Fatalf("err = %q, want the server's message", err)
+		}
+	})
 	t.Run("unknown organization", func(t *testing.T) {
 		t.Parallel()
 		in := newExchangeInstance(t)

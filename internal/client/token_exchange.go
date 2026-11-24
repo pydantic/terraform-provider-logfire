@@ -249,7 +249,9 @@ func asExchangeError(orgName string, err error) error {
 	switch {
 	case oauthErr.Code == "invalid_scope" && strings.Contains(oauthErr.Description, "instance:admin"):
 		return &InstanceAdminRequiredError{Organization: orgName, Err: oauthErr}
-	case oauthErr.Code == "invalid_target" && strings.HasPrefix(oauthErr.Description, "unknown organization"):
+	// The server names the organization it read from the audience. An extra
+	// path in base_url makes that another name, which keeps the server's text.
+	case oauthErr.Code == "invalid_target" && oauthErr.Description == "unknown organization: '"+orgName+"'":
 		return &UnknownOrganizationError{Organization: orgName, Err: oauthErr}
 	}
 	return err
