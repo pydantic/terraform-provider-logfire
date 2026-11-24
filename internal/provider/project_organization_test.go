@@ -376,6 +376,26 @@ func TestLifecycleProjectMoveIntoMissingOrganizationFailsAtApplyAndDeletesNothin
 	})
 }
 
+// The plan checks the exchange for the new organization, so a move that cannot
+// create the project there fails before the replacement deletes it.
+func TestLifecycleProjectMoveFailsAtPlanWhenTheExchangeFails(t *testing.T) {
+	api := newOrganizationInstance(t, "team-b")
+	config := providerBlock(api, "") + projectBlock("svc", "name = \"svc\"")
+	setRefused := func(on bool) func() { return func() { api.Lock(); api.exchangeNeedsAdmin = on; api.Unlock() } }
+	runProjectLifecycle(t, []tfresource.TestStep{
+		{Config: config},
+		{
+			PreConfig:   setRefused(true),
+			Config:      providerBlock(api, "") + projectBlock("svc", "organization = \"team-b\"\nname = \"svc\""),
+			ExpectError: regexp.MustCompile(`(?s)Cannot move the project.*instance-admin`),
+		},
+		{PreConfig: setRefused(false), Config: config, ConfigPlanChecks: expectNoChange},
+	})
+	if api.creates != 1 || api.deletes != 1 {
+		t.Errorf("creates = %d, deletes = %d, want the project kept until the final destroy", api.creates, api.deletes)
+	}
+}
+
 func TestLifecycleProjectFollowsAnOrganizationRename(t *testing.T) {
 	api := newOrganizationInstance(t, "team-a")
 	const address = "logfire_project.svc"
@@ -479,6 +499,23 @@ func TestLifecycleProjectKeepsStateOnAnotherForbiddenAnswer(t *testing.T) {
 	})
 	if api.creates != 1 {
 		t.Errorf("creates = %d, want the project kept in state", api.creates)
+	}
+}
+
+// The exchanged token has no user, so API key resources refuse to run through it
+// instead of creating nothing or dropping personal keys on refresh.
+func TestAPIKeysRefuseAnOrganization(t *testing.T) {
+	api := newOrganizationInstance(t, "team-a")
+	for name, body := range map[string]string{
+		"logfire_api_key":         "name = \"k\"\nscopes = [\"project:read\"]\nproject_id = \"00000000-0000-0000-0000-000000000001\"",
+		"logfire_gateway_api_key": "name = \"k\"\nproject_id = \"00000000-0000-0000-0000-000000000001\"",
+	} {
+		t.Run(name, func(t *testing.T) {
+			runProjectLifecycle(t, []tfresource.TestStep{{
+				Config:      providerBlock(api, "team-a") + fmt.Sprintf("resource %q \"k\" {\n%s\n}\n", name, body),
+				ExpectError: regexp.MustCompile(`Not available through an organization`),
+			}})
+		})
 	}
 }
 

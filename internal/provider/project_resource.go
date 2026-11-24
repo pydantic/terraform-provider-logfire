@@ -539,9 +539,17 @@ func (r *ProjectResource) ModifyPlan(ctx context.Context, req resource.ModifyPla
 	if err != nil || found == nil {
 		return
 	}
-	if !knownString(priorID) || found.ID != priorID.ValueString() {
-		resp.RequiresReplace = append(resp.RequiresReplace, path.Root("organization"))
+	if knownString(priorID) && found.ID == priorID.ValueString() {
+		return
 	}
+	// The replacement deletes the project before it creates the new one, so
+	// check now that the provider can act in the new organization.
+	if _, err := r.client.ForOrganization(name).ListProjects(ctx); err != nil {
+		resp.Diagnostics.AddError("Cannot move the project", fmt.Sprintf(
+			"Moving the project to organization %q replaces it, but the provider cannot act in that organization: %v", name, err))
+		return
+	}
+	resp.RequiresReplace = append(resp.RequiresReplace, path.Root("organization"))
 }
 
 // findOrganization returns the first organization of the instance list that
