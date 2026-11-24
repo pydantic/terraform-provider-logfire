@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 
 	stringvalidator "github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -321,86 +320,23 @@ func (r *DashboardResource) Delete(ctx context.Context, req resource.DeleteReque
 }
 
 func (r *DashboardResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	rawID := strings.TrimSpace(req.ID)
-	if rawID == "" {
-		resp.Diagnostics.AddError(
-			"Missing import ID",
-			`Expected a non-empty ID. Use either "project_id/dashboard_id/slug" or "project_name/dashboard_slug" (also accepts "," or "|").`,
-		)
+	projectID, summary, ok := importProjectItem(ctx, r.client, req, resp, projectImport[logclient.DashboardSummary]{
+		noun:      "dashboard",
+		counts:    []int{2, 3},
+		missing:   `Expected a non-empty ID. Use either "project_id/dashboard_id/slug" or "project_name/dashboard_slug" (also accepts "," or "|").`,
+		invalid:   `Expected "project_id/dashboard_id/slug" or "project_name/dashboard_slug" (also accepts comma or pipe separators).`,
+		list:      r.client.ListDashboards,
+		keys:      func(d *logclient.DashboardSummary) (string, string) { return d.ID, d.DashboardSlug },
+		duplicate: "multiple dashboards with slug %q in project %q; imported the first match",
+	})
+	if !ok {
 		return
 	}
 
-	parts, err := splitImportParts(rawID, 2, 3)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Invalid import ID",
-			`Expected "project_id/dashboard_id/slug" or "project_name/dashboard_slug" (also accepts comma or pipe separators).`,
-		)
-		return
-	}
-	projectKey, dashboardKey := parts[0], parts[1]
-
-	var providedSlug string
-	if len(parts) == 3 {
-		providedSlug = parts[2]
-	}
-
-	projectID, projectName, err := findProjectByNameOrID(ctx, r.client, projectKey)
-	if err != nil {
-		resp.Diagnostics.AddError("Import dashboard failed", err.Error())
-		return
-	}
-
-	dashboards, err := r.client.ListDashboards(ctx, projectID)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Import dashboard failed",
-			fmt.Sprintf("listing dashboards for project %q: %v", projectID, err),
-		)
-		return
-	}
-
-	// If a slug was provided, prefer it; otherwise fall back to matching the
-	// key as slug.
-	slugCandidate := cmp.Or(providedSlug, dashboardKey)
-	var (
-		summary     *logclient.DashboardSummary
-		slugMatches []*logclient.DashboardSummary
-	)
-	for i := range dashboards {
-		d := &dashboards[i]
-		if d.ID == dashboardKey {
-			summary = d
-			break
-		}
-		if d.DashboardSlug == slugCandidate {
-			slugMatches = append(slugMatches, d)
-		}
-	}
-
-	if summary == nil {
-		if len(slugMatches) == 0 {
-			resp.Diagnostics.AddError(
-				"Import dashboard failed",
-				fmt.Sprintf("dashboard %q not found in project %q", dashboardKey, projectName),
-			)
-			return
-		}
-		summary = slugMatches[0]
-		if len(slugMatches) > 1 {
-			resp.Diagnostics.AddWarning(
-				"Import dashboard",
-				fmt.Sprintf(
-					"multiple dashboards with slug %q in project %q; imported the first match",
-					summary.DashboardSlug, projectName),
-			)
-		}
-	}
-
-	if providedSlug != "" && providedSlug != summary.DashboardSlug {
+	if parts, _ := splitImportParts(req.ID); len(parts) == 3 && parts[2] != summary.DashboardSlug {
 		resp.Diagnostics.AddWarning(
 			"Import dashboard",
-			fmt.Sprintf("provided slug %q does not match dashboard slug %q; using the dashboard found in the API", providedSlug, summary.DashboardSlug),
+			fmt.Sprintf("provided slug %q does not match dashboard slug %q; using the dashboard found in the API", parts[2], summary.DashboardSlug),
 		)
 	}
 

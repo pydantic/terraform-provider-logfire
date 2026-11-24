@@ -610,53 +610,15 @@ func (r *SloResource) Delete(ctx context.Context, req resource.DeleteRequest, re
 }
 
 func (r *SloResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	rawID := strings.TrimSpace(req.ID)
-	if rawID == "" {
-		resp.Diagnostics.AddError(
-			"Missing import ID",
-			`Expected a non-empty ID. Use either "project_id/slo_id" or "project_name/slo_name" (also accepts "," or "|").`,
-		)
-		return
-	}
-
-	parts, err := splitImportParts(rawID, 2)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Invalid import ID",
-			`Expected "project_id/slo_id" or "project_name/slo_name" (also accepts "project,slo" or "project|slo").`,
-		)
-		return
-	}
-	projectKey, sloKey := parts[0], parts[1]
-
-	projectID, projectName, err := findProjectByNameOrID(ctx, r.client, projectKey)
-	if err != nil {
-		resp.Diagnostics.AddError("Import SLO failed", err.Error())
-		return
-	}
-
-	slos, err := r.client.ListSlos(ctx, projectID)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Import SLO failed", fmt.Sprintf("listing SLOs for project %q: %v", projectID, err))
-		return
-	}
-
-	var match *logclient.SloRead
-	for i := range slos {
-		s := &slos[i]
-		if s.ID == sloKey {
-			match = s
-			break
-		}
-		if s.Name == sloKey && match == nil {
-			match = s
-		}
-	}
-	if match == nil {
-		resp.Diagnostics.AddError(
-			"Import SLO failed",
-			fmt.Sprintf("SLO %q not found in project %q", sloKey, projectName))
+	projectID, match, ok := importProjectItem(ctx, r.client, req, resp, projectImport[logclient.SloRead]{
+		noun:    "SLO",
+		counts:  []int{2},
+		missing: `Expected a non-empty ID. Use either "project_id/slo_id" or "project_name/slo_name" (also accepts "," or "|").`,
+		invalid: `Expected "project_id/slo_id" or "project_name/slo_name" (also accepts "project,slo" or "project|slo").`,
+		list:    r.client.ListSlos,
+		keys:    func(s *logclient.SloRead) (string, string) { return s.ID, s.Name },
+	})
+	if !ok {
 		return
 	}
 

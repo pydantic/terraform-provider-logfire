@@ -581,69 +581,17 @@ func (r *AlertResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 }
 
 func (r *AlertResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	rawID := strings.TrimSpace(req.ID)
-	if rawID == "" {
-		resp.Diagnostics.AddError(
-			"Missing import ID",
-			`Expected a non-empty ID. Use either "project_id/alert_id" or "project_name/alert_name" (also accepts "," or "|").`,
-		)
+	projectID, match, ok := importProjectItem(ctx, r.client, req, resp, projectImport[logclient.AlertRead]{
+		noun:      "alert",
+		counts:    []int{2},
+		missing:   `Expected a non-empty ID. Use either "project_id/alert_id" or "project_name/alert_name" (also accepts "," or "|").`,
+		invalid:   `Expected "project_id/alert_id" or "project_name/alert_name" (also accepts "project,alert" or "project|alert").`,
+		list:      r.client.ListAlerts,
+		keys:      func(a *logclient.AlertRead) (string, string) { return a.ID, a.Name },
+		duplicate: "multiple alerts named %q in project %q; imported the first match",
+	})
+	if !ok {
 		return
-	}
-
-	parts, err := splitImportParts(rawID, 2)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Invalid import ID",
-			`Expected "project_id/alert_id" or "project_name/alert_name" (also accepts "project,alert" or "project|alert").`,
-		)
-		return
-	}
-
-	alertKey := parts[1]
-	projectID, projectName, err := findProjectByNameOrID(ctx, r.client, parts[0])
-	if err != nil {
-		resp.Diagnostics.AddError("Import alert failed", err.Error())
-		return
-	}
-
-	alerts, err := r.client.ListAlerts(ctx, projectID)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Import alert failed",
-			fmt.Sprintf("listing alerts for project %q: %v", projectID, err),
-		)
-		return
-	}
-
-	var (
-		match       *logclient.AlertRead
-		nameMatches []*logclient.AlertRead
-	)
-	for i := range alerts {
-		a := &alerts[i]
-		if a.ID == alertKey {
-			match = a
-			break
-		}
-		if a.Name == alertKey {
-			nameMatches = append(nameMatches, a)
-		}
-	}
-	if match == nil {
-		if len(nameMatches) == 0 {
-			resp.Diagnostics.AddError(
-				"Import alert failed",
-				fmt.Sprintf("alert %q not found in project %q", alertKey, projectName),
-			)
-			return
-		}
-		match = nameMatches[0]
-		if len(nameMatches) > 1 {
-			resp.Diagnostics.AddWarning("Import alert", fmt.Sprintf(
-				"multiple alerts named %q in project %q; imported the first match",
-				alertKey, projectName,
-			))
-		}
 	}
 
 	alert, _, err := r.client.GetAlert(ctx, projectID, match.ID)
