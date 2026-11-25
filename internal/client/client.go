@@ -383,6 +383,11 @@ func apiPath(segments ...string) string {
 }
 
 func (c *APIClient) doJSON(ctx context.Context, method, path string, in, out any, expectedStatus ...int) (*http.Response, error) {
+	// An empty ID segment would address a collection route instead of the
+	// resource. Refuse it before any request, including a token exchange.
+	if route, _, _ := strings.Cut(path, "?"); strings.Contains(route, "//") {
+		return nil, fmt.Errorf("%s %s: the resource ID is missing. Import the resource, or remove it from state if it cannot be imported", method, route)
+	}
 	if c.organization == "" || strings.HasPrefix(path, instanceRoutePrefix) {
 		return c.doJSONAuthorized(ctx, c.token, method, path, in, out, expectedStatus...)
 	}
@@ -435,9 +440,6 @@ func (c *APIClient) newRequest(ctx context.Context, method, path string, body io
 	reference, err := url.Parse(path)
 	if err != nil {
 		return nil, fmt.Errorf("parse request path: %w", err)
-	}
-	if strings.Contains(reference.Path, "//") {
-		return nil, fmt.Errorf("%s %s: the resource ID is missing. Import the resource, or remove it from state if it cannot be imported", method, reference.Path)
 	}
 	u := c.BaseURL.ResolveReference(reference)
 	req, err := http.NewRequestWithContext(ctx, method, u.String(), body)

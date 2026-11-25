@@ -102,6 +102,10 @@ func (r *GatewayProviderResource) Update(ctx context.Context, req resource.Updat
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	if missingID(state.ID, &resp.Diagnostics) {
+		return
+	}
 	input := logclient.GatewayProviderUpdate{
 		Pricing: logclient.GatewayProviderPricing{
 			Required: plan.RequirePricing.ValueBool(),
@@ -143,6 +147,10 @@ func (r *GatewayProviderResource) Delete(ctx context.Context, req resource.Delet
 	var state GatewayProviderModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if missingID(state.ID, &resp.Diagnostics) {
 		return
 	}
 	err := r.client.DeleteGatewayProvider(ctx, state.ID.ValueString())

@@ -19,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	fwresource "github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
@@ -498,9 +499,9 @@ func TestLifecycleProjectImportIDCollision(t *testing.T) {
 	}})
 }
 
-// Upjet observes a resource before Logfire assigns it an ID. Read must treat an
-// empty ID as absent without calling the API.
-func TestReadWithEmptyIDMakesNoRequests(t *testing.T) {
+// Upjet observes a resource before Logfire assigns it an ID, so Read treats an
+// empty ID as absent. Update and Delete refuse it. None of them calls the API.
+func TestEmptyIDMakesNoRequests(t *testing.T) {
 	resources := map[string]func() fwresource.Resource{
 		"alert":                      func() fwresource.Resource { return &AlertResource{} },
 		"api_key":                    func() fwresource.Resource { return &APIKeyResource{} },
@@ -519,44 +520,64 @@ func TestReadWithEmptyIDMakesNoRequests(t *testing.T) {
 		"frontend_application_token": func() fwresource.Resource { return &FrontendApplicationTokenResource{} },
 	}
 	for name, build := range resources {
-		t.Run(name, func(t *testing.T) {
-			var requests atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				requests.Add(1)
-				w.WriteHeader(http.StatusInternalServerError)
-			}))
-			t.Cleanup(server.Close)
-			client, err := logclient.NewAPIClient(server.URL, "test-token", server.Client())
-			if err != nil {
-				t.Fatal(err)
-			}
-			r := build()
-			configurable, ok := r.(fwresource.ResourceWithConfigure)
-			if !ok {
-				t.Fatalf("%s does not implement Configure", name)
-			}
-			configurable.Configure(t.Context(),
-				fwresource.ConfigureRequest{ProviderData: client}, &fwresource.ConfigureResponse{})
-			var schemaResp fwresource.SchemaResponse
-			r.Schema(t.Context(), fwresource.SchemaRequest{}, &schemaResp)
-			state := tfsdk.State{Schema: schemaResp.Schema,
-				Raw: tftypes.NewValue(schemaResp.Schema.Type().TerraformType(t.Context()), nil)}
-			diags := state.SetAttribute(t.Context(), path.Root("id"), "")
-			if _, ok := schemaResp.Schema.Attributes["project_id"]; ok {
-				diags.Append(state.SetAttribute(t.Context(), path.Root("project_id"), "project-1")...)
-			}
-			if diags.HasError() {
-				t.Fatal(diags)
-			}
-			resp := fwresource.ReadResponse{State: state}
-			r.Read(t.Context(), fwresource.ReadRequest{State: state}, &resp)
-			if requests.Load() != 0 {
-				t.Fatalf("read with an empty ID made %d API calls", requests.Load())
-			}
-			if resp.Diagnostics.HasError() || !resp.State.Raw.IsNull() {
-				t.Fatalf("read with an empty ID returned state=%v, diagnostics=%v", resp.State.Raw, resp.Diagnostics)
-			}
-		})
+		for _, op := range []string{"read", "update", "delete"} {
+			t.Run(name+"/"+op, func(t *testing.T) {
+				var requests atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					requests.Add(1)
+					w.WriteHeader(http.StatusInternalServerError)
+				}))
+				t.Cleanup(server.Close)
+				client, err := logclient.NewAPIClient(server.URL, "test-token", server.Client())
+				if err != nil {
+					t.Fatal(err)
+				}
+				r := build()
+				configurable, ok := r.(fwresource.ResourceWithConfigure)
+				if !ok {
+					t.Fatalf("%s does not implement Configure", name)
+				}
+				configurable.Configure(t.Context(),
+					fwresource.ConfigureRequest{ProviderData: client}, &fwresource.ConfigureResponse{})
+				var schemaResp fwresource.SchemaResponse
+				r.Schema(t.Context(), fwresource.SchemaRequest{}, &schemaResp)
+				state := tfsdk.State{Schema: schemaResp.Schema,
+					Raw: tftypes.NewValue(schemaResp.Schema.Type().TerraformType(t.Context()), nil)}
+				diags := state.SetAttribute(t.Context(), path.Root("id"), "")
+				if _, ok := schemaResp.Schema.Attributes["project_id"]; ok {
+					diags.Append(state.SetAttribute(t.Context(), path.Root("project_id"), "project-1")...)
+				}
+				if diags.HasError() {
+					t.Fatal(diags)
+				}
+				switch op {
+				case "read":
+					resp := fwresource.ReadResponse{State: state}
+					r.Read(t.Context(), fwresource.ReadRequest{State: state}, &resp)
+					if resp.Diagnostics.HasError() || !resp.State.Raw.IsNull() {
+						t.Fatalf("read returned state=%v, diagnostics=%v", resp.State.Raw, resp.Diagnostics)
+					}
+				case "update":
+					plan := tfsdk.Plan(state)
+					resp := fwresource.UpdateResponse{State: state}
+					r.Update(t.Context(), fwresource.UpdateRequest{Plan: plan, State: state}, &resp)
+					diags = resp.Diagnostics
+				case "delete":
+					resp := fwresource.DeleteResponse{State: state}
+					r.Delete(t.Context(), fwresource.DeleteRequest{State: state}, &resp)
+					diags = resp.Diagnostics
+				}
+				if requests.Load() != 0 {
+					t.Fatalf("%s with an empty ID made %d API calls", op, requests.Load())
+				}
+				if op == "read" || (op == "update" && strings.HasSuffix(name, "_token") && !strings.HasPrefix(name, "frontend")) {
+					return
+				}
+				if !diags.HasError() || diags.Errors()[0].Summary() != "Missing resource ID" {
+					t.Fatalf("%s with an empty ID returned %v, want Missing resource ID", op, diags)
+				}
+			})
+		}
 	}
 }
 
@@ -606,5 +627,88 @@ func TestCreateRejectsInvalidExpiresAtWithoutRequest(t *testing.T) {
 				t.Fatalf("diagnostics = %v, want Invalid expires_at", resp.Diagnostics)
 			}
 		})
+	}
+}
+
+// countingResource configures r with a client whose every request is counted
+// and answered with body.
+func countingResource(t *testing.T, r fwresource.ResourceWithConfigure, body string) *atomic.Int32 {
+	t.Helper()
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(server.Close)
+	client, err := logclient.NewAPIClient(server.URL, "test-token", server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Configure(t.Context(), fwresource.ConfigureRequest{ProviderData: client}, &fwresource.ConfigureResponse{})
+	return &requests
+}
+
+func stateOf(t *testing.T, r fwresource.Resource, model any) tfsdk.State {
+	t.Helper()
+	var schemaResp fwresource.SchemaResponse
+	r.Schema(t.Context(), fwresource.SchemaRequest{}, &schemaResp)
+	state := tfsdk.State{Schema: schemaResp.Schema,
+		Raw: tftypes.NewValue(schemaResp.Schema.Type().TerraformType(t.Context()), nil)}
+	if diags := state.Set(t.Context(), model); diags.HasError() {
+		t.Fatal(diags)
+	}
+	return state
+}
+
+// Deletion protection fails closed: only an explicit false allows a delete.
+func TestOrganizationDeleteNeedsExplicitlyDisabledProtection(t *testing.T) {
+	for name, protection := range map[string]types.Bool{
+		"null": types.BoolNull(), "unknown": types.BoolUnknown(), "true": types.BoolValue(true),
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := &OrganizationResource{}
+			requests := countingResource(t, r, `{}`)
+			state := stateOf(t, r, OrganizationModel{
+				ID: types.StringValue("org-1"), Name: types.StringValue("acme"), DeletionProtection: protection,
+			})
+			resp := fwresource.DeleteResponse{State: state}
+			r.Delete(t.Context(), fwresource.DeleteRequest{State: state}, &resp)
+			if !resp.Diagnostics.HasError() || resp.Diagnostics.Errors()[0].Summary() != "Organization deletion is protected" {
+				t.Fatalf("diagnostics = %v, want the protection error", resp.Diagnostics)
+			}
+			if requests.Load() != 0 {
+				t.Fatalf("protected delete made %d API calls", requests.Load())
+			}
+		})
+	}
+}
+
+// A channel whose state lost its config block still updates instead of panicking.
+func TestChannelUpdateWithoutPriorConfig(t *testing.T) {
+	r := &ChannelResource{}
+	countingResource(t, r, `{"id":"ch-1","organization_id":"o","label":"c","active":true,`+
+		`"created_at":"2026-01-01T00:00:00Z","config":{"type":"webhook","format":"auto","url":"https://example.com/h"}}`)
+	base := ChannelModel{ID: types.StringValue("ch-1"), Name: types.StringValue("c"), Active: types.BoolValue(true)}
+	state := stateOf(t, r, base)
+	base.Config = &ChannelConfigModel{
+		Type: types.StringValue("webhook"), Format: types.StringValue("auto"), URL: types.StringValue("https://example.com/h"),
+	}
+	plan := tfsdk.Plan(stateOf(t, r, base))
+	resp := fwresource.UpdateResponse{State: state}
+	r.Update(t.Context(), fwresource.UpdateRequest{Plan: plan, State: state}, &resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatal(resp.Diagnostics)
+	}
+}
+
+// Upjet can apply without the config validators, so an invalid duration fails
+// locally instead of being sent as zero.
+func TestAlertRejectsInvalidDurationWithoutValidators(t *testing.T) {
+	_, diags := alertModelToCreate(t.Context(), &AlertModel{
+		TimeWindow: newAlertDurationValue("5mi"), Frequency: newAlertDurationValue("1m"),
+	})
+	if !diags.HasError() || diags.Errors()[0].Summary() != "Invalid time_window" {
+		t.Fatalf("diagnostics = %v, want Invalid time_window", diags)
 	}
 }

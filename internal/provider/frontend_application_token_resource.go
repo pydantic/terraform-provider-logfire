@@ -202,6 +202,10 @@ func (r *FrontendApplicationTokenResource) Update(ctx context.Context, req resou
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	if missingID(state.ID, &resp.Diagnostics) {
+		return
+	}
 	state.RevokeOnDestroy = plan.RevokeOnDestroy
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -210,6 +214,10 @@ func (r *FrontendApplicationTokenResource) Delete(ctx context.Context, req resou
 	var state FrontendApplicationTokenModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if missingID(state.ID, &resp.Diagnostics) {
 		return
 	}
 	if !shouldRevokeFrontendApplicationToken(state.RevokeOnDestroy) {

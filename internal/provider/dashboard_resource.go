@@ -236,6 +236,10 @@ func (r *DashboardResource) Update(ctx context.Context, req resource.UpdateReque
 		return
 	}
 
+	if missingID(state.ID, &resp.Diagnostics) {
+		return
+	}
+
 	projectID := state.ProjectID.ValueString()
 	payload := logclient.DashboardUpdateRequest{
 		DashboardManager: r.client.DashboardManager(dashboardAllowEdits(plan.AllowEdits)),
@@ -292,6 +296,10 @@ func (r *DashboardResource) Delete(ctx context.Context, req resource.DeleteReque
 	var state DashboardModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if missingID(state.ID, &resp.Diagnostics) {
 		return
 	}
 

@@ -517,6 +517,10 @@ func (r *ChannelResource) Update(ctx context.Context, req resource.UpdateRequest
 		return
 	}
 
+	if missingID(state.ID, &resp.Diagnostics) {
+		return
+	}
+
 	payload := logclient.ChannelUpdate{
 		Label: logclient.NullableFieldValue(plan.Name.ValueString()),
 	}
@@ -525,7 +529,7 @@ func (r *ChannelResource) Update(ctx context.Context, req resource.UpdateRequest
 	}
 
 	config := *plan.Config
-	if config.Type.Equal(state.Config.Type) {
+	if state.Config != nil && config.Type.Equal(state.Config.Type) {
 		if config.IncludeAgentPrompt.IsUnknown() {
 			config.IncludeAgentPrompt = state.Config.IncludeAgentPrompt
 		}
@@ -540,7 +544,10 @@ func (r *ChannelResource) Update(ctx context.Context, req resource.UpdateRequest
 	}
 	// Logfire keeps a config the update leaves out. Resending an unchanged email config
 	// fails after the last recipient unsubscribes, because Logfire keeps that address.
-	current, _ := channelConfigModelToAPI(state.Config)
+	var current any
+	if state.Config != nil {
+		current, _ = channelConfigModelToAPI(state.Config)
+	}
 	if !reflect.DeepEqual(cfg, current) {
 		payload.Config = &cfg
 	}
@@ -563,6 +570,10 @@ func (r *ChannelResource) Delete(ctx context.Context, req resource.DeleteRequest
 	var state ChannelModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if missingID(state.ID, &resp.Diagnostics) {
 		return
 	}
 

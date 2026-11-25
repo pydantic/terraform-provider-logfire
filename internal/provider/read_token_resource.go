@@ -238,6 +238,10 @@ func (r *tokenResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 		return
 	}
 
+	if missingID(state.ID, &resp.Diagnostics) {
+		return
+	}
+
 	projectID := state.ProjectID.ValueString()
 	err := r.remove(ctx, r.client, projectID, state.ID.ValueString())
 	if err != nil && !logclient.IsNotFoundError(err) &&

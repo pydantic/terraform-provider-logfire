@@ -260,6 +260,10 @@ func (r *FrontendApplicationResource) Update(ctx context.Context, req resource.U
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	if missingID(state.ID, &resp.Diagnostics) {
+		return
+	}
 	state.Name = plan.Name
 	state.AdoptExistingServiceName = plan.AdoptExistingServiceName
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -269,6 +273,10 @@ func (r *FrontendApplicationResource) Delete(ctx context.Context, req resource.D
 	var state FrontendApplicationModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if missingID(state.ID, &resp.Diagnostics) {
 		return
 	}
 	err := r.client.DeleteFrontendApplication(ctx,

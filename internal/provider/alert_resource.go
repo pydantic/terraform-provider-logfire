@@ -318,9 +318,27 @@ func addIgnoredPolicyError(diags *diag.Diagnostics, planned *AlertInstancePolicy
 	}
 }
 
+// alertDurations parses time_window and frequency. Upjet can apply without
+// running the config validators, so a bad value fails here instead of being
+// sent as zero.
+func alertDurations(m *AlertModel) (time.Duration, time.Duration, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	tw, err := parseDurationText(m.TimeWindow.ValueString())
+	if err != nil {
+		diags.AddAttributeError(path.Root("time_window"), "Invalid time_window", err.Error())
+	}
+	fr, err := parseDurationText(m.Frequency.ValueString())
+	if err != nil {
+		diags.AddAttributeError(path.Root("frequency"), "Invalid frequency", err.Error())
+	}
+	return tw, fr, diags
+}
+
 func alertModelToCreate(ctx context.Context, m *AlertModel) (logclient.AlertCreate, diag.Diagnostics) {
-	tw, _ := parseDurationText(m.TimeWindow.ValueString())
-	fr, _ := parseDurationText(m.Frequency.ValueString())
+	tw, fr, diags := alertDurations(m)
+	if diags.HasError() {
+		return logclient.AlertCreate{}, diags
+	}
 	ch, diags := channelAssignmentsToAPI(ctx, m.ChannelAssignments)
 	if diags.HasError() {
 		return logclient.AlertCreate{}, diags
@@ -497,11 +515,18 @@ func (r *AlertResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		return
 	}
 
+	if missingID(state.ID, &resp.Diagnostics) {
+		return
+	}
+
 	projectID := state.ProjectID.ValueString()
 	id := state.ID.ValueString()
 
-	tw, _ := parseDurationText(plan.TimeWindow.ValueString())
-	fr, _ := parseDurationText(plan.Frequency.ValueString())
+	tw, fr, diags := alertDurations(&plan)
+	resp.Diagnostics.Append(diags...)
+	if diags.HasError() {
+		return
+	}
 	payload := logclient.AlertUpdate{
 		Name:       plan.Name.ValueStringPointer(),
 		Query:      plan.Query.ValueStringPointer(),
@@ -574,6 +599,10 @@ func (r *AlertResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 	var state AlertModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if missingID(state.ID, &resp.Diagnostics) {
 		return
 	}
 

@@ -231,6 +231,8 @@ func TestEmptyResourceIDNeverReachesTheAPI(t *testing.T) {
 			_, _, err := c.GetSchedule(ctx, "")
 			return err
 		},
+		// An organization-scoped call refuses before it exchanges a token.
+		"org delete project": func() error { return c.ForOrganization("acme").DeleteProject(ctx, "") },
 	}
 	for name, call := range calls {
 		err := call()

@@ -333,3 +333,15 @@ type configured struct{ client *client.APIClient }
 func (c *configured) Configure(_ context.Context, req resource.ConfigureRequest, _ *resource.ConfigureResponse) {
 	c.client, _ = req.ProviderData.(*client.APIClient)
 }
+
+// missingID reports an update or delete of a resource whose state has no ID.
+// Some of these operations address the resource by name or send no request
+// that carries the ID, so the client cannot catch the missing ID for them.
+func missingID(id types.String, diags *diag.Diagnostics) bool {
+	if id.ValueString() != "" {
+		return false
+	}
+	diags.AddError("Missing resource ID",
+		"The resource ID is missing. Import the resource, or remove it from state if it cannot be imported.")
+	return true
+}

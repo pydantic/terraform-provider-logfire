@@ -198,6 +198,10 @@ func (r *OrganizationResource) Update(ctx context.Context, req resource.UpdateRe
 		return
 	}
 
+	if missingID(state.ID, &resp.Diagnostics) {
+		return
+	}
+
 	payload := logclient.OrganizationUpdate{
 		OrganizationName:        trimmedIfChanged(plan.Name, state.Name),
 		OrganizationDisplayName: trimmedIfChanged(plan.DisplayName, state.DisplayName),
@@ -250,7 +254,12 @@ func (r *OrganizationResource) Delete(ctx context.Context, req resource.DeleteRe
 		return
 	}
 
-	if state.DeletionProtection.IsNull() || state.DeletionProtection.ValueBool() {
+	if missingID(state.ID, &resp.Diagnostics) {
+		return
+	}
+
+	// Only an explicit false allows the delete.
+	if !state.DeletionProtection.Equal(types.BoolValue(false)) {
 		resp.Diagnostics.AddError(
 			"Organization deletion is protected",
 			"This resource has `deletion_protection = true`. Set `deletion_protection = false` and apply once before destroying the organization.",

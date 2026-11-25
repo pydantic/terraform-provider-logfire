@@ -288,6 +288,10 @@ func (r *APIKeyResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
+	if missingID(state.ID, &resp.Diagnostics) {
+		return
+	}
+
 	read := updateAPIKey(ctx, r.client, &plan, &state, "API key", resp)
 	if read != nil {
 		newState := apiKeyToModel(read, state.Token)
@@ -302,6 +306,10 @@ func (r *APIKeyResource) Delete(ctx context.Context, req resource.DeleteRequest,
 	var state APIKeyModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if missingID(state.ID, &resp.Diagnostics) {
 		return
 	}
 

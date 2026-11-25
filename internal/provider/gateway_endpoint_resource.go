@@ -99,6 +99,10 @@ func (r *GatewayEndpointResource) Update(ctx context.Context, req resource.Updat
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	if missingID(state.ID, &resp.Diagnostics) {
+		return
+	}
 	id := state.ID.ValueString()
 	var out *logclient.GatewayEndpointRead
 	var err error
@@ -137,6 +141,10 @@ func (r *GatewayEndpointResource) Delete(ctx context.Context, req resource.Delet
 	var state GatewayEndpointModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if missingID(state.ID, &resp.Diagnostics) {
 		return
 	}
 	err := r.client.DeleteGatewayEndpoint(ctx, state.ID.ValueString())

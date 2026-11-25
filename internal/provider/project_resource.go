@@ -219,6 +219,10 @@ func (r *ProjectResource) Update(ctx context.Context, req resource.UpdateRequest
 		return
 	}
 
+	if missingID(state.ID, &resp.Diagnostics) {
+		return
+	}
+
 	payload := logclient.ProjectUpdate{ProjectName: plan.Name.ValueStringPointer()}
 	if !plan.Description.Equal(state.Description) {
 		// The API clears a description when it gets an empty string.
@@ -248,6 +252,10 @@ func (r *ProjectResource) Delete(ctx context.Context, req resource.DeleteRequest
 	var state ProjectModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if missingID(state.ID, &resp.Diagnostics) {
 		return
 	}
 

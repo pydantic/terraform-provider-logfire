@@ -559,6 +559,10 @@ func (r *SloResource) Update(ctx context.Context, req resource.UpdateRequest, re
 		return
 	}
 
+	if missingID(state.ID, &resp.Diagnostics) {
+		return
+	}
+
 	payload, diags := sloModelToUpdate(ctx, &plan, &state)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
@@ -592,6 +596,10 @@ func (r *SloResource) Delete(ctx context.Context, req resource.DeleteRequest, re
 	var state SloModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if missingID(state.ID, &resp.Diagnostics) {
 		return
 	}
 
