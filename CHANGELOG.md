@@ -1,10 +1,12 @@
 ## Unreleased
 
+## 0.3.2
+
 BUG FIXES:
-- `logfire_project`: a refresh removes a project that was deleted outside Terraform from state, and a destroy of such a project succeeds, when the provider uses its API key without an `organization`. Logfire answers 403 for a missing project, so both used to fail. The provider now lists the key's projects and treats the project as deleted only when that list succeeds without it and holds no project of another organization. A refresh already did this for projects in a named organization.
-- Every resource whose ID Logfire assigns handles a missing ID the same way. A refresh treats a resource with an empty ID as absent, which organizations, Gateway endpoints and providers, and frontend applications and their tokens now do too. An update or delete with a missing ID fails before any request is sent and asks you to import the resource, or remove it from state if it cannot be imported. Before, most resources sent the request to a URL with an empty segment, and a schedule's request reached the collection route. The dashboard and SLO messages are replaced by this shared one.
-- `logfire_write_token.token_prefix` is null right after creation, like `logfire_read_token.token_prefix`, instead of an empty string. Logfire returns the prefix only when listing tokens, so the next refresh fills it in.
-- A delete of an alert, dashboard, SLO, or read or write token whose request the provider refused no longer looks up the project, so that error can no longer be mistaken for a deleted project and hidden.
+- `logfire_project`: when the provider uses its API key without an `organization`, a refresh removes a project deleted outside Terraform from state, and destroying it succeeds. Logfire answers 403 for a missing project, so both used to fail. The provider treats the project as deleted only when the key's project list succeeds without it.
+- Resources whose ID Logfire assigns handle a missing ID the same way. A refresh treats an empty ID as absent, and an update or delete with a missing ID fails before sending a request and asks you to import the resource. Before, most resources sent the request to a URL with an empty segment.
+- `logfire_write_token.token_prefix` is null right after creation instead of an empty string, like `logfire_read_token.token_prefix`. The next refresh fills it in.
+- A refused delete of an alert, dashboard, SLO, or token is no longer mistaken for a deleted project.
 
 ## 0.3.1
 
