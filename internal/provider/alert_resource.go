@@ -474,7 +474,7 @@ func (r *AlertResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	projectID := state.ProjectID.ValueString()
 	out, status, err := r.client.GetAlert(ctx, projectID, state.ID.ValueString())
 	if err != nil {
-		if status == 404 || projectMissing(ctx, r.client, projectID) {
+		if status == 404 || projectMissing(ctx, r.client, projectID, err) {
 			resp.State.RemoveResource(ctx)
 			return
 		}
@@ -579,7 +579,7 @@ func (r *AlertResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 
 	projectID := state.ProjectID.ValueString()
 	err := r.client.DeleteAlert(ctx, projectID, state.ID.ValueString())
-	if err != nil && !logclient.IsNotFoundError(err) && !projectMissing(ctx, r.client, projectID) {
+	if err != nil && !logclient.IsNotFoundError(err) && !projectMissing(ctx, r.client, projectID, err) {
 		resp.Diagnostics.AddError("Delete alert failed", err.Error())
 	}
 }

@@ -168,7 +168,7 @@ func (r *OrganizationResource) Read(ctx context.Context, req resource.ReadReques
 		return
 	}
 	if state.ID.ValueString() == "" {
-		resp.Diagnostics.AddError("Missing ID", "Cannot read organization because the state is missing an ID.")
+		resp.State.RemoveResource(ctx)
 		return
 	}
 

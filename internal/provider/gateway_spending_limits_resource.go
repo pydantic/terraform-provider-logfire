@@ -294,7 +294,7 @@ func (r *GatewayProjectSpendingLimitsResource) apply(ctx context.Context, plan t
 // unchanged because it cannot be told apart from lost access.
 func (r *GatewayProjectSpendingLimitsResource) classify(ctx context.Context, projectID, method string, err error) error {
 	if logclient.IsNotFoundError(err) &&
-		!projectMissing(ctx, r.client, projectID) {
+		!projectMissing(ctx, r.client, projectID, err) {
 		return logclient.GatewayProjectSpendingLimitsUnavailableError(method, err)
 	}
 	return err

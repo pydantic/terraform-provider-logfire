@@ -1,5 +1,9 @@
 ## Unreleased
 
+BUG FIXES:
+- Every resource handles a missing ID the same way. A refresh treats a resource with an empty ID as absent, which `logfire_organization` now does too instead of failing. An update or delete with a missing ID fails before any request is sent and asks you to import the resource. Before, most resources sent the request to a URL with an empty segment, and a schedule's request reached the collection route. The dashboard and SLO messages are replaced by this shared one.
+- A delete of an alert, dashboard, SLO, or read or write token whose request the provider refused no longer looks up the project, so that error can no longer be mistaken for a deleted project and hidden.
+
 ## 0.3.1
 
 FEATURES:

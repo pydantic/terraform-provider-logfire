@@ -210,7 +210,7 @@ func (r *tokenResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	projectID := state.ProjectID.ValueString()
 	found, err := r.find(ctx, r.client, projectID, state.ID.ValueString())
 	if err != nil {
-		if projectMissing(ctx, r.client, projectID) {
+		if projectMissing(ctx, r.client, projectID, err) {
 			resp.State.RemoveResource(ctx)
 			return
 		}
@@ -241,7 +241,7 @@ func (r *tokenResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 	projectID := state.ProjectID.ValueString()
 	err := r.remove(ctx, r.client, projectID, state.ID.ValueString())
 	if err != nil && !logclient.IsNotFoundError(err) &&
-		!projectMissing(ctx, r.client, projectID) {
+		!projectMissing(ctx, r.client, projectID, err) {
 		resp.Diagnostics.AddError("Delete "+r.kind+" token failed", err.Error())
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -207,5 +208,37 @@ func TestCreatesAreNotAutomaticallyRetried(t *testing.T) {
 				t.Fatalf("create request attempts = %d; want 1", attempts)
 			}
 		})
+	}
+}
+
+// A request path with an empty ID segment would reach a collection route
+// instead of the resource, so the client refuses it before sending.
+func TestEmptyResourceIDNeverReachesTheAPI(t *testing.T) {
+	var requests atomic.Int32
+	c := newServerClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	})
+	ctx := t.Context()
+	calls := map[string]func() error{
+		"delete channel": func() error { return c.DeleteChannel(ctx, "") },
+		"delete alert":   func() error { return c.DeleteAlert(ctx, "project-1", "") },
+		"update project": func() error {
+			_, err := c.UpdateProject(ctx, "", ProjectUpdate{})
+			return err
+		},
+		"get schedule": func() error {
+			_, _, err := c.GetSchedule(ctx, "")
+			return err
+		},
+	}
+	for name, call := range calls {
+		err := call()
+		if err == nil || !strings.Contains(err.Error(), "the resource ID is missing") {
+			t.Errorf("%s: err = %v, want missing resource ID", name, err)
+		}
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("empty IDs sent %d requests", requests.Load())
 	}
 }

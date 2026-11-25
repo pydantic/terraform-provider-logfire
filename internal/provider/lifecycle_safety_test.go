@@ -502,17 +502,17 @@ func TestLifecycleProjectImportIDCollision(t *testing.T) {
 // empty ID as absent without calling the API.
 func TestReadWithEmptyIDMakesNoRequests(t *testing.T) {
 	resources := map[string]func() fwresource.Resource{
-		"alert":            func() fwresource.Resource { return &AlertResource{} },
-		"api_key":          func() fwresource.Resource { return &APIKeyResource{} },
-		"channel":          func() fwresource.Resource { return &ChannelResource{} },
-		"dashboard":        func() fwresource.Resource { return &DashboardResource{} },
-		"gateway_api_key":  func() fwresource.Resource { return &GatewayAPIKeyResource{} },
-		"project":          func() fwresource.Resource { return &ProjectResource{} },
-		"read_token":       NewReadTokenResource,
-		"schedule":         func() fwresource.Resource { return &ScheduleResource{} },
-		"slo":              func() fwresource.Resource { return &SloResource{} },
-		"write_token":      NewWriteTokenResource,
-		"organization_err": func() fwresource.Resource { return &OrganizationResource{} },
+		"alert":           func() fwresource.Resource { return &AlertResource{} },
+		"api_key":         func() fwresource.Resource { return &APIKeyResource{} },
+		"channel":         func() fwresource.Resource { return &ChannelResource{} },
+		"dashboard":       func() fwresource.Resource { return &DashboardResource{} },
+		"gateway_api_key": func() fwresource.Resource { return &GatewayAPIKeyResource{} },
+		"project":         func() fwresource.Resource { return &ProjectResource{} },
+		"read_token":      NewReadTokenResource,
+		"schedule":        func() fwresource.Resource { return &ScheduleResource{} },
+		"slo":             func() fwresource.Resource { return &SloResource{} },
+		"write_token":     NewWriteTokenResource,
+		"organization":    func() fwresource.Resource { return &OrganizationResource{} },
 	}
 	for name, build := range resources {
 		t.Run(name, func(t *testing.T) {
@@ -548,12 +548,6 @@ func TestReadWithEmptyIDMakesNoRequests(t *testing.T) {
 			r.Read(t.Context(), fwresource.ReadRequest{State: state}, &resp)
 			if requests.Load() != 0 {
 				t.Fatalf("read with an empty ID made %d API calls", requests.Load())
-			}
-			if name == "organization_err" {
-				if !resp.Diagnostics.HasError() {
-					t.Fatal("organization read with an empty ID must report Missing ID")
-				}
-				return
 			}
 			if resp.Diagnostics.HasError() || !resp.State.Raw.IsNull() {
 				t.Fatalf("read with an empty ID returned state=%v, diagnostics=%v", resp.State.Raw, resp.Diagnostics)

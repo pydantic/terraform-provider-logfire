@@ -436,6 +436,9 @@ func (c *APIClient) newRequest(ctx context.Context, method, path string, body io
 	if err != nil {
 		return nil, fmt.Errorf("parse request path: %w", err)
 	}
+	if strings.Contains(reference.Path, "//") {
+		return nil, fmt.Errorf("%s %s: the resource ID is missing. Import the resource to restore its ID", method, reference.Path)
+	}
 	u := c.BaseURL.ResolveReference(reference)
 	req, err := http.NewRequestWithContext(ctx, method, u.String(), body)
 	if err != nil {
@@ -1328,11 +1331,11 @@ const (
 // deprecated /schedules/ route Logfire served before. A 404 never has an
 // effect, so the second call is safe for every method. A 404 for a missing
 // window is final, so a failed second call cannot hide it. Once the deprecated
-// route has answered, later calls skip the new one. An empty id addresses the
-// collection.
+// route has answered, later calls skip the new one. A POST addresses the
+// collection and every other method addresses the item id.
 func (c *APIClient) doSchedule(ctx context.Context, method, id string, in, out any, expected int) (*http.Response, error) {
 	suffix := ""
-	if id != "" {
+	if method != http.MethodPost {
 		suffix = url.PathEscape(id) + "/"
 	}
 	if !c.shared.legacySchedules.Load() {
