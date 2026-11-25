@@ -437,7 +437,7 @@ func (c *APIClient) newRequest(ctx context.Context, method, path string, body io
 		return nil, fmt.Errorf("parse request path: %w", err)
 	}
 	if strings.Contains(reference.Path, "//") {
-		return nil, fmt.Errorf("%s %s: the resource ID is missing. Import the resource to restore its ID", method, reference.Path)
+		return nil, fmt.Errorf("%s %s: the resource ID is missing. Import the resource, or remove it from state if it cannot be imported", method, reference.Path)
 	}
 	u := c.BaseURL.ResolveReference(reference)
 	req, err := http.NewRequestWithContext(ctx, method, u.String(), body)

@@ -76,6 +76,10 @@ func (r *GatewayProviderResource) Read(ctx context.Context, req resource.ReadReq
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if state.ID.ValueString() == "" {
+		resp.State.RemoveResource(ctx)
+		return
+	}
 	out, err := r.client.GetGatewayProvider(ctx, state.ID.ValueString())
 	if logclient.IsNotFoundError(err) {
 		resp.State.RemoveResource(ctx)

@@ -167,6 +167,10 @@ func (r *FrontendApplicationTokenResource) Read(ctx context.Context, req resourc
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if state.ID.ValueString() == "" {
+		resp.State.RemoveResource(ctx)
+		return
+	}
 	tokens, err := r.client.ListFrontendApplicationTokens(ctx,
 		state.ProjectID.ValueString(), state.ApplicationID.ValueString())
 	if logclient.IsNotFoundError(err) {

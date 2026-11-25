@@ -114,7 +114,7 @@ func TestDashboardLifecycleWithMissingID(t *testing.T) {
 				}
 				found := false
 				for _, diagnostic := range diags {
-					found = found || strings.Contains(diagnostic.Detail(), "Import the resource to restore its ID")
+					found = found || strings.Contains(diagnostic.Detail(), "Import the resource, or remove it from state")
 				}
 				if !found {
 					t.Fatalf("missing ID diagnostic lacks import recovery instructions: %v", diags)

@@ -213,6 +213,10 @@ func (r *FrontendApplicationResource) Read(ctx context.Context, req resource.Rea
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if state.ID.ValueString() == "" {
+		resp.State.RemoveResource(ctx)
+		return
+	}
 	application, status, err := r.client.GetFrontendApplication(ctx,
 		state.ProjectID.ValueString(), state.ID.ValueString())
 	if err != nil {

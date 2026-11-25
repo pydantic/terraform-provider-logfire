@@ -502,17 +502,21 @@ func TestLifecycleProjectImportIDCollision(t *testing.T) {
 // empty ID as absent without calling the API.
 func TestReadWithEmptyIDMakesNoRequests(t *testing.T) {
 	resources := map[string]func() fwresource.Resource{
-		"alert":           func() fwresource.Resource { return &AlertResource{} },
-		"api_key":         func() fwresource.Resource { return &APIKeyResource{} },
-		"channel":         func() fwresource.Resource { return &ChannelResource{} },
-		"dashboard":       func() fwresource.Resource { return &DashboardResource{} },
-		"gateway_api_key": func() fwresource.Resource { return &GatewayAPIKeyResource{} },
-		"project":         func() fwresource.Resource { return &ProjectResource{} },
-		"read_token":      NewReadTokenResource,
-		"schedule":        func() fwresource.Resource { return &ScheduleResource{} },
-		"slo":             func() fwresource.Resource { return &SloResource{} },
-		"write_token":     NewWriteTokenResource,
-		"organization":    func() fwresource.Resource { return &OrganizationResource{} },
+		"alert":                      func() fwresource.Resource { return &AlertResource{} },
+		"api_key":                    func() fwresource.Resource { return &APIKeyResource{} },
+		"channel":                    func() fwresource.Resource { return &ChannelResource{} },
+		"dashboard":                  func() fwresource.Resource { return &DashboardResource{} },
+		"gateway_api_key":            func() fwresource.Resource { return &GatewayAPIKeyResource{} },
+		"project":                    func() fwresource.Resource { return &ProjectResource{} },
+		"read_token":                 NewReadTokenResource,
+		"schedule":                   func() fwresource.Resource { return &ScheduleResource{} },
+		"slo":                        func() fwresource.Resource { return &SloResource{} },
+		"write_token":                NewWriteTokenResource,
+		"organization":               func() fwresource.Resource { return &OrganizationResource{} },
+		"gateway_endpoint":           func() fwresource.Resource { return &GatewayEndpointResource{} },
+		"gateway_provider":           func() fwresource.Resource { return &GatewayProviderResource{} },
+		"frontend_application":       func() fwresource.Resource { return &FrontendApplicationResource{} },
+		"frontend_application_token": func() fwresource.Resource { return &FrontendApplicationTokenResource{} },
 	}
 	for name, build := range resources {
 		t.Run(name, func(t *testing.T) {
