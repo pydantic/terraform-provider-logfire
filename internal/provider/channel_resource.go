@@ -438,6 +438,12 @@ func (r *ChannelResource) Create(ctx context.Context, req resource.CreateRequest
 		return
 	}
 
+	if plan.Config == nil {
+		resp.Diagnostics.AddAttributeError(path.Root("config"), "Missing channel config",
+			"A channel needs a config block. Upjet can apply without the config validators, so the provider checks it here.")
+		return
+	}
+
 	cfg, diags := channelConfigModelToAPI(plan.Config)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
@@ -526,6 +532,12 @@ func (r *ChannelResource) Update(ctx context.Context, req resource.UpdateRequest
 	}
 	if v := plan.Active.ValueBool(); v != state.Active.ValueBool() {
 		payload.Active = logclient.NullableFieldValue(v)
+	}
+
+	if plan.Config == nil {
+		resp.Diagnostics.AddAttributeError(path.Root("config"), "Missing channel config",
+			"A channel needs a config block. Upjet can apply without the config validators, so the provider checks it here.")
+		return
 	}
 
 	config := *plan.Config

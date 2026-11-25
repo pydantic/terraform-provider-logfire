@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	fwresource "github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -702,13 +703,42 @@ func TestChannelUpdateWithoutPriorConfig(t *testing.T) {
 	}
 }
 
-// Upjet can apply without the config validators, so an invalid duration fails
-// locally instead of being sent as zero.
+// Upjet can apply without the config validators, so an invalid or
+// out-of-range duration fails locally instead of being sent to the API.
 func TestAlertRejectsInvalidDurationWithoutValidators(t *testing.T) {
-	_, diags := alertModelToCreate(t.Context(), &AlertModel{
-		TimeWindow: newAlertDurationValue("5mi"), Frequency: newAlertDurationValue("1m"),
-	})
-	if !diags.HasError() || diags.Errors()[0].Summary() != "Invalid time_window" {
-		t.Fatalf("diagnostics = %v, want Invalid time_window", diags)
+	for _, tc := range []struct{ timeWindow, frequency, want string }{
+		{"5mi", "1m", "Invalid duration"},
+		{"1h", "0", "Duration out of range"},
+		{"1h", "-1m", "Duration out of range"},
+	} {
+		_, diags := alertModelToCreate(t.Context(), &AlertModel{
+			TimeWindow: newAlertDurationValue(tc.timeWindow), Frequency: newAlertDurationValue(tc.frequency),
+		})
+		if !diags.HasError() || diags.Errors()[0].Summary() != tc.want {
+			t.Errorf("time_window=%q frequency=%q: diagnostics = %v, want %s", tc.timeWindow, tc.frequency, diags, tc.want)
+		}
+	}
+}
+
+// The config block is required only through a validator that Upjet can skip,
+// so create and update refuse a missing one instead of panicking.
+func TestChannelWithoutConfigIsRefused(t *testing.T) {
+	r := &ChannelResource{}
+	requests := countingResource(t, r, `{}`)
+	model := ChannelModel{ID: types.StringValue("ch-1"), Name: types.StringValue("c"), Active: types.BoolValue(true)}
+	state := stateOf(t, r, model)
+	plan := tfsdk.Plan(state)
+	var created fwresource.CreateResponse
+	created.State = state
+	r.Create(t.Context(), fwresource.CreateRequest{Plan: plan}, &created)
+	updated := fwresource.UpdateResponse{State: state}
+	r.Update(t.Context(), fwresource.UpdateRequest{Plan: plan, State: state}, &updated)
+	for op, diags := range map[string]diag.Diagnostics{"create": created.Diagnostics, "update": updated.Diagnostics} {
+		if !diags.HasError() || diags.Errors()[0].Summary() != "Missing channel config" {
+			t.Errorf("%s: diagnostics = %v, want Missing channel config", op, diags)
+		}
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("a channel without config made %d API calls", requests.Load())
 	}
 }

@@ -318,24 +318,27 @@ func addIgnoredPolicyError(diags *diag.Diagnostics, planned *AlertInstancePolicy
 	}
 }
 
-// alertDurations parses time_window and frequency. Upjet can apply without
-// running the config validators, so a bad value fails here instead of being
-// sent as zero.
-func alertDurations(m *AlertModel) (time.Duration, time.Duration, diag.Diagnostics) {
+// alertDurations parses time_window and frequency with the schema's validators.
+// Upjet can apply without running them, so a bad value fails here instead of
+// being sent to the API.
+func alertDurations(ctx context.Context, m *AlertModel) (time.Duration, time.Duration, diag.Diagnostics) {
 	var diags diag.Diagnostics
-	tw, err := parseDurationText(m.TimeWindow.ValueString())
-	if err != nil {
-		diags.AddAttributeError(path.Root("time_window"), "Invalid time_window", err.Error())
+	check := func(name string, v alertDurationValue, rule alertDurationValidator) time.Duration {
+		var resp validator.StringResponse
+		rule.ValidateString(ctx, validator.StringRequest{
+			Path: path.Root(name), ConfigValue: types.StringValue(v.ValueString()),
+		}, &resp)
+		diags.Append(resp.Diagnostics...)
+		d, _ := parseDurationText(v.ValueString())
+		return d
 	}
-	fr, err := parseDurationText(m.Frequency.ValueString())
-	if err != nil {
-		diags.AddAttributeError(path.Root("frequency"), "Invalid frequency", err.Error())
-	}
+	tw := check("time_window", m.TimeWindow, alertDurationValidator{min: alertTimeWindowMin, max: alertTimeWindowMax})
+	fr := check("frequency", m.Frequency, alertDurationValidator{min: alertFrequencyMin, max: alertFrequencyMax})
 	return tw, fr, diags
 }
 
 func alertModelToCreate(ctx context.Context, m *AlertModel) (logclient.AlertCreate, diag.Diagnostics) {
-	tw, fr, diags := alertDurations(m)
+	tw, fr, diags := alertDurations(ctx, m)
 	if diags.HasError() {
 		return logclient.AlertCreate{}, diags
 	}
@@ -522,7 +525,7 @@ func (r *AlertResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	projectID := state.ProjectID.ValueString()
 	id := state.ID.ValueString()
 
-	tw, fr, diags := alertDurations(&plan)
+	tw, fr, diags := alertDurations(ctx, &plan)
 	resp.Diagnostics.Append(diags...)
 	if diags.HasError() {
 		return
