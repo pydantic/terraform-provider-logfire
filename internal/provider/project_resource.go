@@ -153,12 +153,10 @@ func (r *ProjectResource) Read(ctx context.Context, req resource.ReadRequest, re
 
 	getProject := func(client *logclient.APIClient) (*logclient.ProjectRead, int, error) {
 		out, status, err := client.GetProject(ctx, state.ID.ValueString())
-		// The server answers 403 with this message for a project outside the
-		// token's organization. An exchanged token has the scopes the provider
-		// asked for, so with one the 403 means the project is not in the
-		// organization. Any other 403, from a proxy for example, stays an error.
-		if status == http.StatusForbidden && knownString(state.OrganizationID) &&
-			strings.Contains(err.Error(), "You do not have permission to access this project") {
+		// An exchanged token has the scopes the provider asked for, so with one
+		// the 403 means the project is not in the organization.
+		if forbiddenProject(err) && (knownString(state.OrganizationID) ||
+			ownProjectGone(ctx, client, state.ID.ValueString(), state.Organization.ValueString())) {
 			status = http.StatusNotFound
 		}
 		return out, status, err
@@ -259,12 +257,42 @@ func (r *ProjectResource) Delete(ctx context.Context, req resource.DeleteRequest
 		return
 	}
 
-	err := r.clientFor(state.Organization, state.OrganizationID).
-		DeleteProject(ctx, state.ID.ValueString())
+	client := r.clientFor(state.Organization, state.OrganizationID)
+	err := client.DeleteProject(ctx, state.ID.ValueString())
 	// A project that is already gone is a successful delete.
-	if err != nil && !logclient.IsNotFoundError(err) {
-		resp.Diagnostics.AddError("Delete project failed", err.Error())
+	if err == nil || logclient.IsNotFoundError(err) {
+		return
 	}
+	if forbiddenProject(err) && !knownString(state.OrganizationID) &&
+		ownProjectGone(ctx, client, state.ID.ValueString(), state.Organization.ValueString()) {
+		return
+	}
+	resp.Diagnostics.AddError("Delete project failed", err.Error())
+}
+
+// forbiddenProject reports whether err is the 403 that the server answers for a
+// project that the token cannot reach, which includes a project that does not
+// exist. Any other 403, from a proxy for example, stays an error.
+func forbiddenProject(err error) bool {
+	var apiErr *logclient.APIError
+	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusForbidden &&
+		strings.Contains(apiErr.Message, "You do not have permission to access this project")
+}
+
+// ownProjectGone reports whether the key's own project list succeeds without the
+// project. A project with a null organization_id is in the key's organization,
+// so a list without it means that the project was deleted, unless the key is now
+// from another organization. The list rows name the key's organization. Through
+// a provider organization, the list is another organization's, so it tells
+// nothing.
+func ownProjectGone(ctx context.Context, c *logclient.APIClient, projectID, organization string) bool {
+	if c.Organization() != "" {
+		return false
+	}
+	list, err := c.ListProjects(ctx)
+	return err == nil && !slices.ContainsFunc(list, func(p logclient.ProjectRead) bool {
+		return p.ID == projectID || p.OrganizationName != organization
+	})
 }
 
 func (r *ProjectResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
