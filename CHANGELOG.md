@@ -2,6 +2,7 @@
 
 BUG FIXES:
 - Every resource whose ID Logfire assigns handles a missing ID the same way. A refresh treats a resource with an empty ID as absent, which organizations, Gateway endpoints and providers, and frontend applications and their tokens now do too. An update or delete with a missing ID fails before any request is sent and asks you to import the resource, or remove it from state if it cannot be imported. Before, most resources sent the request to a URL with an empty segment, and a schedule's request reached the collection route. The dashboard and SLO messages are replaced by this shared one.
+- `logfire_write_token.token_prefix` is null right after creation, like `logfire_read_token.token_prefix`, instead of an empty string. Logfire returns the prefix only when listing tokens, so the next refresh fills it in.
 - A delete of an alert, dashboard, SLO, or read or write token whose request the provider refused no longer looks up the project, so that error can no longer be mistaken for a deleted project and hidden.
 
 ## 0.3.1

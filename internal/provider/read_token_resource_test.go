@@ -20,7 +20,9 @@ func TestAccReadTokenResource(t *testing.T) {
 	testAccTokenResource(t, "read")
 }
 
-// testAccTokenResource runs the expiry lifecycle shared by the read and write token resources.
+// testAccTokenResource runs the expiry lifecycle shared by the read and write
+// token resources. Logfire returns token_prefix only when listing tokens, so the
+// prefix is checked after a refresh and not right after a create.
 func testAccTokenResource(t *testing.T, kind string) {
 	address := fmt.Sprintf("logfire_%s_token.test", kind)
 	projectName := fmt.Sprintf("acc-%s-token-%s", kind, acctest.RandStringFromCharSet(6, acctest.CharSetAlphaNum))
@@ -38,7 +40,6 @@ func testAccTokenResource(t *testing.T, kind string) {
 				ConfigStateChecks: []statecheck.StateCheck{
 					expectAccValue(address, "id", knownvalue.NotNull()),
 					expectAccValue(address, "project_id", knownvalue.NotNull()),
-					expectAccValue(address, "token_prefix", knownvalue.NotNull()),
 					expectAccValue(address, "token", knownvalue.NotNull()),
 					expectAccValue(address, "expires_at", knownvalue.Null()),
 				},
@@ -56,7 +57,6 @@ func testAccTokenResource(t *testing.T, kind string) {
 				Config:           testAccTokenResourceConfig(kind, projectName, withExpiry),
 				ConfigPlanChecks: replace,
 				ConfigStateChecks: []statecheck.StateCheck{
-					expectAccValue(address, "token_prefix", knownvalue.NotNull()),
 					expectAccValue(address, "token", knownvalue.NotNull()),
 					expectAccValue(address, "expires_at", knownvalue.StringExact(expiresAt)),
 				},
