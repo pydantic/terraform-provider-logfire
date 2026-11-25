@@ -486,6 +486,10 @@ func (r *ChannelResource) Read(ctx context.Context, req resource.ReadRequest, re
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if state.ID.ValueString() == "" {
+		resp.State.RemoveResource(ctx)
+		return
+	}
 
 	out, status, err := r.client.GetChannel(ctx, state.ID.ValueString())
 	if err != nil {

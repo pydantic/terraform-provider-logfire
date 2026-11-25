@@ -178,6 +178,9 @@ func (r *tokenResource) Create(ctx context.Context, req resource.CreateRequest, 
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if invalidExpiresAt(plan.ExpiresAt, &resp.Diagnostics) {
+		return
+	}
 
 	out, err := r.create(ctx, r.client, plan.ProjectID.ValueString(),
 		expiresAtPointer(plan.ExpiresAt))
@@ -197,6 +200,10 @@ func (r *tokenResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	var state tokenModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	if state.ID.ValueString() == "" {
+		resp.State.RemoveResource(ctx)
 		return
 	}
 

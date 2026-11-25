@@ -232,6 +232,10 @@ func (r *ScheduleResource) Read(ctx context.Context, req resource.ReadRequest, r
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if state.ID.ValueString() == "" {
+		resp.State.RemoveResource(ctx)
+		return
+	}
 
 	out, status, err := r.client.GetSchedule(ctx, state.ID.ValueString())
 	if err != nil {

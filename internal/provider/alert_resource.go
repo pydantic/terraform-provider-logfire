@@ -466,6 +466,10 @@ func (r *AlertResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if state.ID.ValueString() == "" {
+		resp.State.RemoveResource(ctx)
+		return
+	}
 
 	projectID := state.ProjectID.ValueString()
 	out, status, err := r.client.GetAlert(ctx, projectID, state.ID.ValueString())

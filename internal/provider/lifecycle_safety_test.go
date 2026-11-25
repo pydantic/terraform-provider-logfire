@@ -16,9 +16,14 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/path"
+	fwresource "github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
 	"golang.org/x/net/idna"
 )
 
@@ -491,4 +496,117 @@ func TestLifecycleProjectImportIDCollision(t *testing.T) {
 			return nil
 		},
 	}})
+}
+
+// Upjet observes a resource before Logfire assigns it an ID. Read must treat an
+// empty ID as absent without calling the API.
+func TestReadWithEmptyIDMakesNoRequests(t *testing.T) {
+	resources := map[string]func() fwresource.Resource{
+		"alert":            func() fwresource.Resource { return &AlertResource{} },
+		"api_key":          func() fwresource.Resource { return &APIKeyResource{} },
+		"channel":          func() fwresource.Resource { return &ChannelResource{} },
+		"dashboard":        func() fwresource.Resource { return &DashboardResource{} },
+		"gateway_api_key":  func() fwresource.Resource { return &GatewayAPIKeyResource{} },
+		"project":          func() fwresource.Resource { return &ProjectResource{} },
+		"read_token":       NewReadTokenResource,
+		"schedule":         func() fwresource.Resource { return &ScheduleResource{} },
+		"slo":              func() fwresource.Resource { return &SloResource{} },
+		"write_token":      NewWriteTokenResource,
+		"organization_err": func() fwresource.Resource { return &OrganizationResource{} },
+	}
+	for name, build := range resources {
+		t.Run(name, func(t *testing.T) {
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests.Add(1)
+				w.WriteHeader(http.StatusInternalServerError)
+			}))
+			t.Cleanup(server.Close)
+			client, err := logclient.NewAPIClient(server.URL, "test-token", server.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := build()
+			configurable, ok := r.(fwresource.ResourceWithConfigure)
+			if !ok {
+				t.Fatalf("%s does not implement Configure", name)
+			}
+			configurable.Configure(t.Context(),
+				fwresource.ConfigureRequest{ProviderData: client}, &fwresource.ConfigureResponse{})
+			var schemaResp fwresource.SchemaResponse
+			r.Schema(t.Context(), fwresource.SchemaRequest{}, &schemaResp)
+			state := tfsdk.State{Schema: schemaResp.Schema,
+				Raw: tftypes.NewValue(schemaResp.Schema.Type().TerraformType(t.Context()), nil)}
+			diags := state.SetAttribute(t.Context(), path.Root("id"), "")
+			if _, ok := schemaResp.Schema.Attributes["project_id"]; ok {
+				diags.Append(state.SetAttribute(t.Context(), path.Root("project_id"), "project-1")...)
+			}
+			if diags.HasError() {
+				t.Fatal(diags)
+			}
+			resp := fwresource.ReadResponse{State: state}
+			r.Read(t.Context(), fwresource.ReadRequest{State: state}, &resp)
+			if requests.Load() != 0 {
+				t.Fatalf("read with an empty ID made %d API calls", requests.Load())
+			}
+			if name == "organization_err" {
+				if !resp.Diagnostics.HasError() {
+					t.Fatal("organization read with an empty ID must report Missing ID")
+				}
+				return
+			}
+			if resp.Diagnostics.HasError() || !resp.State.Raw.IsNull() {
+				t.Fatalf("read with an empty ID returned state=%v, diagnostics=%v", resp.State.Raw, resp.Diagnostics)
+			}
+		})
+	}
+}
+
+// Upjet can apply without running the config validators, so create rejects a
+// non-RFC3339 expires_at before it sends a request.
+func TestCreateRejectsInvalidExpiresAtWithoutRequest(t *testing.T) {
+	resources := map[string]func() fwresource.Resource{
+		"api_key":         func() fwresource.Resource { return &APIKeyResource{} },
+		"gateway_api_key": func() fwresource.Resource { return &GatewayAPIKeyResource{} },
+		"read_token":      NewReadTokenResource,
+		"write_token":     NewWriteTokenResource,
+	}
+	for name, build := range resources {
+		t.Run(name, func(t *testing.T) {
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests.Add(1)
+				w.WriteHeader(http.StatusInternalServerError)
+			}))
+			t.Cleanup(server.Close)
+			client, err := logclient.NewAPIClient(server.URL, "test-token", server.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := build()
+			configurable, ok := r.(fwresource.ResourceWithConfigure)
+			if !ok {
+				t.Fatalf("%s does not implement Configure", name)
+			}
+			configurable.Configure(t.Context(),
+				fwresource.ConfigureRequest{ProviderData: client}, &fwresource.ConfigureResponse{})
+			var schemaResp fwresource.SchemaResponse
+			r.Schema(t.Context(), fwresource.SchemaRequest{}, &schemaResp)
+			plan := tfsdk.Plan{Schema: schemaResp.Schema,
+				Raw: tftypes.NewValue(schemaResp.Schema.Type().TerraformType(t.Context()), nil)}
+			diags := plan.SetAttribute(t.Context(), path.Root("expires_at"), "1800000000")
+			diags.Append(plan.SetAttribute(t.Context(), path.Root("project_id"), "project-1")...)
+			if diags.HasError() {
+				t.Fatal(diags)
+			}
+			resp := fwresource.CreateResponse{State: tfsdk.State{Schema: schemaResp.Schema, Raw: plan.Raw.Copy()}}
+			r.Create(t.Context(), fwresource.CreateRequest{Plan: plan}, &resp)
+			if requests.Load() != 0 {
+				t.Fatalf("create with an invalid expires_at made %d API calls", requests.Load())
+			}
+			if !resp.Diagnostics.HasError() || resp.Diagnostics[0].Summary() != "Invalid expires_at" {
+				t.Fatalf("diagnostics = %v, want Invalid expires_at", resp.Diagnostics)
+			}
+		})
+	}
 }

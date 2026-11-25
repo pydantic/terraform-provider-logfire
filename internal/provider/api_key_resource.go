@@ -240,6 +240,9 @@ func (r *APIKeyResource) Create(ctx context.Context, req resource.CreateRequest,
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if invalidExpiresAt(plan.ExpiresAt, &resp.Diagnostics) {
+		return
+	}
 
 	out, err := r.client.CreateAPIKey(ctx, apiKeyCreateFromPlan(&plan))
 	if err != nil {
@@ -259,6 +262,10 @@ func (r *APIKeyResource) Read(ctx context.Context, req resource.ReadRequest, res
 	var state APIKeyModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	if state.ID.ValueString() == "" {
+		resp.State.RemoveResource(ctx)
 		return
 	}
 

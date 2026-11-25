@@ -146,6 +146,10 @@ func (r *ProjectResource) Read(ctx context.Context, req resource.ReadRequest, re
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if state.ID.ValueString() == "" {
+		resp.State.RemoveResource(ctx)
+		return
+	}
 
 	getProject := func(client *logclient.APIClient) (*logclient.ProjectRead, int, error) {
 		out, status, err := client.GetProject(ctx, state.ID.ValueString())

@@ -191,6 +191,9 @@ func (r *GatewayAPIKeyResource) Create(ctx context.Context, req resource.CreateR
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if invalidExpiresAt(plan.ExpiresAt, &resp.Diagnostics) {
+		return
+	}
 
 	out, err := r.client.CreateAPIKey(ctx, logclient.APIKeyCreate{
 		Name:        plan.Name.ValueString(),
@@ -217,6 +220,10 @@ func (r *GatewayAPIKeyResource) Read(ctx context.Context, req resource.ReadReque
 	var state GatewayAPIKeyModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	if state.ID.ValueString() == "" {
+		resp.State.RemoveResource(ctx)
 		return
 	}
 
