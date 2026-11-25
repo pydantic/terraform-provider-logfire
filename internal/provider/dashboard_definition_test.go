@@ -12,85 +12,71 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-func TestDashboardDefinitionComparison(t *testing.T) {
-	minimal := types.StringValue(`{"kind":"Dashboard","metadata":{"name":"Main","project":"test"},"spec":{"display":{"name":"Main"},"panels":{},"layouts":[]}}`)
-	for _, tc := range []struct {
-		name, raw string
-		want      bool
-	}{
-		{"metadata including placement timestamp", `{"kind":"Dashboard","metadata":{"name":"Other","layoutUpdatedAt":"2026-10-14T10:00:00Z","extra":"ignored"},"spec":{"display":{"name":"Main"},"panels":{},"layouts":[]}}`, true},
-		{"known API defaults", `{"kind":"Dashboard","metadata":{},"spec":{"display":{"name":"Main","description":null},"panels":{},"layouts":[],"datasources":{},"variables":[],"duration":"1h","refreshInterval":"0s"}}`, true},
-		{"null variables", `{"kind":"Dashboard","metadata":{},"spec":{"display":{"name":"Main"},"panels":{},"layouts":[],"variables":null}}`, true},
-		{"explicit null duration remains meaningful", `{"kind":"Dashboard","metadata":{},"spec":{"display":{"name":"Main"},"panels":{},"layouts":[],"duration":null}}`, false},
-		{"explicit refresh remains meaningful", `{"kind":"Dashboard","metadata":{},"spec":{"display":{"name":"Main"},"panels":{},"layouts":[],"refreshInterval":"5s"}}`, false},
-		{"unknown spec field remains meaningful", `{"kind":"Dashboard","metadata":{},"spec":{"display":{"name":"Main"},"panels":{},"layouts":[],"custom":false}}`, false},
-	} {
+type definitionComparison struct {
+	name, previous, current string
+	want                    bool
+}
+
+func runDefinitionComparisons(t *testing.T, cases []definitionComparison) {
+	t.Helper()
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := dashboardDefinitionsEqual(minimal, types.StringValue(tc.raw)); got != tc.want {
+			got := dashboardDefinitionsEqual(types.StringValue(tc.previous), types.StringValue(tc.current))
+			if got != tc.want {
 				t.Fatalf("comparison = %v, want %v", got, tc.want)
 			}
 		})
 	}
-	datasource := types.StringValue(`{"kind":"Dashboard","spec":{"display":null,"panels":{},"layouts":[],"datasources":{"logs":{"display":{"name":"logs"},"plugin":{"kind":"Logfire","spec":{"number":9007199254740993}}}}}}`)
-	expandedDatasource := types.StringValue(`{"kind":"Dashboard","spec":{"display":null,"panels":{},"layouts":[],"datasources":{"logs":{"display":{"name":"logs","description":null},"default":false,"plugin":{"kind":"Logfire","spec":{"number":9007199254740993}}}}}}`)
-	if !dashboardDefinitionsEqual(datasource, expandedDatasource) {
-		t.Fatal("datasource defaults must compare equal")
-	}
-	roundedDatasource := types.StringValue(strings.ReplaceAll(expandedDatasource.ValueString(), "9007199254740993", "9007199254740992"))
-	if dashboardDefinitionsEqual(datasource, roundedDatasource) {
-		t.Fatal("different large integers must remain different")
-	}
-	withPluginDefault := types.StringValue(strings.ReplaceAll(expandedDatasource.ValueString(), `"number":9007199254740993`, `"number":9007199254740993,"default":false`))
-	if dashboardDefinitionsEqual(datasource, withPluginDefault) {
-		t.Fatal("plugin JSON must not receive datasource defaults")
-	}
-	ref := types.StringValue(`{"kind":"Dashboard","spec":{"display":null,"panels":{},"layouts":[{"kind":"Grid","spec":{"items":[{"x":0,"y":0,"width":1,"height":1,"content":{"ref":"#/spec/panels/main"}}]}}]}}`)
-	alias := types.StringValue(strings.ReplaceAll(ref.ValueString(), `"ref":`, `"$ref":`))
-	if !dashboardDefinitionsEqual(ref, alias) {
-		t.Fatal("PanelRef alias must compare equal at layout content")
-	}
-	if dashboardDefinitionsEqual(types.StringValue(`{"spec":{"plugin":{"ref":"one"}}}`), types.StringValue(`{"spec":{"plugin":{"$ref":"one"}}}`)) {
-		t.Fatal("alias conversion must not affect arbitrary plugin JSON")
-	}
+}
 
+func TestDashboardDefinitionComparison(t *testing.T) {
+	const minimal = `{"kind":"Dashboard","metadata":{"name":"Main","project":"test"},"spec":{"display":{"name":"Main"},"panels":{},"layouts":[]}}`
+	const datasource = `{"kind":"Dashboard","spec":{"display":null,"panels":{},"layouts":[],"datasources":{"logs":{"display":{"name":"logs"},"plugin":{"kind":"Logfire","spec":{"number":9007199254740993}}}}}}`
+	const expandedDatasource = `{"kind":"Dashboard","spec":{"display":null,"panels":{},"layouts":[],"datasources":{"logs":{"display":{"name":"logs","description":null},"default":false,"plugin":{"kind":"Logfire","spec":{"number":9007199254740993}}}}}}`
+	const ref = `{"kind":"Dashboard","spec":{"display":null,"panels":{},"layouts":[{"kind":"Grid","spec":{"items":[{"x":0,"y":0,"width":1,"height":1,"content":{"ref":"#/spec/panels/main"}}]}}]}}`
+	runDefinitionComparisons(t, []definitionComparison{
+		{"metadata including placement timestamp", minimal, `{"kind":"Dashboard","metadata":{"name":"Other","layoutUpdatedAt":"2026-10-14T10:00:00Z","extra":"ignored"},"spec":{"display":{"name":"Main"},"panels":{},"layouts":[]}}`, true},
+		{"known API defaults", minimal, `{"kind":"Dashboard","metadata":{},"spec":{"display":{"name":"Main","description":null},"panels":{},"layouts":[],"datasources":{},"variables":[],"duration":"1h","refreshInterval":"0s"}}`, true},
+		{"null variables", minimal, `{"kind":"Dashboard","metadata":{},"spec":{"display":{"name":"Main"},"panels":{},"layouts":[],"variables":null}}`, true},
+		{"explicit null duration remains meaningful", minimal, `{"kind":"Dashboard","metadata":{},"spec":{"display":{"name":"Main"},"panels":{},"layouts":[],"duration":null}}`, false},
+		{"explicit refresh remains meaningful", minimal, `{"kind":"Dashboard","metadata":{},"spec":{"display":{"name":"Main"},"panels":{},"layouts":[],"refreshInterval":"5s"}}`, false},
+		{"unknown spec field remains meaningful", minimal, `{"kind":"Dashboard","metadata":{},"spec":{"display":{"name":"Main"},"panels":{},"layouts":[],"custom":false}}`, false},
+		{"datasource defaults", datasource, expandedDatasource, true},
+		{"different large integers", datasource, strings.ReplaceAll(expandedDatasource, "9007199254740993", "9007199254740992"), false},
+		{"plugin JSON receives no datasource defaults", datasource, strings.ReplaceAll(expandedDatasource, `"number":9007199254740993`, `"number":9007199254740993,"default":false`), false},
+		{"PanelRef alias at layout content", ref, strings.ReplaceAll(ref, `"ref":`, `"$ref":`), true},
+		{"alias conversion skips arbitrary plugin JSON", `{"spec":{"plugin":{"ref":"one"}}}`, `{"spec":{"plugin":{"$ref":"one"}}}`, false},
+	})
 }
 
 func TestDashboardDefinitionUIExportComparison(t *testing.T) {
-	api := types.StringValue(`{"kind":"Dashboard","metadata":{"name":"Main","project":"test"},"spec":{"display":{"name":"Main","description":null},"panels":{},"layouts":[{"kind":"Grid","spec":{"items":[]}}],"variables":[],"datasources":{},"duration":"1h","refreshInterval":"0s"}}`)
-	ui := `{"kind":"Dashboard","metadata":{"name":"Main","project":"test"},"spec":{"display":{"name":"Main","description":null},"panels":{},"layouts":[{"kind":"Grid","spec":{"display":{"title":"","collapse":{"open":true}},"items":[]}}],"variables":[],"annotations":[],"links":[],"datasources":{},"duration":"1h","refreshInterval":"0s"}}`
-	for _, tc := range []struct {
-		name, raw string
-		want      bool
-	}{
-		{"UI export defaults", ui, true},
-		{"empty Grid display", strings.Replace(ui, `"display":{"title":"","collapse":{"open":true}}`, `"display":{}`, 1), true},
-		{"omitted Grid title", strings.Replace(ui, `"title":"",`, "", 1), true},
-		{"omitted Grid collapse", strings.Replace(ui, `,"collapse":{"open":true}`, "", 1), true},
-		{"nonempty annotations", strings.Replace(ui, `"annotations":[]`, `"annotations":[{"kind":"Event","spec":{}}]`, 1), false},
-		{"nonempty links", strings.Replace(ui, `"links":[]`, `"links":[{"name":"Docs","url":"https://example.com"}]`, 1), false},
-		{"null annotations", strings.Replace(ui, `"annotations":[]`, `"annotations":null`, 1), false},
-		{"null links", strings.Replace(ui, `"links":[]`, `"links":null`, 1), false},
-		{"named Grid", strings.Replace(ui, `"title":""`, `"title":"Group"`, 1), false},
-		{"collapsed Grid", strings.Replace(ui, `"open":true`, `"open":false`, 1), false},
-		{"null Grid display", strings.Replace(ui, `"display":{"title":"","collapse":{"open":true}}`, `"display":null`, 1), false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := dashboardDefinitionsEqual(api, types.StringValue(tc.raw)); got != tc.want {
-				t.Fatalf("comparison = %v, want %v", got, tc.want)
-			}
-		})
+	const api = `{"kind":"Dashboard","metadata":{"name":"Main","project":"test"},"spec":{"display":{"name":"Main","description":null},"panels":{},"layouts":[{"kind":"Grid","spec":{"items":[]}}],"variables":[],"datasources":{},"duration":"1h","refreshInterval":"0s"}}`
+	const ui = `{"kind":"Dashboard","metadata":{"name":"Main","project":"test"},"spec":{"display":{"name":"Main","description":null},"panels":{},"layouts":[{"kind":"Grid","spec":{"display":{"title":"","collapse":{"open":true}},"items":[]}}],"variables":[],"annotations":[],"links":[],"datasources":{},"duration":"1h","refreshInterval":"0s"}}`
+	cases := []definitionComparison{
+		{"UI export defaults", api, ui, true},
+		{"empty Grid display", api, strings.Replace(ui, `"display":{"title":"","collapse":{"open":true}}`, `"display":{}`, 1), true},
+		{"omitted Grid title", api, strings.Replace(ui, `"title":"",`, "", 1), true},
+		{"omitted Grid collapse", api, strings.Replace(ui, `,"collapse":{"open":true}`, "", 1), true},
+		{"nonempty annotations", api, strings.Replace(ui, `"annotations":[]`, `"annotations":[{"kind":"Event","spec":{}}]`, 1), false},
+		{"nonempty links", api, strings.Replace(ui, `"links":[]`, `"links":[{"name":"Docs","url":"https://example.com"}]`, 1), false},
+		{"null annotations", api, strings.Replace(ui, `"annotations":[]`, `"annotations":null`, 1), false},
+		{"null links", api, strings.Replace(ui, `"links":[]`, `"links":null`, 1), false},
+		{"named Grid", api, strings.Replace(ui, `"title":""`, `"title":"Group"`, 1), false},
+		{"collapsed Grid", api, strings.Replace(ui, `"open":true`, `"open":false`, 1), false},
+		{"null Grid display", api, strings.Replace(ui, `"display":{"title":"","collapse":{"open":true}}`, `"display":null`, 1), false},
 	}
 	for _, field := range []string{`"annotations":[]`, `"links":[]`, `"display":{"title":"","collapse":{"open":true}}`} {
-		if dashboardDefinitionsEqual(types.StringValue(`{"spec":{"plugin":{}}}`), types.StringValue(`{"spec":{"plugin":{`+field+`}}}`)) {
-			t.Fatalf("UI defaults must not normalize plugin field %s", field)
-		}
+		cases = append(cases, definitionComparison{
+			"UI defaults do not normalize plugin field " + field,
+			`{"spec":{"plugin":{}}}`, `{"spec":{"plugin":{` + field + `}}}`, false,
+		})
 	}
+	// Malformed Grid shapes stay comparable so the API can validate them.
 	for _, raw := range []string{`{"kind":"Grid"}`, `{"kind":"Grid","spec":null}`, `{"kind":"Grid","spec":[]}`} {
-		definition := types.StringValue(`{"kind":"Dashboard","spec":{"layouts":[` + raw + `]}}`)
-		if !dashboardDefinitionsEqual(definition, definition) {
-			t.Fatalf("malformed Grid shape should remain comparable for API validation: %s", raw)
-		}
+		definition := `{"kind":"Dashboard","spec":{"layouts":[` + raw + `]}}`
+		cases = append(cases, definitionComparison{"malformed Grid " + raw, definition, definition, true})
 	}
+	runDefinitionComparisons(t, cases)
 }
 
 func TestDashboardDefinitionValidator(t *testing.T) {
@@ -102,8 +88,9 @@ func TestDashboardDefinitionValidator(t *testing.T) {
 		{`null`, true}, {`[]`, true}, {`"text"`, true}, {`1`, true}, {`true`, true}, {`{`, true}, {`{} {}`, true},
 	} {
 		t.Run(tc.raw, func(t *testing.T) {
+			request := validator.StringRequest{Path: path.Root("definition"), ConfigValue: types.StringValue(tc.raw)}
 			response := validator.StringResponse{}
-			dashboardDefinitionValidator{}.ValidateString(t.Context(), validator.StringRequest{Path: path.Root("definition"), ConfigValue: types.StringValue(tc.raw)}, &response)
+			dashboardDefinitionValidator{}.ValidateString(t.Context(), request, &response)
 			if response.Diagnostics.HasError() != tc.wantError {
 				t.Fatalf("diagnostics = %v", response.Diagnostics)
 			}

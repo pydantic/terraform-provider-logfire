@@ -10,19 +10,21 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"golang.org/x/sync/singleflight"
-	"golang.org/x/time/rate"
 	"io"
 	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"golang.org/x/sync/singleflight"
+	"golang.org/x/time/rate"
 )
 
 const (
@@ -43,12 +45,11 @@ const (
 )
 
 var (
-	// Logfire limits API requests per organization on each backend. Every client in the
-	// process shares one limiter per host, so requests to one backend never spend another's.
+	// Logfire limits API requests per organization on each backend. Every
+	// client in the process shares one limiter per host, so requests to one
+	// backend never spend another's.
 	hostLimiters   = map[string]*rateLimiter{}
 	hostLimitersMu sync.Mutex
-	jitterRand     = rand.New(rand.NewSource(time.Now().UnixNano()))
-	jitterMu       sync.Mutex
 )
 
 type rateLimitedTransport struct {
@@ -83,70 +84,88 @@ func disableAutomaticRetries(ctx context.Context) context.Context {
 	return context.WithValue(ctx, disableAutomaticRetriesContextKey{}, true)
 }
 
-func enableAutomaticRetries(ctx context.Context) context.Context {
-	return context.WithValue(ctx, disableAutomaticRetriesContextKey{}, false)
-}
-
 func (t *retryingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	ctx := req.Context()
 	attempts := t.maxAttempts
-	if attempts <= 0 || req.Context().Value(disableAutomaticRetriesContextKey{}) == true {
+	if ctx.Value(disableAutomaticRetriesContextKey{}) == true {
 		attempts = 1
 	}
 
 	start := time.Now()
-	var resp *http.Response
-	var err error
 	for attempt, sent := 0, 0; ; sent++ {
 		if sent > 0 {
 			switch {
 			case req.GetBody != nil:
-				body, getErr := req.GetBody()
-				if getErr != nil {
-					return nil, getErr
+				body, err := req.GetBody()
+				if err != nil {
+					return nil, err
 				}
 				req.Body = body
 			case req.Body != nil:
-				return nil, fmt.Errorf("cannot retry request with body: GetBody is nil")
+				return nil, errors.New("cannot retry request with body: GetBody is nil")
 			}
 		}
 
-		resp, err = t.next.RoundTrip(req)
+		resp, err := t.next.RoundTrip(req)
+
+		// The Logfire public API rate limit refuses a request before the route
+		// runs, so the request had no effect. A retry is then safe for every
+		// method, a create included. Other 429 responses do not carry this
+		// header, and the provider cannot tell whether those requests ran.
+		refused := err == nil && resp.StatusCode == http.StatusTooManyRequests &&
+			resp.Header.Get("X-RateLimit-Resource") == "public_api"
 
 		var delay time.Duration
-		if err == nil && refusedBeforeHandling(resp) {
-			delay = withJitter(max(retryDelay(resp, t.baseDelay, t.maxDelay, 0), t.baseDelay))
-			if !retryFitsBudget(req.Context(), start, delay) {
-				return resp, err
+		if refused {
+			delay = max(retryDelay(resp, t.baseDelay, t.maxDelay, 0), t.baseDelay)
+			// Add up to a quarter of delay, so concurrent requests that got the
+			// same Retry-After do not retry together.
+			if spread := int64(delay / 4); spread > 0 {
+				delay += time.Duration(rand.Int63n(spread))
+			}
+			if !retryFitsBudget(ctx, start, delay) {
+				return resp, nil
 			}
 		} else {
 			var retry bool
-			retry, delay = t.shouldRetry(req.Context(), resp, err, attempt, attempts)
+			switch {
+			case attempt >= attempts-1:
+			case err != nil:
+				var netErr net.Error
+				var opErr *net.OpError
+				retry = !errors.Is(err, context.Canceled) &&
+					!errors.Is(err, context.DeadlineExceeded) &&
+					ctx.Err() == nil &&
+					(errors.As(err, &netErr) && netErr.Timeout() ||
+						errors.As(err, &opErr))
+			default:
+				retry = resp.StatusCode == http.StatusTooManyRequests ||
+					resp.StatusCode == http.StatusRequestTimeout ||
+					resp.StatusCode >= 500 && resp.StatusCode < 600
+			}
 			if !retry {
 				return resp, err
 			}
+			delay = retryDelay(resp, t.baseDelay, t.maxDelay, attempt)
 			attempt++
 		}
 
-		drainResponse(resp)
-
-		if err := waitWithContext(req.Context(), delay); err != nil {
-			return nil, err
+		if err == nil {
+			drainResponse(resp)
+		}
+		if delay > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(delay):
+			}
 		}
 	}
 }
 
-// refusedBeforeHandling reports whether the Logfire public API rate limit refused the request.
-// The server checks that limit before the route runs, so the request had no effect. A retry is
-// then safe for every method, a create included. Other 429 responses do not carry this header,
-// and the provider cannot tell whether those requests ran.
-func refusedBeforeHandling(resp *http.Response) bool {
-	return resp != nil &&
-		resp.StatusCode == http.StatusTooManyRequests &&
-		resp.Header.Get("X-RateLimit-Resource") == "public_api"
-}
-
-// retryFitsBudget reports whether a wait of delay ends before the request deadline and inside
-// maxRateLimitRetryWait from the first attempt. The second bound applies to a client without a timeout.
+// retryFitsBudget reports whether a wait of delay ends before the request
+// deadline and inside maxRateLimitRetryWait from the first attempt. The second
+// bound applies to a client without a timeout.
 func retryFitsBudget(ctx context.Context, start time.Time, delay time.Duration) bool {
 	end := time.Now().Add(delay)
 	if deadline, ok := ctx.Deadline(); ok && !end.Before(deadline) {
@@ -155,116 +174,34 @@ func retryFitsBudget(ctx context.Context, start time.Time, delay time.Duration) 
 	return end.Sub(start) <= maxRateLimitRetryWait
 }
 
-// withJitter adds up to a quarter of delay, so concurrent requests that got the same
-// Retry-After do not retry together.
-func withJitter(delay time.Duration) time.Duration {
-	if delay <= 0 {
-		return delay
-	}
-	spread := int64(delay / 4)
-	if spread <= 0 {
-		return delay
-	}
-	jitterMu.Lock()
-	defer jitterMu.Unlock()
-	return delay + time.Duration(jitterRand.Int63n(spread))
-}
-
-func (t *retryingTransport) shouldRetry(ctx context.Context, resp *http.Response, err error, attempt, maxAttempts int) (bool, time.Duration) {
-	if attempt >= maxAttempts-1 {
-		return false, 0
-	}
-
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
-			return false, 0
-		}
-
-		var netErr net.Error
-		if errors.As(err, &netErr) && netErr.Timeout() {
-			return true, retryDelay(nil, t.baseDelay, t.maxDelay, attempt)
-		}
-
-		var opErr *net.OpError
-		if errors.As(err, &opErr) {
-			return true, retryDelay(nil, t.baseDelay, t.maxDelay, attempt)
-		}
-
-		return false, 0
-	}
-
-	if resp == nil {
-		return false, 0
-	}
-
-	status := resp.StatusCode
-	if status == http.StatusTooManyRequests ||
-		status == http.StatusRequestTimeout ||
-		status == http.StatusBadGateway ||
-		status == http.StatusServiceUnavailable ||
-		status == http.StatusGatewayTimeout ||
-		(status >= 500 && status < 600) {
-		return true, retryDelay(resp, t.baseDelay, t.maxDelay, attempt)
-	}
-
-	return false, 0
-}
-
 func drainResponse(resp *http.Response) {
-	if resp == nil || resp.Body == nil {
-		return
-	}
 	_, _ = io.Copy(io.Discard, resp.Body)
 	_ = resp.Body.Close()
 }
 
-func waitWithContext(ctx context.Context, delay time.Duration) error {
-	if delay <= 0 {
-		return nil
-	}
-
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
-}
-
 func retryDelay(resp *http.Response, base, maxDelay time.Duration, attempt int) time.Duration {
 	if base <= 0 {
-		base = 500 * time.Millisecond
+		base = defaultRetryBaseDelay
 	}
 	if maxDelay <= 0 {
-		maxDelay = 15 * time.Second
+		maxDelay = defaultRetryMaxDelay
 	}
 
 	if resp != nil {
-		if ra := resp.Header.Get("Retry-After"); ra != "" {
-			if seconds, err := strconv.Atoi(ra); err == nil && seconds >= 0 {
-				return time.Duration(seconds) * time.Second
-			}
-			if t, err := http.ParseTime(ra); err == nil {
-				if delay := time.Until(t); delay > 0 {
-					return delay
-				}
+		ra := resp.Header.Get("Retry-After")
+		if seconds, err := strconv.Atoi(ra); err == nil && seconds >= 0 {
+			return time.Duration(seconds) * time.Second
+		}
+		if t, err := http.ParseTime(ra); err == nil {
+			if delay := time.Until(t); delay > 0 {
+				return delay
 			}
 		}
 	}
 
-	delay := base * time.Duration(1<<attempt)
-	if delay > maxDelay {
-		delay = maxDelay
-	}
-
+	delay := min(base*time.Duration(1<<attempt), maxDelay)
 	// Add jitter to avoid thundering herd on retries.
-	jitterMu.Lock()
-	jitter := time.Duration(jitterRand.Int63n(int64(delay / 2)))
-	jitterMu.Unlock()
-	return delay/2 + jitter
+	return delay/2 + time.Duration(rand.Int63n(int64(delay/2)))
 }
 
 // rateLimiter holds a per-minute and a per-hour token bucket. Both start full.
@@ -275,11 +212,12 @@ type rateLimiter struct {
 }
 
 func newRateLimiter(requestsPerMinute, requestsPerHour int) *rateLimiter {
-	requestsPerMinute = max(requestsPerMinute, 1)
-	requestsPerHour = max(requestsPerHour, 1)
+	bucket := func(window time.Duration, n int) *rate.Limiter {
+		return rate.NewLimiter(rate.Every(window/time.Duration(n)), n)
+	}
 	return &rateLimiter{
-		perMinute: rate.NewLimiter(rate.Every(time.Minute/time.Duration(requestsPerMinute)), requestsPerMinute),
-		perHour:   rate.NewLimiter(rate.Every(time.Hour/time.Duration(requestsPerHour)), requestsPerHour),
+		perMinute: bucket(time.Minute, requestsPerMinute),
+		perHour:   bucket(time.Hour, requestsPerHour),
 	}
 }
 
@@ -288,33 +226,6 @@ func (l *rateLimiter) Wait(ctx context.Context) error {
 		return err
 	}
 	return l.perHour.Wait(ctx)
-}
-
-func newDefaultHTTPClient() *http.Client {
-	baseTransport := defaultTransport()
-	limitedTransport := &rateLimitedTransport{next: baseTransport}
-	return &http.Client{
-		Timeout: defaultRequestTimeout,
-		Transport: &retryingTransport{
-			next:        limitedTransport,
-			maxAttempts: defaultRetryMaxAttempts,
-			baseDelay:   defaultRetryBaseDelay,
-			maxDelay:    defaultRetryMaxDelay,
-		},
-	}
-}
-
-func defaultTransport() http.RoundTripper {
-	if t, ok := http.DefaultTransport.(*http.Transport); ok {
-		clone := t.Clone()
-		clone.MaxIdleConns = defaultMaxIdleConns
-		clone.MaxIdleConnsPerHost = defaultMaxIdleConnsPerHost
-		clone.MaxConnsPerHost = defaultMaxConnsPerHost
-		clone.IdleConnTimeout = defaultIdleConnTimeout
-		clone.ResponseHeaderTimeout = defaultResponseHeaderTimeout
-		return clone
-	}
-	return http.DefaultTransport
 }
 
 type APIClient struct {
@@ -338,7 +249,8 @@ type APIClient struct {
 type clientShared struct {
 	tokenMu sync.Mutex
 	tokens  map[string]orgTokenEntry
-	// exchanges lets concurrent requests for one organization share one exchange.
+	// exchanges lets concurrent requests for one organization share one
+	// exchange.
 	exchanges singleflight.Group
 
 	// legacySchedules is set once the instance has answered on the deprecated
@@ -356,7 +268,6 @@ func (c *APIClient) ForOrganization(name string) *APIClient {
 	return &derived
 }
 
-// Organization returns the organization that ForOrganization selected.
 func (c *APIClient) Organization() string {
 	return c.organization
 }
@@ -378,48 +289,11 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("API error: status %d", e.StatusCode)
 }
 
-// backendVersionHeader is the response header carrying the instance's release
-// tag (vYYYY-MM-DD.NN) when the deployment sets one. Builds with no release tag
-// answer with the image identity instead, which is not a version clients can
-// compare, so it is treated as unknown.
-const backendVersionHeader = "Logfire-Version"
-
-// releaseVersionPattern matches the platform's release tags, e.g. v2026-09-14.01.
+// releaseVersionPattern matches the platform's release tags, e.g.
+// v2026-09-14.01. The Logfire-Version response header carries one when the
+// deployment sets it. Builds with no release tag answer with an image identity
+// instead, which is not a version clients can compare, so it counts as unknown.
 var releaseVersionPattern = regexp.MustCompile(`^v\d{4}-\d{2}-\d{2}\.\d+$`)
-
-// reportedReleaseVersion returns the header value when it is a release tag, and
-// an empty string otherwise (no header, or a build identity that carries no
-// version meaning).
-func reportedReleaseVersion(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if releaseVersionPattern.MatchString(trimmed) {
-		return trimmed
-	}
-	return ""
-}
-
-func newAPIError(resp *http.Response, message string) *APIError {
-	return &APIError{
-		StatusCode:     resp.StatusCode,
-		Message:        message,
-		BackendVersion: reportedReleaseVersion(resp.Header.Get(backendVersionHeader)),
-	}
-}
-
-func isStatusExpected(statusCode int, expectedStatuses []int) bool {
-	// If no expected statuses provided, accept 2xx
-	if len(expectedStatuses) == 0 {
-		return statusCode >= 200 && statusCode < 300
-	}
-
-	for _, expected := range expectedStatuses {
-		if statusCode == expected {
-			return true
-		}
-	}
-
-	return false
-}
 
 type Option func(*APIClient)
 
@@ -444,12 +318,6 @@ func WithUserAgent(ua string) Option {
 
 func WithAdditionalHeaders(headers http.Header) Option {
 	return func(c *APIClient) {
-		if headers == nil {
-			return
-		}
-		if c.headers == nil {
-			c.headers = make(http.Header)
-		}
 		for k, vals := range headers {
 			for _, v := range vals {
 				c.headers.Set(k, v)
@@ -460,7 +328,25 @@ func WithAdditionalHeaders(headers http.Header) Option {
 
 func NewAPIClient(baseURL, token string, httpClient *http.Client, opts ...Option) (*APIClient, error) {
 	if httpClient == nil {
-		httpClient = newDefaultHTTPClient()
+		transport := http.DefaultTransport
+		if t, ok := transport.(*http.Transport); ok {
+			clone := t.Clone()
+			clone.MaxIdleConns = defaultMaxIdleConns
+			clone.MaxIdleConnsPerHost = defaultMaxIdleConnsPerHost
+			clone.MaxConnsPerHost = defaultMaxConnsPerHost
+			clone.IdleConnTimeout = defaultIdleConnTimeout
+			clone.ResponseHeaderTimeout = defaultResponseHeaderTimeout
+			transport = clone
+		}
+		httpClient = &http.Client{
+			Timeout: defaultRequestTimeout,
+			Transport: &retryingTransport{
+				next:        &rateLimitedTransport{next: transport},
+				maxAttempts: defaultRetryMaxAttempts,
+				baseDelay:   defaultRetryBaseDelay,
+				maxDelay:    defaultRetryMaxDelay,
+			},
+		}
 	}
 	if !strings.HasSuffix(baseURL, "/") {
 		baseURL += "/"
@@ -470,20 +356,17 @@ func NewAPIClient(baseURL, token string, httpClient *http.Client, opts ...Option
 		return nil, fmt.Errorf("invalid endpoint: %w", err)
 	}
 	apiClient := &APIClient{
-		BaseURL:   u,
-		HTTP:      httpClient,
-		token:     token,
-		userAgent: defaultUserAgent,
-		headers:   make(http.Header),
-		shared:    &clientShared{tokens: make(map[string]orgTokenEntry)},
-
+		BaseURL:          u,
+		HTTP:             httpClient,
+		token:            token,
+		userAgent:        defaultUserAgent,
+		headers:          make(http.Header),
+		shared:           &clientShared{tokens: make(map[string]orgTokenEntry)},
 		dashboardManager: "terraform",
 	}
-
 	for _, opt := range opts {
 		opt(apiClient)
 	}
-
 	return apiClient, nil
 }
 
@@ -491,29 +374,69 @@ func NewAPIClient(baseURL, token string, httpClient *http.Client, opts ...Option
 // key itself. The other routes resolve the organization from the token.
 const instanceRoutePrefix = "/api/v1/instance/"
 
-func (c *APIClient) doJSON(ctx context.Context, method, path string, in any, out any, expectedStatus ...int) (*http.Response, error) {
+func apiPath(segments ...string) string {
+	path := "/api/v1"
+	for _, segment := range segments {
+		path += "/" + url.PathEscape(segment)
+	}
+	return path + "/"
+}
+
+func (c *APIClient) doJSON(ctx context.Context, method, path string, in, out any, expectedStatus ...int) (*http.Response, error) {
+	// An empty ID segment would address a collection route instead of the
+	// resource. Refuse it before any request, including a token exchange.
+	if route, _, _ := strings.Cut(path, "?"); strings.Contains(route, "//") {
+		return nil, fmt.Errorf("%s %s: the resource ID is missing. Import the resource, or remove it from state if it cannot be imported", method, route)
+	}
 	if c.organization == "" || strings.HasPrefix(path, instanceRoutePrefix) {
 		return c.doJSONAuthorized(ctx, c.token, method, path, in, out, expectedStatus...)
 	}
-	return c.withOrganizationContext(ctx, c.organization, func(token string) (*http.Response, error) {
-		return c.doJSONAuthorized(ctx, token, method, path, in, out, expectedStatus...)
-	})
+	return c.withOrganizationContext(ctx, c.organization, method, path, in, out, expectedStatus...)
 }
 
 // doJSONAuthorized is doJSON with an explicit bearer token, for calls made with
 // a short-lived exchanged credential instead of the configured provider token.
-func (c *APIClient) doJSONAuthorized(ctx context.Context, bearer, method, path string, in any, out any, expectedStatus ...int) (*http.Response, error) {
-	var body io.ReadCloser
-	var bodyBytes []byte
+func (c *APIClient) doJSONAuthorized(ctx context.Context, bearer, method, path string, in, out any, expectedStatus ...int) (*http.Response, error) {
+	req, err := c.newRequest(ctx, method, path, nil)
+	if err != nil {
+		return nil, err
+	}
 	if in != nil {
-		b, err := json.Marshal(in)
+		payload, err := json.Marshal(in)
 		if err != nil {
 			return nil, fmt.Errorf("marshal request body: %w", err)
 		}
-		bodyBytes = b
-		body = io.NopCloser(bytes.NewReader(bodyBytes))
+		req.Body = io.NopCloser(bytes.NewReader(payload))
+		req.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(payload)), nil
+		}
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
 	}
 
+	resp, err := c.send(req, expectedStatus...)
+	if err != nil {
+		return resp, err
+	}
+	defer drainResponse(resp)
+
+	// A success with no body would leave out empty, and a list would then look
+	// like an empty collection.
+	if out == nil || resp.StatusCode == http.StatusNoContent {
+		return resp, nil
+	}
+	switch err := json.NewDecoder(resp.Body).Decode(out); {
+	case errors.Is(err, io.EOF) && resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return resp, fmt.Errorf("decode response: the server answered %d with an empty body", resp.StatusCode)
+	case err != nil && !errors.Is(err, io.EOF):
+		return resp, fmt.Errorf("decode response: %w", err)
+	}
+	return resp, nil
+}
+
+func (c *APIClient) newRequest(ctx context.Context, method, path string, body io.Reader) (*http.Request, error) {
 	reference, err := url.Parse(path)
 	if err != nil {
 		return nil, fmt.Errorf("parse request path: %w", err)
@@ -523,21 +446,15 @@ func (c *APIClient) doJSONAuthorized(ctx context.Context, bearer, method, path s
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	if len(bodyBytes) > 0 {
-		req.GetBody = func() (io.ReadCloser, error) {
-			return io.NopCloser(bytes.NewReader(bodyBytes)), nil
-		}
-	}
-	if in != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
+	return req, nil
+}
+
+// send adds the client's headers to req and runs it. The caller drains the
+// response of a success. An unexpected status comes back with its response,
+// already drained, as an *APIError.
+func (c *APIClient) send(req *http.Request, expectedStatus ...int) (*http.Response, error) {
 	req.Header.Set("Accept", "application/json")
-	if bearer != "" {
-		req.Header.Set("Authorization", "Bearer "+bearer)
-	}
-	if c.userAgent != "" {
-		req.Header.Set("User-Agent", c.userAgent)
-	}
+	req.Header.Set("User-Agent", c.userAgent)
 	for k, vals := range c.headers {
 		for _, v := range vals {
 			req.Header.Set(k, v)
@@ -548,42 +465,112 @@ func (c *APIClient) doJSONAuthorized(ctx context.Context, bearer, method, path s
 	if err != nil {
 		return nil, fmt.Errorf("execute request: %w", err)
 	}
-
-	defer func() {
-		if resp != nil && resp.Body != nil {
-			_, _ = io.Copy(io.Discard, resp.Body)
-			_ = resp.Body.Close()
-		}
-	}()
-
-	if !isStatusExpected(resp.StatusCode, expectedStatus) {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodySize))
-		msg := string(b)
-		if len(b) == maxErrorBodySize {
-			msg += "... (truncated)"
-		}
-		return resp, newAPIError(resp, msg)
+	if slices.Contains(expectedStatus, resp.StatusCode) {
+		return resp, nil
 	}
 
-	// Decode response if requested. A success with no body would leave out empty, and a list would
-	// then look like an empty collection.
-	if out != nil && resp.StatusCode != http.StatusNoContent {
-		dec := json.NewDecoder(resp.Body)
-		if err := dec.Decode(out); err != nil {
-			switch {
-			case errors.Is(err, io.EOF) && resp.StatusCode >= 200 && resp.StatusCode < 300:
-				return resp, fmt.Errorf("decode response: the server answered %d with an empty body", resp.StatusCode)
-			case !errors.Is(err, io.EOF):
-				return resp, fmt.Errorf("decode response: %w", err)
-			}
-		}
+	defer drainResponse(resp)
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodySize))
+	msg := string(b)
+	if len(b) == maxErrorBodySize {
+		msg += "... (truncated)"
 	}
-
-	return resp, nil
+	version := strings.TrimSpace(resp.Header.Get("Logfire-Version"))
+	if !releaseVersionPattern.MatchString(version) {
+		version = ""
+	}
+	return resp, &APIError{
+		StatusCode:     resp.StatusCode,
+		Message:        msg,
+		BackendVersion: version,
+	}
 }
 
-// NullableField helps send explicit nulls (to clear values) while still allowing
-// us to omit fields for partial updates.
+func request[T any](ctx context.Context, c *APIClient, method, path string, in any) (*T, error) {
+	out := new(T)
+	if _, err := c.doJSON(ctx, method, path, in, out, http.StatusOK); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// create sends a POST that is not idempotent, so a retry could create a second
+// resource.
+func create[T any](ctx context.Context, c *APIClient, path string, in any, expectedStatus ...int) (*T, error) {
+	out := new(T)
+	ctx = disableAutomaticRetries(ctx)
+	if _, err := c.doJSON(ctx, http.MethodPost, path, in, out, expectedStatus...); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func list[T any](ctx context.Context, c *APIClient, path string) ([]T, error) {
+	out, err := request[[]T](ctx, c, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	return *out, nil
+}
+
+// getWithStatus reads a resource and reports the HTTP status, which is 0 when
+// no response arrived, so that callers can tell a deleted resource from a
+// failure.
+func getWithStatus[T any](ctx context.Context, c *APIClient, path string) (*T, int, error) {
+	out := new(T)
+	resp, err := c.doJSON(ctx, http.MethodGet, path, nil, out, http.StatusOK)
+	return withStatus(out, resp, err)
+}
+
+func withStatus[T any](out *T, resp *http.Response, err error) (*T, int, error) {
+	if err == nil {
+		return out, http.StatusOK, nil
+	}
+	if resp == nil {
+		return nil, 0, err
+	}
+	return nil, resp.StatusCode, err
+}
+
+func (c *APIClient) remove(ctx context.Context, path string) error {
+	_, err := c.doJSON(ctx, http.MethodDelete, path, nil, nil, http.StatusNoContent)
+	return err
+}
+
+type cursorPage[T any] struct {
+	Data       []T     `json:"data"`
+	NextCursor *string `json:"next_cursor"`
+}
+
+// pagePath returns the route of the page after cursor, which is empty for the
+// first page.
+func pagePath(base, cursor string) string {
+	query := url.Values{"limit": []string{"100"}}
+	if cursor != "" {
+		query.Set("cursor", cursor)
+	}
+	return base + "?" + query.Encode()
+}
+
+func listPages[T any](ctx context.Context, c *APIClient, base string) ([]T, error) {
+	var all []T
+	cursor := ""
+	for {
+		var page cursorPage[T]
+		_, err := c.doJSON(ctx, http.MethodGet, pagePath(base, cursor), nil, &page, http.StatusOK)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, page.Data...)
+		if page.NextCursor == nil {
+			return all, nil
+		}
+		cursor = *page.NextCursor
+	}
+}
+
+// NullableField helps send explicit nulls (to clear values) while still
+// allowing us to omit fields for partial updates.
 type NullableField[T any] struct {
 	Value *T
 	set   bool
@@ -654,39 +641,22 @@ type OrganizationUpdate struct {
 	Description             *string             `json:"description,omitempty"`
 }
 
-// instanceOrganizationsBase is the canonical home of the org create and list
-// operations; the legacy /organizations/ variants are deprecated.
-func (c *APIClient) instanceOrganizationsBase() string {
-	return "/api/v1/instance/organizations/"
-}
+// instanceOrganizationsPath is the canonical home of the org create and list
+// operations. The legacy /organizations/ variants are deprecated.
+const instanceOrganizationsPath = "/api/v1/instance/organizations/"
 
 func (c *APIClient) CreateOrganization(ctx context.Context, in OrganizationCreate) (*OrganizationRead, error) {
-	var out OrganizationRead
-	_, err := c.doJSON(disableAutomaticRetries(ctx), http.MethodPost, c.instanceOrganizationsBase(), in, &out, http.StatusCreated, http.StatusOK)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return create[OrganizationRead](
+		ctx, c, instanceOrganizationsPath, in, http.StatusCreated, http.StatusOK)
 }
 
 func (c *APIClient) ListOrganizations(ctx context.Context) ([]OrganizationRead, error) {
-	var out []OrganizationRead
-	_, err := c.doJSON(ctx, http.MethodGet, c.instanceOrganizationsBase(), nil, &out, http.StatusOK)
-	if err != nil {
-		// On the instance organization collection a 404 can only mean the
-		// route is missing: it has no resource-id path segment and no 404
-		// handler branch.
-		if IsNotFoundError(err) {
-			return nil, &EndpointUnavailableError{
-				Method:         http.MethodGet,
-				Path:           c.instanceOrganizationsBase(),
-				MinimumRelease: "v2026-06-03.01",
-				BackendVersion: BackendVersionFromError(err),
-			}
-		}
-		return nil, err
-	}
-	return out, nil
+	out, err := list[OrganizationRead](ctx, c, instanceOrganizationsPath)
+	// On the instance organization collection a 404 can only mean that the
+	// route is missing: it has no resource-id path segment and no 404 handler
+	// branch.
+	return out, unavailableIfNotFound(
+		err, http.MethodGet, instanceOrganizationsPath, "v2026-06-03.01", "")
 }
 
 type ProjectRead struct {
@@ -710,59 +680,25 @@ type ProjectUpdate struct {
 	Visibility  NullableField[string] `json:"visibility,omitzero"`
 }
 
-func (c *APIClient) projectsBase() string {
-	return "/api/v1/projects/"
-}
-
-func (c *APIClient) projectPath(id string) string {
-	return fmt.Sprintf("%s%s/", c.projectsBase(), url.PathEscape(id))
-}
-
 func (c *APIClient) CreateProject(ctx context.Context, in ProjectCreate) (*ProjectRead, error) {
-	var out ProjectRead
-	_, err := c.doJSON(disableAutomaticRetries(ctx), http.MethodPost, c.projectsBase(), in, &out, http.StatusCreated, http.StatusOK)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return create[ProjectRead](ctx, c, apiPath("projects"), in, http.StatusCreated, http.StatusOK)
 }
 
 func (c *APIClient) GetProject(ctx context.Context, id string) (*ProjectRead, int, error) {
-	var out ProjectRead
-	resp, err := c.doJSON(ctx, http.MethodGet, c.projectPath(id), nil, &out, http.StatusOK)
-	if err != nil {
-		if resp != nil {
-			return nil, resp.StatusCode, err
-		}
-		return nil, 0, err
-	}
-	return &out, http.StatusOK, nil
+	return getWithStatus[ProjectRead](ctx, c, apiPath("projects", id))
 }
 
 func (c *APIClient) UpdateProject(ctx context.Context, id string, in ProjectUpdate) (*ProjectRead, error) {
-	var out ProjectRead
-	_, err := c.doJSON(ctx, http.MethodPut, c.projectPath(id), in, &out, http.StatusOK)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return request[ProjectRead](ctx, c, http.MethodPut, apiPath("projects", id), in)
 }
 
 func (c *APIClient) DeleteProject(ctx context.Context, id string) error {
-	_, err := c.doJSON(ctx, http.MethodDelete, c.projectPath(id), nil, nil, http.StatusNoContent)
-	return err
+	return c.remove(ctx, apiPath("projects", id))
 }
 
 func (c *APIClient) ListProjects(ctx context.Context) ([]ProjectRead, error) {
-	var out []ProjectRead
-	_, err := c.doJSON(ctx, http.MethodGet, c.projectsBase(), nil, &out, http.StatusOK)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
+	return list[ProjectRead](ctx, c, apiPath("projects"))
 }
-
-// ---- Alerts ----
 
 type AlertRead struct {
 	ID             string             `json:"id"`
@@ -814,38 +750,34 @@ type ChannelAssignment struct {
 	ScheduleID *string `json:"schedule_id,omitempty"`
 }
 
-// AlertChannelRead is a channel as listed on an alert: the channel plus the
-// schedule of its assignment to that alert.
 type AlertChannelRead struct {
 	ChannelRead
 	ScheduleID *string `json:"schedule_id"`
 }
 
 type AlertCreate struct {
-	Name               string              `json:"name"`
-	Description        *string             `json:"description"`
-	Active             *bool               `json:"active,omitempty"`
-	Query              string              `json:"query"`
-	TimeWindow         string              `json:"time_window"`
-	Frequency          string              `json:"frequency"`
-	Watermark          string              `json:"watermark"`
-	Environments       []string            `json:"environments,omitempty"`
-	ChannelAssignments []ChannelAssignment `json:"channel_assignments"`
-	NotifyWhen         string              `json:"notify_when"`
-	// InstancePolicy is left out when nil.
-	InstancePolicy *AlertInstancePolicy `json:"instance_policy,omitempty"`
+	Name               string               `json:"name"`
+	Description        *string              `json:"description"`
+	Active             *bool                `json:"active,omitempty"`
+	Query              string               `json:"query"`
+	TimeWindow         string               `json:"time_window"`
+	Frequency          string               `json:"frequency"`
+	Watermark          string               `json:"watermark"`
+	Environments       []string             `json:"environments,omitempty"`
+	ChannelAssignments []ChannelAssignment  `json:"channel_assignments"`
+	NotifyWhen         string               `json:"notify_when"`
+	InstancePolicy     *AlertInstancePolicy `json:"instance_policy,omitempty"`
 }
 
 type AlertUpdate struct {
-	Name         *string   `json:"name,omitempty"`
-	Description  *string   `json:"description,omitempty"`
-	TimeWindow   *string   `json:"time_window,omitempty"`
-	Frequency    *string   `json:"frequency,omitempty"`
-	Watermark    *string   `json:"watermark,omitempty"`
-	Active       *bool     `json:"active,omitempty"`
-	Query        *string   `json:"query,omitempty"`
-	Environments *[]string `json:"environments,omitempty"`
-	// ChannelAssignments replaces the alert's channels when set.
+	Name               *string              `json:"name,omitempty"`
+	Description        *string              `json:"description,omitempty"`
+	TimeWindow         *string              `json:"time_window,omitempty"`
+	Frequency          *string              `json:"frequency,omitempty"`
+	Watermark          *string              `json:"watermark,omitempty"`
+	Active             *bool                `json:"active,omitempty"`
+	Query              *string              `json:"query,omitempty"`
+	Environments       *[]string            `json:"environments,omitempty"`
 	ChannelAssignments *[]ChannelAssignment `json:"channel_assignments,omitempty"`
 	NotifyWhen         *string              `json:"notify_when,omitempty"`
 	// InstancePolicy replaces the policy when set. A set pointer to nil sends
@@ -853,60 +785,28 @@ type AlertUpdate struct {
 	InstancePolicy **AlertInstancePolicy `json:"instance_policy,omitempty"`
 }
 
-func (c *APIClient) alertsBase(projectID string) string {
-	return fmt.Sprintf("/api/v1/projects/%s/alerts/", url.PathEscape(projectID))
-}
-func (c *APIClient) alertPath(projectID, id string) string {
-	return fmt.Sprintf("%s%s/", c.alertsBase(projectID), url.PathEscape(id))
-}
-
 func (c *APIClient) CreateAlert(ctx context.Context, projectID string, in AlertCreate) (*AlertRead, error) {
-	var out AlertRead
-	_, err := c.doJSON(disableAutomaticRetries(ctx), http.MethodPost, c.alertsBase(projectID), in, &out, http.StatusCreated)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
+	path := apiPath("projects", projectID, "alerts")
+	return create[AlertRead](ctx, c, path, in, http.StatusCreated)
 }
 
 func (c *APIClient) GetAlert(ctx context.Context, projectID, id string) (*AlertRead, int, error) {
-	var out AlertRead
-	resp, err := c.doJSON(ctx, http.MethodGet, c.alertPath(projectID, id), nil, &out, http.StatusOK)
-	if err != nil {
-		if resp != nil {
-			return nil, resp.StatusCode, err
-		}
-		return nil, 0, err
-	}
-	return &out, http.StatusOK, nil
+	return getWithStatus[AlertRead](ctx, c, apiPath("projects", projectID, "alerts", id))
 }
 
 func (c *APIClient) UpdateAlert(ctx context.Context, projectID, id string, in AlertUpdate) (*AlertRead, error) {
-	var out AlertRead
-	_, err := c.doJSON(ctx, http.MethodPut, c.alertPath(projectID, id), in, &out, http.StatusOK)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
+	path := apiPath("projects", projectID, "alerts", id)
+	return request[AlertRead](ctx, c, http.MethodPut, path, in)
 }
 
 func (c *APIClient) DeleteAlert(ctx context.Context, projectID, id string) error {
-	_, err := c.doJSON(ctx, http.MethodDelete, c.alertPath(projectID, id), nil, nil, http.StatusNoContent)
-	return err
+	return c.remove(ctx, apiPath("projects", projectID, "alerts", id))
 }
 
 func (c *APIClient) ListAlerts(ctx context.Context, projectID string) ([]AlertRead, error) {
-	var out []AlertRead
-	_, err := c.doJSON(ctx, http.MethodGet, c.alertsBase(projectID), nil, &out, http.StatusOK)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
+	return list[AlertRead](ctx, c, apiPath("projects", projectID, "alerts"))
 }
 
-// ---- Channels ----
-
-// Base channel config - never used directly, only for embedding.
 type ChannelConfigBase struct {
 	Type string `json:"type"`
 }
@@ -941,16 +841,16 @@ type SlackIntegrationConfig struct {
 	IncludeAgentPrompt *bool   `json:"include_agent_prompt,omitempty"`
 }
 
-// PagerdutyIntegrationConfig pages through the organization's installed Logfire PagerDuty App.
-// Unlike PagerdutyConfig it holds no credential: the backend resolves the approved service's
-// integration key from the installation at send time.
+// PagerdutyIntegrationConfig pages through the organization's installed Logfire
+// PagerDuty App. Unlike PagerdutyConfig it holds no credential: the backend
+// resolves the approved service's integration key from the installation at send
+// time.
 type PagerdutyIntegrationConfig struct {
 	ChannelConfigBase
 	InstallID *string `json:"install_id,omitempty"`
 	ServiceID *string `json:"service_id,omitempty"`
 }
 
-// ChannelConfig represents any channel config (used for unmarshaling).
 type ChannelConfig struct {
 	Type               string   `json:"type"`
 	Format             *string  `json:"format,omitempty"`
@@ -978,70 +878,39 @@ type ChannelRead struct {
 	Config         ChannelConfig `json:"config"`
 }
 
+// ChannelCreate.Config and ChannelUpdate.Config hold a WebhookConfig,
+// EmailConfig, OpsgenieConfig, PagerdutyConfig, PagerdutyIntegrationConfig, or
+// SlackIntegrationConfig.
 type ChannelCreate struct {
 	Label  string      `json:"label"`
-	Config interface{} `json:"config"` // WebhookConfig, EmailConfig, OpsgenieConfig, PagerdutyConfig, PagerdutyIntegrationConfig, or SlackIntegrationConfig
+	Config interface{} `json:"config"`
 }
 
 type ChannelUpdate struct {
 	Label  NullableField[string] `json:"label,omitzero"`
-	Config *interface{}          `json:"config,omitempty"` // WebhookConfig, EmailConfig, OpsgenieConfig, PagerdutyConfig, PagerdutyIntegrationConfig, or SlackIntegrationConfig
+	Config *interface{}          `json:"config,omitempty"`
 	Active NullableField[bool]   `json:"active,omitzero"`
 }
 
-func (c *APIClient) channelsBase() string {
-	return "/api/v1/channels/"
-}
-func (c *APIClient) channelPath(id string) string {
-	return fmt.Sprintf("/api/v1/channels/%s/", url.PathEscape(id))
-}
-
 func (c *APIClient) CreateChannel(ctx context.Context, in ChannelCreate) (*ChannelRead, error) {
-	var out ChannelRead
-	_, err := c.doJSON(disableAutomaticRetries(ctx), http.MethodPost, c.channelsBase(), in, &out, http.StatusCreated)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return create[ChannelRead](ctx, c, apiPath("channels"), in, http.StatusCreated)
 }
 
-// ListChannels returns the organization's notification channels.
 func (c *APIClient) ListChannels(ctx context.Context) ([]ChannelRead, error) {
-	var out []ChannelRead
-	_, err := c.doJSON(ctx, http.MethodGet, c.channelsBase(), nil, &out, http.StatusOK)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
+	return list[ChannelRead](ctx, c, apiPath("channels"))
 }
 
 func (c *APIClient) GetChannel(ctx context.Context, id string) (*ChannelRead, int, error) {
-	var out ChannelRead
-	resp, err := c.doJSON(ctx, http.MethodGet, c.channelPath(id), nil, &out, http.StatusOK)
-	if err != nil {
-		if resp != nil {
-			return nil, resp.StatusCode, err
-		}
-		return nil, 0, err
-	}
-	return &out, http.StatusOK, nil
+	return getWithStatus[ChannelRead](ctx, c, apiPath("channels", id))
 }
 
 func (c *APIClient) UpdateChannel(ctx context.Context, id string, in ChannelUpdate) (*ChannelRead, error) {
-	var out ChannelRead
-	_, err := c.doJSON(ctx, http.MethodPut, c.channelPath(id), in, &out, http.StatusOK)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return request[ChannelRead](ctx, c, http.MethodPut, apiPath("channels", id), in)
 }
 
 func (c *APIClient) DeleteChannel(ctx context.Context, id string) error {
-	_, err := c.doJSON(ctx, http.MethodDelete, c.channelPath(id), nil, nil, http.StatusNoContent)
-	return err
+	return c.remove(ctx, apiPath("channels", id))
 }
-
-// ---- Read Tokens ----
 
 type ReadToken struct {
 	ID            string  `json:"id"`
@@ -1059,85 +928,35 @@ type CreateReadTokenInput struct {
 	ExpiresAt *string `json:"expires_at,omitempty"`
 }
 
-func (c *APIClient) readTokensBase(projectID string) string {
-	return fmt.Sprintf("/api/v1/projects/%s/read-tokens/", url.PathEscape(projectID))
-}
-func (c *APIClient) readTokenPath(projectID, tokenID string) string {
-	return fmt.Sprintf("%s%s/", c.readTokensBase(projectID), url.PathEscape(tokenID))
-}
-
 func (c *APIClient) CreateReadToken(ctx context.Context, projectID string, in CreateReadTokenInput) (*ReadToken, error) {
-	var out ReadToken
-	_, err := c.doJSON(disableAutomaticRetries(ctx), http.MethodPost, c.readTokensBase(projectID), in, &out, http.StatusCreated, http.StatusOK)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
+	path := apiPath("projects", projectID, "read-tokens")
+	return create[ReadToken](ctx, c, path, in, http.StatusCreated, http.StatusOK)
 }
 
 func (c *APIClient) ListReadTokens(ctx context.Context, projectID string) ([]ReadToken, error) {
-	var out []ReadToken
-	_, err := c.doJSON(ctx, http.MethodGet, c.readTokensBase(projectID), nil, &out, http.StatusOK)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
+	return list[ReadToken](ctx, c, apiPath("projects", projectID, "read-tokens"))
 }
 
 func (c *APIClient) DeleteReadToken(ctx context.Context, projectID, tokenID string) error {
-	_, err := c.doJSON(ctx, http.MethodDelete, c.readTokenPath(projectID, tokenID), nil, nil, http.StatusNoContent)
-	return err
+	return c.remove(ctx, apiPath("projects", projectID, "read-tokens", tokenID))
 }
 
-// ---- Write Tokens ----
+type WriteToken ReadToken
 
-type WriteToken struct {
-	ID            string  `json:"id"`
-	ProjectID     string  `json:"project_id"`
-	CreatedAt     string  `json:"created_at"`
-	ExpiresAt     *string `json:"expires_at"`
-	Description   *string `json:"description"`
-	Token         *string `json:"token,omitempty"`
-	ProjectName   string  `json:"project_name"`
-	CreatedByName *string `json:"created_by_name"`
-	TokenPrefix   string  `json:"token_prefix"`
-}
-
-type CreateWriteTokenInput struct {
-	ExpiresAt *string `json:"expires_at,omitempty"`
-}
-
-func (c *APIClient) writeTokensBase(projectID string) string {
-	return fmt.Sprintf("/api/v1/projects/%s/write-tokens/", url.PathEscape(projectID))
-}
-func (c *APIClient) writeTokenPath(projectID, tokenID string) string {
-	return fmt.Sprintf("%s%s/", c.writeTokensBase(projectID), url.PathEscape(tokenID))
-}
+type CreateWriteTokenInput CreateReadTokenInput
 
 func (c *APIClient) CreateWriteToken(ctx context.Context, projectID string, in CreateWriteTokenInput) (*WriteToken, error) {
-	var out WriteToken
-	_, err := c.doJSON(disableAutomaticRetries(ctx), http.MethodPost, c.writeTokensBase(projectID), in, &out, http.StatusCreated, http.StatusOK)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
+	path := apiPath("projects", projectID, "write-tokens")
+	return create[WriteToken](ctx, c, path, in, http.StatusCreated, http.StatusOK)
 }
 
 func (c *APIClient) ListWriteTokens(ctx context.Context, projectID string) ([]WriteToken, error) {
-	var out []WriteToken
-	_, err := c.doJSON(ctx, http.MethodGet, c.writeTokensBase(projectID), nil, &out, http.StatusOK)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
+	return list[WriteToken](ctx, c, apiPath("projects", projectID, "write-tokens"))
 }
 
 func (c *APIClient) DeleteWriteToken(ctx context.Context, projectID, tokenID string) error {
-	_, err := c.doJSON(ctx, http.MethodDelete, c.writeTokenPath(projectID, tokenID), nil, nil, http.StatusNoContent)
-	return err
+	return c.remove(ctx, apiPath("projects", projectID, "write-tokens", tokenID))
 }
-
-// ---- Frontend Applications ----
 
 type FrontendApplication struct {
 	ID               string  `json:"id"`
@@ -1181,40 +1000,15 @@ type FrontendApplicationTokenCreated struct {
 	LastUsedAt  *string `json:"last_used_at"`
 }
 
-type frontendApplicationsPage struct {
-	Data       []FrontendApplication `json:"data"`
-	NextCursor *string               `json:"next_cursor"`
-}
-
-type frontendApplicationTokensPage struct {
-	Data       []FrontendApplicationToken `json:"data"`
-	NextCursor *string                    `json:"next_cursor"`
-}
-
-func (c *APIClient) frontendApplicationsBase(projectID string) string {
-	return fmt.Sprintf("/api/v1/projects/%s/frontend-applications/", url.PathEscape(projectID))
-}
-
-func (c *APIClient) frontendApplicationPath(projectID, applicationID string) string {
-	return fmt.Sprintf("%s%s/", c.frontendApplicationsBase(projectID), url.PathEscape(applicationID))
-}
-
-func (c *APIClient) frontendApplicationTokensBase(projectID, applicationID string) string {
-	return c.frontendApplicationPath(projectID, applicationID) + "tokens/"
-}
-
 func (c *APIClient) CreateFrontendApplication(ctx context.Context, projectID string, in FrontendApplicationCreate) (*FrontendApplicationCreated, error) {
-	var out FrontendApplicationCreated
-	_, err := c.doJSON(disableAutomaticRetries(ctx), http.MethodPost, c.frontendApplicationsBase(projectID), in, &out, http.StatusCreated)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
+	path := apiPath("projects", projectID, "frontend-applications")
+	return create[FrontendApplicationCreated](ctx, c, path, in, http.StatusCreated)
 }
 
 func (c *APIClient) GetFrontendApplication(ctx context.Context, projectID, applicationID string) (*FrontendApplication, int, error) {
 	var out FrontendApplication
-	resp, err := c.doJSON(ctx, http.MethodGet, c.frontendApplicationPath(projectID, applicationID), nil, &out, http.StatusOK, http.StatusNotFound)
+	path := apiPath("projects", projectID, "frontend-applications", applicationID)
+	resp, err := c.doJSON(ctx, http.MethodGet, path, nil, &out, http.StatusOK, http.StatusNotFound)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1225,68 +1019,30 @@ func (c *APIClient) GetFrontendApplication(ctx context.Context, projectID, appli
 }
 
 func (c *APIClient) ListFrontendApplications(ctx context.Context, projectID string) ([]FrontendApplication, error) {
-	var applications []FrontendApplication
-	cursor := ""
-	for {
-		var page frontendApplicationsPage
-		_, err := c.doJSON(ctx, http.MethodGet, frontendApplicationsPagePath(c.frontendApplicationsBase(projectID), cursor), nil, &page, http.StatusOK)
-		if err != nil {
-			return nil, err
-		}
-		applications = append(applications, page.Data...)
-		if page.NextCursor == nil {
-			return applications, nil
-		}
-		cursor = *page.NextCursor
-	}
+	path := apiPath("projects", projectID, "frontend-applications")
+	return listPages[FrontendApplication](ctx, c, path)
 }
 
 func (c *APIClient) DeleteFrontendApplication(ctx context.Context, projectID, applicationID string) error {
-	_, err := c.doJSON(ctx, http.MethodDelete, c.frontendApplicationPath(projectID, applicationID), nil, nil, http.StatusNoContent)
-	return err
+	return c.remove(ctx, apiPath("projects", projectID, "frontend-applications", applicationID))
 }
 
 func (c *APIClient) ListFrontendApplicationTokens(ctx context.Context, projectID, applicationID string) ([]FrontendApplicationToken, error) {
-	var tokens []FrontendApplicationToken
-	cursor := ""
-	for {
-		var page frontendApplicationTokensPage
-		_, err := c.doJSON(ctx, http.MethodGet, frontendApplicationsPagePath(c.frontendApplicationTokensBase(projectID, applicationID), cursor), nil, &page, http.StatusOK)
-		if err != nil {
-			return nil, err
-		}
-		tokens = append(tokens, page.Data...)
-		if page.NextCursor == nil {
-			return tokens, nil
-		}
-		cursor = *page.NextCursor
-	}
-}
-
-func frontendApplicationsPagePath(base, cursor string) string {
-	query := url.Values{"limit": []string{"100"}}
-	if cursor != "" {
-		query.Set("cursor", cursor)
-	}
-	return base + "?" + query.Encode()
+	path := apiPath("projects", projectID, "frontend-applications", applicationID, "tokens")
+	return listPages[FrontendApplicationToken](ctx, c, path)
 }
 
 func (c *APIClient) CreateFrontendApplicationToken(ctx context.Context, projectID, applicationID string) (*FrontendApplicationTokenCreated, error) {
-	var out FrontendApplicationTokenCreated
-	_, err := c.doJSON(disableAutomaticRetries(ctx), http.MethodPost, c.frontendApplicationTokensBase(projectID, applicationID), nil, &out, http.StatusCreated)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
+	path := apiPath("projects", projectID, "frontend-applications", applicationID, "tokens")
+	return create[FrontendApplicationTokenCreated](ctx, c, path, nil, http.StatusCreated)
 }
 
 func (c *APIClient) RevokeFrontendApplicationToken(ctx context.Context, projectID, applicationID, tokenID string) error {
-	path := fmt.Sprintf("%s%s/revoke/", c.frontendApplicationTokensBase(projectID, applicationID), url.PathEscape(tokenID))
+	path := apiPath(
+		"projects", projectID, "frontend-applications", applicationID, "tokens", tokenID, "revoke")
 	_, err := c.doJSON(ctx, http.MethodPost, path, nil, nil, http.StatusNoContent)
 	return err
 }
-
-// ---- Dashboards ----
 
 type DashboardCreateRequest struct {
 	Name       string          `json:"name"`
@@ -1312,11 +1068,15 @@ type DashboardManager struct {
 	ManagedAllowEdits bool    `json:"managed_allow_edits,omitempty"`
 }
 
-// DashboardManager returns the marker for a dashboard this client writes.
 func (c *APIClient) DashboardManager(allowEdits bool) DashboardManager {
 	name := c.dashboardManager
-	m := DashboardManager{ManagedBy: "other", ManagedByName: &name, ManagedAllowEdits: allowEdits}
-	if tool := strings.ToLower(c.dashboardManager); tool == "terraform" || tool == "pulumi" {
+	m := DashboardManager{
+		ManagedBy:         "other",
+		ManagedByName:     &name,
+		ManagedAllowEdits: allowEdits,
+	}
+	tool := strings.ToLower(c.dashboardManager)
+	if tool == "terraform" || tool == "pulumi" {
 		m.ManagedBy, m.ManagedByName = tool, nil
 	}
 	return m
@@ -1352,62 +1112,31 @@ type GetDashboardResponse struct {
 	Dashboard json.RawMessage `json:"dashboard"`
 }
 
-func (c *APIClient) dashboardsBase(projectID string) string {
-	return fmt.Sprintf("/api/v1/projects/%s/dashboards/", url.PathEscape(projectID))
-}
-func (c *APIClient) dashboardPath(projectID, dashboardID string) string {
-	return fmt.Sprintf("%s%s/", c.dashboardsBase(projectID), url.PathEscape(dashboardID))
-}
-
 func (c *APIClient) CreateDashboard(ctx context.Context, projectID string, in DashboardCreateRequest) (*Dashboard, error) {
-	var out Dashboard
-	_, err := c.doJSON(disableAutomaticRetries(ctx), http.MethodPost, c.dashboardsBase(projectID), in, &out, http.StatusOK, http.StatusCreated)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
+	path := apiPath("projects", projectID, "dashboards")
+	return create[Dashboard](ctx, c, path, in, http.StatusOK, http.StatusCreated)
 }
 
 func (c *APIClient) GetDashboard(ctx context.Context, projectID, dashboardID string) (*GetDashboardResponse, int, error) {
-	var out GetDashboardResponse
-	resp, err := c.doJSON(ctx, http.MethodGet, c.dashboardPath(projectID, dashboardID), nil, &out, http.StatusOK)
-	if err != nil {
-		if resp != nil {
-			return nil, resp.StatusCode, err
-		}
-		return nil, 0, err
-	}
-	return &out, http.StatusOK, nil
+	path := apiPath("projects", projectID, "dashboards", dashboardID)
+	return getWithStatus[GetDashboardResponse](ctx, c, path)
 }
 
 func (c *APIClient) UpdateDashboard(ctx context.Context, projectID, dashboardID string, in DashboardUpdateRequest) (*Dashboard, error) {
-	path := c.dashboardPath(projectID, dashboardID)
+	path := apiPath("projects", projectID, "dashboards", dashboardID)
 	if in.ReplaceLayout {
 		path += "?replace_layout=true"
 	}
-	var out Dashboard
-	_, err := c.doJSON(ctx, http.MethodPut, path, in, &out, http.StatusOK)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return request[Dashboard](ctx, c, http.MethodPut, path, in)
 }
 
 func (c *APIClient) DeleteDashboard(ctx context.Context, projectID, dashboardID string) error {
-	_, err := c.doJSON(ctx, http.MethodDelete, c.dashboardPath(projectID, dashboardID), nil, nil, http.StatusNoContent)
-	return err
+	return c.remove(ctx, apiPath("projects", projectID, "dashboards", dashboardID))
 }
 
 func (c *APIClient) ListDashboards(ctx context.Context, projectID string) ([]DashboardSummary, error) {
-	var out []DashboardSummary
-	_, err := c.doJSON(ctx, http.MethodGet, c.dashboardsBase(projectID), nil, &out, http.StatusOK)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
+	return list[DashboardSummary](ctx, c, apiPath("projects", projectID, "dashboards"))
 }
-
-// ---- SLOs ----
 
 // The SLO endpoints are experimental and not yet part of the published Logfire
 // OpenAPI schema; their shape may change.
@@ -1442,15 +1171,12 @@ type SloRead struct {
 	Alerts *SloTierAlerts `json:"alerts,omitempty"`
 }
 
-// SloTierAlerts holds an SLO's three burn-rate alerts. Every SLO has all
-// three keys.
 type SloTierAlerts struct {
 	Fast   SloTierAlert `json:"fast"`
 	Medium SloTierAlert `json:"medium"`
 	Slow   SloTierAlert `json:"slow"`
 }
 
-// Tier returns the alert of a tier name: "fast", "medium" or "slow".
 func (a *SloTierAlerts) Tier(name string) SloTierAlert {
 	switch name {
 	case "fast":
@@ -1462,7 +1188,6 @@ func (a *SloTierAlerts) Tier(name string) SloTierAlert {
 	}
 }
 
-// SloTierAlert is one burn-rate tier's alert as listed on its SLO.
 type SloTierAlert struct {
 	// AlertID is nil only for an SLO created before every SLO kept all three
 	// tier alerts; the SLO's next update creates the alert.
@@ -1528,7 +1253,6 @@ type SloAlertsDelivery struct {
 	Slow   *SloTierDelivery `json:"slow,omitempty"`
 }
 
-// Tier returns the field for a tier name: "fast", "medium" or "slow".
 func (d *SloAlertsDelivery) Tier(name string) **SloTierDelivery {
 	switch name {
 	case "fast":
@@ -1540,63 +1264,30 @@ func (d *SloAlertsDelivery) Tier(name string) **SloTierDelivery {
 	}
 }
 
-// SloTierDelivery is one tier alert's delivery, in the alert API's shape.
 type SloTierDelivery struct {
 	ChannelAssignments []ChannelAssignment `json:"channel_assignments"`
 }
 
-func (c *APIClient) slosBase(projectID string) string {
-	return fmt.Sprintf("/api/v1/projects/%s/slos/", url.PathEscape(projectID))
-}
-func (c *APIClient) sloPath(projectID, id string) string {
-	return fmt.Sprintf("%s%s/", c.slosBase(projectID), url.PathEscape(id))
-}
-
 func (c *APIClient) CreateSlo(ctx context.Context, projectID string, in SloCreate) (*SloRead, error) {
-	var out SloRead
-	_, err := c.doJSON(disableAutomaticRetries(ctx), http.MethodPost, c.slosBase(projectID), in, &out, http.StatusCreated)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return create[SloRead](ctx, c, apiPath("projects", projectID, "slos"), in, http.StatusCreated)
 }
 
 func (c *APIClient) GetSlo(ctx context.Context, projectID, id string) (*SloRead, int, error) {
-	var out SloRead
-	resp, err := c.doJSON(ctx, http.MethodGet, c.sloPath(projectID, id), nil, &out, http.StatusOK)
-	if err != nil {
-		if resp != nil {
-			return nil, resp.StatusCode, err
-		}
-		return nil, 0, err
-	}
-	return &out, http.StatusOK, nil
+	return getWithStatus[SloRead](ctx, c, apiPath("projects", projectID, "slos", id))
 }
 
 func (c *APIClient) UpdateSlo(ctx context.Context, projectID, id string, in SloUpdate) (*SloRead, error) {
-	var out SloRead
-	_, err := c.doJSON(ctx, http.MethodPatch, c.sloPath(projectID, id), in, &out, http.StatusOK)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
+	path := apiPath("projects", projectID, "slos", id)
+	return request[SloRead](ctx, c, http.MethodPatch, path, in)
 }
 
 func (c *APIClient) DeleteSlo(ctx context.Context, projectID, id string) error {
-	_, err := c.doJSON(ctx, http.MethodDelete, c.sloPath(projectID, id), nil, nil, http.StatusNoContent)
-	return err
+	return c.remove(ctx, apiPath("projects", projectID, "slos", id))
 }
 
 func (c *APIClient) ListSlos(ctx context.Context, projectID string) ([]SloRead, error) {
-	var out []SloRead
-	_, err := c.doJSON(ctx, http.MethodGet, c.slosBase(projectID), nil, &out, http.StatusOK)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
+	return list[SloRead](ctx, c, apiPath("projects", projectID, "slos"))
 }
-
-// ---- Schedules ----
 
 // Schedules are organization-scoped. The API has no list route: a schedule is
 // addressed by its ID. Update is a partial PUT that changes only the fields it
@@ -1639,20 +1330,30 @@ const (
 
 // doSchedule calls the notification windows route. An instance that predates
 // that route answers FastAPI's missing-route 404, and doSchedule then calls the
-// deprecated /schedules/ route Logfire served before. A 404 never has an effect,
-// so the second call is safe for every method. A 404 for a missing window is
-// final, so a failed second call cannot hide it. Once the deprecated route has answered, later
-// calls skip the new one. An empty id addresses the collection.
-func (c *APIClient) doSchedule(
-	ctx context.Context, method, id string, in, out any, expected int,
-) (*http.Response, error) {
+// deprecated /schedules/ route Logfire served before. A 404 never has an
+// effect, so the second call is safe for every method. A 404 for a missing
+// window is final, so a failed second call cannot hide it. Once the deprecated
+// route has answered, later calls skip the new one. A POST addresses the
+// collection and every other method addresses the item id.
+func (c *APIClient) doSchedule(ctx context.Context, method, id string, in, out any, expected int) (*http.Response, error) {
 	suffix := ""
-	if id != "" {
+	if method != http.MethodPost {
 		suffix = url.PathEscape(id) + "/"
 	}
 	if !c.shared.legacySchedules.Load() {
 		resp, err := c.doJSON(ctx, method, notificationWindowsPath+suffix, in, out, expected)
-		if !isMissingRoute(err) {
+		// A route that looks up an item answers a missing item with its own
+		// detail, while FastAPI answers a missing route with "Not Found" and a
+		// proxy may send no detail at all.
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
+			return resp, err
+		}
+		var body struct {
+			Detail string `json:"detail"`
+		}
+		_ = json.Unmarshal([]byte(apiErr.Message), &body)
+		if body.Detail != "" && body.Detail != "Not Found" {
 			return resp, err
 		}
 	}
@@ -1669,21 +1370,12 @@ func (c *APIClient) doSchedule(
 func (c *APIClient) CreateSchedule(ctx context.Context, in ScheduleCreate) (*ScheduleRead, error) {
 	var out ScheduleRead
 	ctx = disableAutomaticRetries(ctx)
-	_, err := c.doSchedule(ctx, http.MethodPost, "", in, &out, http.StatusCreated)
-	if IsNotFoundError(err) {
-		// Schedules have no list route and unknown ids live under /{id}/, so
-		// a 404 on a create from both routes means the instance predates the
+	if _, err := c.doSchedule(ctx, http.MethodPost, "", in, &out, http.StatusCreated); err != nil {
+		// Schedules have no list route and unknown ids live under /{id}/, so a
+		// 404 on a create from both routes means the instance predates the
 		// schedules API rather than an unknown schedule.
-		return nil, &EndpointUnavailableError{
-			Method:         http.MethodPost,
-			Path:           notificationWindowsPath,
-			MinimumRelease: "v2026-09-23.01",
-			MinimumChart:   "logfire-0.13.47",
-			BackendVersion: BackendVersionFromError(err),
-		}
-	}
-	if err != nil {
-		return nil, err
+		return nil, unavailableIfNotFound(
+			err, http.MethodPost, notificationWindowsPath, "v2026-09-23.01", "logfire-0.13.47")
 	}
 	return &out, nil
 }
@@ -1691,19 +1383,12 @@ func (c *APIClient) CreateSchedule(ctx context.Context, in ScheduleCreate) (*Sch
 func (c *APIClient) GetSchedule(ctx context.Context, id string) (*ScheduleRead, int, error) {
 	var out ScheduleRead
 	resp, err := c.doSchedule(ctx, http.MethodGet, id, nil, &out, http.StatusOK)
-	if err != nil {
-		if resp != nil {
-			return nil, resp.StatusCode, err
-		}
-		return nil, 0, err
-	}
-	return &out, http.StatusOK, nil
+	return withStatus(&out, resp, err)
 }
 
 func (c *APIClient) UpdateSchedule(ctx context.Context, id string, in ScheduleUpdate) (*ScheduleRead, error) {
 	var out ScheduleRead
-	_, err := c.doSchedule(ctx, http.MethodPut, id, in, &out, http.StatusOK)
-	if err != nil {
+	if _, err := c.doSchedule(ctx, http.MethodPut, id, in, &out, http.StatusOK); err != nil {
 		return nil, err
 	}
 	return &out, nil

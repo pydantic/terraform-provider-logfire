@@ -14,24 +14,12 @@ import (
 	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
 )
 
-var (
-	_ resource.Resource                   = &GatewayProviderResource{}
-	_ resource.ResourceWithConfigure      = &GatewayProviderResource{}
-	_ resource.ResourceWithImportState    = &GatewayProviderResource{}
-	_ resource.ResourceWithValidateConfig = &GatewayProviderResource{}
-)
-
 var endpointVendors = []string{"azure", "google-vertex"}
 
-// NewGatewayProviderResource returns the organization-owned Gateway provider resource.
-func NewGatewayProviderResource() resource.Resource { return &GatewayProviderResource{} }
+type GatewayProviderResource struct{ configured }
 
-// GatewayProviderResource manages an upstream provider through the public API.
-type GatewayProviderResource struct {
-	client *logclient.APIClient
-}
-
-// GatewayProviderModel stores provider configuration and the last configured credential.
+// GatewayProviderModel stores provider configuration and the last configured
+// credential.
 type GatewayProviderModel struct {
 	ID             types.String `tfsdk:"id"`
 	Slug           types.String `tfsdk:"slug"`
@@ -44,32 +32,13 @@ type GatewayProviderModel struct {
 	CreatedAt      types.String `tfsdk:"created_at"`
 }
 
-// Metadata returns the Terraform resource type.
-func (r *GatewayProviderResource) Metadata(
-	ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse,
-) {
+func (r *GatewayProviderResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_gateway_provider"
 }
 
-// Configure receives the authenticated organization client.
-func (r *GatewayProviderResource) Configure(
-	ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse,
-) {
-	if req.ProviderData == nil {
-		return
-	}
-	client, ok := req.ProviderData.(*logclient.APIClient)
-	if !ok {
-		resp.Diagnostics.AddError("Unexpected provider data", "Expected *APIClient.")
-		return
-	}
-	r.client = client
-}
-
-// Create stores a provider and retains its write-only credential in Terraform state.
-func (r *GatewayProviderResource) Create(
-	ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse,
-) {
+// Create stores a provider and retains its write-only credential in Terraform
+// state.
+func (r *GatewayProviderResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan GatewayProviderModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
@@ -86,23 +55,29 @@ func (r *GatewayProviderResource) Create(
 				Endpoint:    plan.Endpoint.ValueString(),
 			},
 		},
-		Pricing: logclient.GatewayProviderPricing{Required: plan.RequirePricing.ValueBool()},
+		Pricing: logclient.GatewayProviderPricing{
+			Required: plan.RequirePricing.ValueBool(),
+		},
 	})
 	if err != nil {
 		resp.Diagnostics.AddError("Create Gateway provider failed", err.Error()+
-			". A failed request may have stored the provider. "+
-			"Check the provider list and import its UUID before retrying if the slug already exists.")
+			". A failed request may have stored the provider. Check the provider list and import its UUID before retrying if the slug already exists.")
 		return
 	}
 	plan.refresh(out)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-// Read refreshes public configuration without overwriting the locally retained API key.
+// Read refreshes public configuration without overwriting the locally retained
+// API key.
 func (r *GatewayProviderResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var state GatewayProviderModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	if state.ID.ValueString() == "" {
+		resp.State.RemoveResource(ctx)
 		return
 	}
 	out, err := r.client.GetGatewayProvider(ctx, state.ID.ValueString())
@@ -118,24 +93,30 @@ func (r *GatewayProviderResource) Read(ctx context.Context, req resource.ReadReq
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-// Update changes pricing and sends credentials only when the key or endpoint changes.
-func (r *GatewayProviderResource) Update(
-	ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse,
-) {
+// Update changes pricing and sends credentials only when the key or endpoint
+// changes.
+func (r *GatewayProviderResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var plan, state GatewayProviderModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	if missingID(state.ID, &resp.Diagnostics) {
+		return
+	}
 	input := logclient.GatewayProviderUpdate{
-		Pricing: logclient.GatewayProviderPricing{Required: plan.RequirePricing.ValueBool()},
+		Pricing: logclient.GatewayProviderPricing{
+			Required: plan.RequirePricing.ValueBool(),
+		},
 	}
 	config := logclient.GatewayProviderConfig{}
 	if !plan.Endpoint.Equal(state.Endpoint) {
 		config.Endpoint = plan.Endpoint.ValueString()
 	}
-	// The API requires a key with every endpoint change, so a stored key never follows a moved endpoint.
+	// The API requires a key with every endpoint change, so a stored key never
+	// follows a moved endpoint.
 	if !plan.APIKey.Equal(state.APIKey) || config.Endpoint != "" {
 		config.Credentials = plan.credentials()
 	}
@@ -146,13 +127,15 @@ func (r *GatewayProviderResource) Update(
 		config.Region = plan.BedrockRegion.ValueString()
 	}
 	if config.Credentials != nil || config.API != "" || config.Region != "" {
-		input.Provider = &logclient.GatewayProviderVendor{Vendor: plan.Vendor.ValueString(), Config: &config}
+		input.Provider = &logclient.GatewayProviderVendor{
+			Vendor: plan.Vendor.ValueString(),
+			Config: &config,
+		}
 	}
 	out, err := r.client.UpdateGatewayProvider(ctx, state.ID.ValueString(), input)
 	if err != nil {
 		resp.Diagnostics.AddError("Update Gateway provider failed", err.Error()+
-			". Retry the apply before revoking the previous credential; "+
-			"storage may have succeeded before Gateway confirmed the refresh.")
+			". Retry the apply before revoking the previous credential; storage may have succeeded before Gateway confirmed the refresh.")
 		return
 	}
 	plan.refresh(out)
@@ -160,15 +143,18 @@ func (r *GatewayProviderResource) Update(
 }
 
 // Delete removes the provider and waits for the API to confirm the refresh.
-func (r *GatewayProviderResource) Delete(
-	ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse,
-) {
+func (r *GatewayProviderResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var state GatewayProviderModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if err := r.client.DeleteGatewayProvider(ctx, state.ID.ValueString()); err != nil {
+
+	if missingID(state.ID, &resp.Diagnostics) {
+		return
+	}
+	err := r.client.DeleteGatewayProvider(ctx, state.ID.ValueString())
+	if err != nil {
 		resp.Diagnostics.AddError("Delete Gateway provider failed",
 			err.Error()+". Retry the destroy before considering the provider revoked.")
 	}
@@ -178,31 +164,24 @@ func (r *GatewayProviderResource) Delete(
 // slug. The slug form lists the organization's providers and matches, so an
 // import does not require knowing the UUID (which only the list endpoint
 // exposes) upfront.
-func (r *GatewayProviderResource) ImportState(
-	ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse,
-) {
-	rawID := strings.TrimSpace(req.ID)
-	if rawID == "" {
-		resp.Diagnostics.AddError(
-			"Missing import ID",
-			`Expected the provider UUID or the provider slug. Example: terraform import logfire_gateway_provider.openai "018f45c0-3cab-7b2f-a8f7-8a0b55a7ed11"`,
-		)
+func (r *GatewayProviderResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	id := strings.TrimSpace(req.ID)
+	if id == "" {
+		resp.Diagnostics.AddError("Missing import ID",
+			"Expected the provider UUID or the provider slug. Example: terraform import logfire_gateway_provider.openai "+
+				`"018f45c0-3cab-7b2f-a8f7-8a0b55a7ed11"`)
 		return
 	}
-	if uuidPattern.MatchString(rawID) {
-		resource.ImportStatePassthroughID(ctx, path.Root("id"), resource.ImportStateRequest{ID: rawID}, resp)
-		return
+	if !uuidPattern.MatchString(id) {
+		found, err := r.client.FindGatewayProviderBySlug(ctx, id)
+		if err != nil {
+			resp.Diagnostics.AddError("Import Gateway provider failed",
+				err.Error())
+			return
+		}
+		id = found.ID
 	}
-	if r.client == nil {
-		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
-		return
-	}
-	found, err := r.client.FindGatewayProviderBySlug(ctx, rawID)
-	if err != nil {
-		resp.Diagnostics.AddError("Import Gateway provider failed", err.Error())
-		return
-	}
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), found.ID)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), id)...)
 }
 
 func (m *GatewayProviderModel) credentials() *logclient.GatewayProviderCredentials {
@@ -210,7 +189,10 @@ func (m *GatewayProviderModel) credentials() *logclient.GatewayProviderCredentia
 	if m.Vendor.ValueString() == "google-vertex" {
 		credentialType = "service-account-json"
 	}
-	return &logclient.GatewayProviderCredentials{Type: credentialType, Value: m.APIKey.ValueString()}
+	return &logclient.GatewayProviderCredentials{
+		Type:  credentialType,
+		Value: m.APIKey.ValueString(),
+	}
 }
 
 func (m *GatewayProviderModel) refresh(out *logclient.GatewayProviderRead) {
@@ -221,12 +203,16 @@ func (m *GatewayProviderModel) refresh(out *logclient.GatewayProviderRead) {
 	m.CreatedAt = types.StringValue(out.CreatedAt)
 	m.BedrockAPI = types.StringNull()
 	m.BedrockRegion = types.StringNull()
-	if out.Provider.Vendor == "bedrock" && out.Provider.Config != nil {
-		m.BedrockAPI = types.StringValue(out.Provider.Config.API)
-		m.BedrockRegion = types.StringValue(out.Provider.Config.Region)
-	}
 	m.Endpoint = types.StringNull()
-	if slices.Contains(endpointVendors, out.Provider.Vendor) && out.Provider.Config != nil {
-		m.Endpoint = types.StringValue(out.Provider.Config.Endpoint)
+	config := out.Provider.Config
+	if config == nil {
+		return
+	}
+	if out.Provider.Vendor == "bedrock" {
+		m.BedrockAPI = types.StringValue(config.API)
+		m.BedrockRegion = types.StringValue(config.Region)
+	}
+	if slices.Contains(endpointVendors, out.Provider.Vendor) {
+		m.Endpoint = types.StringValue(config.Endpoint)
 	}
 }

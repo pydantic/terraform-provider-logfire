@@ -10,18 +10,15 @@ import (
 	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
 )
 
-func testAPIKeyRead(scopes []string) *logclient.APIKeyRead {
-	return &logclient.APIKeyRead{
-		ID:          "11111111-1111-1111-1111-111111111111",
-		Name:        "test",
-		Scopes:      scopes,
-		AllProjects: true,
-		Active:      true,
-		CreatedAt:   "2026-01-01T00:00:00Z",
+func nullGatewayBlock() *GatewaySettingsModel {
+	return &GatewaySettingsModel{
+		SpendingLimitDaily:   types.Int64Null(),
+		SpendingLimitWeekly:  types.Int64Null(),
+		SpendingLimitMonthly: types.Int64Null(),
+		SpendingLimitTotal:   types.Int64Null(),
+		CacheEnabled:         types.BoolNull(),
 	}
 }
-
-func int64Ptr(v int64) types.Int64 { return types.Int64Value(v) }
 
 func TestScopesRequiringProject(t *testing.T) {
 	t.Parallel()
@@ -51,24 +48,12 @@ func TestGatewayClaimsForCreate(t *testing.T) {
 	if claims := gatewayClaimsForCreate(nil); claims != nil {
 		t.Fatal("nil block must omit claims")
 	}
-	empty := &GatewaySettingsModel{
-		SpendingLimitDaily:   types.Int64Null(),
-		SpendingLimitWeekly:  types.Int64Null(),
-		SpendingLimitMonthly: types.Int64Null(),
-		SpendingLimitTotal:   types.Int64Null(),
-		CacheEnabled:         types.BoolNull(),
-	}
-	if claims := gatewayClaimsForCreate(empty); claims != nil {
+	if claims := gatewayClaimsForCreate(nullGatewayBlock()); claims != nil {
 		t.Fatal("empty block must omit claims")
 	}
-	daily := int64(25)
-	block := &GatewaySettingsModel{
-		SpendingLimitDaily:   int64Ptr(daily),
-		SpendingLimitWeekly:  types.Int64Null(),
-		SpendingLimitMonthly: types.Int64Null(),
-		SpendingLimitTotal:   types.Int64Null(),
-		CacheEnabled:         types.BoolValue(false),
-	}
+	block := nullGatewayBlock()
+	block.SpendingLimitDaily = types.Int64Value(25)
+	block.CacheEnabled = types.BoolValue(false)
 	claims := gatewayClaimsForCreate(block)
 	if claims == nil || claims.GatewayProxy == nil {
 		t.Fatal("expected gateway claims")
@@ -86,14 +71,17 @@ func TestGatewayClaimsForCreate(t *testing.T) {
 
 func TestGatewayClaimsMapForUpdate(t *testing.T) {
 	t.Parallel()
-	nullBlock := func() *GatewaySettingsModel {
-		return &GatewaySettingsModel{
-			SpendingLimitDaily:   types.Int64Null(),
-			SpendingLimitWeekly:  types.Int64Null(),
-			SpendingLimitMonthly: types.Int64Null(),
-			SpendingLimitTotal:   types.Int64Null(),
-			CacheEnabled:         types.BoolNull(),
+	changed := func(t *testing.T, plan, state *GatewaySettingsModel) map[string]any {
+		t.Helper()
+		claims, ok := gatewayClaimsMapForUpdate(plan, state)
+		if !ok {
+			t.Fatal("expected a claims update")
 		}
+		inner, ok := claims[GatewayProxyScope].(map[string]any)
+		if !ok {
+			t.Fatalf("claims = %v", claims)
+		}
+		return inner
 	}
 
 	t.Run("nil plan and nil state omits claims", func(t *testing.T) {
@@ -105,17 +93,10 @@ func TestGatewayClaimsMapForUpdate(t *testing.T) {
 
 	t.Run("removed block clears carried caps", func(t *testing.T) {
 		t.Parallel()
-		state := nullBlock()
-		state.SpendingLimitDaily = int64Ptr(10)
+		state := nullGatewayBlock()
+		state.SpendingLimitDaily = types.Int64Value(10)
 		state.CacheEnabled = types.BoolValue(true)
-		claims, ok := gatewayClaimsMapForUpdate(nil, state)
-		if !ok {
-			t.Fatal("expected a clearing claims update")
-		}
-		inner, ok := claims[GatewayProxyScope].(map[string]any)
-		if !ok {
-			t.Fatalf("claims = %v", claims)
-		}
+		inner := changed(t, nil, state)
 		if v, present := inner["spending_limit_daily"]; !present || v != nil {
 			t.Fatalf("daily should clear to null, got %v", inner)
 		}
@@ -129,10 +110,10 @@ func TestGatewayClaimsMapForUpdate(t *testing.T) {
 
 	t.Run("unchanged values are omitted", func(t *testing.T) {
 		t.Parallel()
-		plan := nullBlock()
-		plan.SpendingLimitDaily = int64Ptr(10)
-		state := nullBlock()
-		state.SpendingLimitDaily = int64Ptr(10)
+		plan := nullGatewayBlock()
+		plan.SpendingLimitDaily = types.Int64Value(10)
+		state := nullGatewayBlock()
+		state.SpendingLimitDaily = types.Int64Value(10)
 		if _, ok := gatewayClaimsMapForUpdate(plan, state); ok {
 			t.Fatal("no effective change must omit claims")
 		}
@@ -140,36 +121,20 @@ func TestGatewayClaimsMapForUpdate(t *testing.T) {
 
 	t.Run("changed value is sent", func(t *testing.T) {
 		t.Parallel()
-		plan := nullBlock()
-		plan.SpendingLimitDaily = int64Ptr(20)
-		state := nullBlock()
-		state.SpendingLimitDaily = int64Ptr(10)
-		claims, ok := gatewayClaimsMapForUpdate(plan, state)
-		if !ok {
-			t.Fatal("expected a claims update")
-		}
-		inner, ok := claims[GatewayProxyScope].(map[string]any)
-		if !ok {
-			t.Fatalf("claims = %v", claims)
-		}
-		if inner["spending_limit_daily"] != int64(20) {
+		plan := nullGatewayBlock()
+		plan.SpendingLimitDaily = types.Int64Value(20)
+		state := nullGatewayBlock()
+		state.SpendingLimitDaily = types.Int64Value(10)
+		if inner := changed(t, plan, state); inner["spending_limit_daily"] != int64(20) {
 			t.Fatalf("daily = %v", inner)
 		}
 	})
 
 	t.Run("nulled field clears", func(t *testing.T) {
 		t.Parallel()
-		plan := nullBlock()
-		state := nullBlock()
+		state := nullGatewayBlock()
 		state.CacheEnabled = types.BoolValue(true)
-		claims, ok := gatewayClaimsMapForUpdate(plan, state)
-		if !ok {
-			t.Fatal("expected a claims update")
-		}
-		inner, ok := claims[GatewayProxyScope].(map[string]any)
-		if !ok {
-			t.Fatalf("claims = %v", claims)
-		}
+		inner := changed(t, nullGatewayBlock(), state)
 		if v, present := inner["cache_enabled"]; !present || v != nil {
 			t.Fatalf("cache_enabled should clear to null, got %v", inner)
 		}
@@ -189,10 +154,7 @@ func TestAPIKeyCreateFromPlan(t *testing.T) {
 		Description: types.StringNull(),
 		ExpiresAt:   types.StringNull(),
 	}
-	in, err := apiKeyCreateFromPlan(plan)
-	if err != nil {
-		t.Fatal(err)
-	}
+	in := apiKeyCreateFromPlan(plan)
 	if in.Name != "otel" || len(in.Scopes) != 1 || in.Description != nil || in.ExpiresAt != nil || in.Claims != nil {
 		t.Fatalf("unexpected create payload: %+v", in)
 	}
@@ -205,29 +167,33 @@ func TestAPIKeyCreateFromPlan(t *testing.T) {
 		Scopes:    scopes,
 		ProjectID: types.StringNull(),
 	}
-	in, err = apiKeyCreateFromPlan(orgWide)
-	if err != nil {
-		t.Fatal(err)
-	}
+	in = apiKeyCreateFromPlan(orgWide)
 	if in.ProjectID != nil {
 		t.Fatalf("org-wide key must omit project_id, got %v", *in.ProjectID)
 	}
 
-	badExpiry := &APIKeyModel{
-		Name:      types.StringValue("bad"),
+	padded := &APIKeyModel{
+		Name:      types.StringValue("padded"),
 		Scopes:    scopes,
-		ExpiresAt: types.StringValue("not-a-timestamp"),
+		ExpiresAt: types.StringValue(" 2026-12-31T23:59:59Z "),
 	}
-	if _, err := apiKeyCreateFromPlan(badExpiry); err == nil {
-		t.Fatal("expected an expires_at parse error")
+	in = apiKeyCreateFromPlan(padded)
+	if in.ExpiresAt == nil || *in.ExpiresAt != "2026-12-31T23:59:59Z" {
+		t.Fatalf("expires_at = %+v, want it trimmed", in.ExpiresAt)
 	}
 }
 
 func TestGatewayAPIKeyReadToStateRejectsNonGatewayKey(t *testing.T) {
 	t.Parallel()
-	read := testAPIKeyRead([]string{"project:write_otlp"})
-	var state GatewayAPIKeyModel
-	if err := gatewayAPIKeyReadToState(read, &state, types.StringNull()); err == nil {
+	read := &logclient.APIKeyRead{
+		ID:          "11111111-1111-1111-1111-111111111111",
+		Name:        "test",
+		Scopes:      []string{"project:write_otlp"},
+		AllProjects: true,
+		Active:      true,
+		CreatedAt:   "2026-01-01T00:00:00Z",
+	}
+	if _, err := gatewayAPIKeyToModel(read, types.StringNull()); err == nil {
 		t.Fatal("expected a scope mismatch error")
 	}
 }

@@ -10,7 +10,8 @@ import (
 	"net/url"
 )
 
-// GatewayEndpointProvider assigns a provider to an endpoint with its routing settings.
+// GatewayEndpointProvider assigns a provider to an endpoint with its routing
+// settings.
 type GatewayEndpointProvider struct {
 	ProviderID string  `json:"provider_id"`
 	Priority   int64   `json:"priority"`
@@ -27,7 +28,8 @@ type GatewayEndpointRead struct {
 	CreatedAt   string                    `json:"created_at"`
 }
 
-// GatewayEndpointCreate creates an endpoint with its complete provider configuration.
+// GatewayEndpointCreate creates an endpoint with its complete provider
+// configuration.
 type GatewayEndpointCreate struct {
 	Slug        string                    `json:"slug"`
 	Description *string                   `json:"description,omitempty"`
@@ -39,48 +41,41 @@ type GatewayEndpointUpdate struct {
 	Description *string `json:"description"`
 }
 
-type gatewayEndpointProvidersReplace struct {
-	Providers []GatewayEndpointProvider `json:"providers"`
-}
-
 // GatewayEndpointsPage is one page of the keyset-paginated endpoint list.
 type GatewayEndpointsPage struct {
 	Endpoints  []GatewayEndpointRead `json:"endpoints"`
 	NextCursor *string               `json:"next_cursor"`
 }
 
-func gatewayEndpointPath(id string) string {
-	return "/api/v1/gateway/endpoints/" + url.PathEscape(id) + "/"
-}
+// gatewayEndpointsPath is the endpoint collection route. It has no 404 of its
+// own, so a 404 from it means the instance predates the Gateway endpoints API.
+const gatewayEndpointsPath = "/api/v1/gateway/endpoints/"
 
-// CreateGatewayEndpoint sends one create attempt because POST is not idempotent.
+const gatewayEndpointsMinimumRelease = "v2026-10-29.02"
+
+// CreateGatewayEndpoint sends one create attempt because POST is not
+// idempotent.
 func (c *APIClient) CreateGatewayEndpoint(ctx context.Context, in GatewayEndpointCreate) (*GatewayEndpointRead, error) {
-	var out GatewayEndpointRead
-	_, err := c.doJSON(
-		disableAutomaticRetries(ctx), http.MethodPost, "/api/v1/gateway/endpoints/", in, &out, http.StatusCreated,
-	)
-	if err != nil {
-		return nil, gatewayEndpointsUnavailableError(http.MethodPost, err)
-	}
-	return &out, nil
+	out, err := create[GatewayEndpointRead](
+		ctx, c, gatewayEndpointsPath, in, http.StatusCreated)
+	return out, unavailableIfNotFound(err, http.MethodPost,
+		gatewayEndpointsPath, gatewayEndpointsMinimumRelease, "")
 }
 
-// GetGatewayEndpoint reads an endpoint owned by the authenticated organization.
 func (c *APIClient) GetGatewayEndpoint(ctx context.Context, id string) (*GatewayEndpointRead, error) {
-	var out GatewayEndpointRead
-	if _, err := c.doJSON(ctx, http.MethodGet, gatewayEndpointPath(id), nil, &out, http.StatusOK); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return request[GatewayEndpointRead](
+		ctx, c, http.MethodGet, apiPath("gateway", "endpoints", id), nil)
 }
 
-// FindGatewayEndpointBySlug returns the organization's endpoint with the given slug.
+// FindGatewayEndpointBySlug returns the organization's endpoint with the given
+// slug.
 func (c *APIClient) FindGatewayEndpointBySlug(ctx context.Context, slug string) (*GatewayEndpointRead, error) {
 	query := url.Values{"slug": []string{slug}, "limit": []string{"1"}}
-	var page GatewayEndpointsPage
-	_, err := c.doJSON(ctx, http.MethodGet, "/api/v1/gateway/endpoints/?"+query.Encode(), nil, &page, http.StatusOK)
+	page, err := request[GatewayEndpointsPage](ctx, c, http.MethodGet,
+		gatewayEndpointsPath+"?"+query.Encode(), nil)
 	if err != nil {
-		return nil, gatewayEndpointsUnavailableError(http.MethodGet, err)
+		return nil, unavailableIfNotFound(err, http.MethodGet,
+			gatewayEndpointsPath, gatewayEndpointsMinimumRelease, "")
 	}
 	if len(page.Endpoints) == 0 {
 		return nil, &APIError{
@@ -92,48 +87,20 @@ func (c *APIClient) FindGatewayEndpointBySlug(ctx context.Context, slug string) 
 }
 
 // UpdateGatewayEndpoint changes the endpoint description.
-func (c *APIClient) UpdateGatewayEndpoint(
-	ctx context.Context, id string, in GatewayEndpointUpdate,
-) (*GatewayEndpointRead, error) {
-	var out GatewayEndpointRead
-	if _, err := c.doJSON(ctx, http.MethodPatch, gatewayEndpointPath(id), in, &out, http.StatusOK); err != nil {
-		return nil, err
-	}
-	return &out, nil
+func (c *APIClient) UpdateGatewayEndpoint(ctx context.Context, id string, in GatewayEndpointUpdate) (*GatewayEndpointRead, error) {
+	return request[GatewayEndpointRead](
+		ctx, c, http.MethodPatch, apiPath("gateway", "endpoints", id), in)
 }
 
-// ReplaceGatewayEndpointProviders atomically replaces the endpoint's provider configuration.
-func (c *APIClient) ReplaceGatewayEndpointProviders(
-	ctx context.Context, id string, providers []GatewayEndpointProvider,
-) (*GatewayEndpointRead, error) {
-	var out GatewayEndpointRead
-	_, err := c.doJSON(
-		ctx, http.MethodPut, gatewayEndpointPath(id)+"providers/", gatewayEndpointProvidersReplace{providers}, &out,
-		http.StatusOK,
-	)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
+// ReplaceGatewayEndpointProviders atomically replaces the endpoint's provider
+// configuration.
+func (c *APIClient) ReplaceGatewayEndpointProviders(ctx context.Context, id string, providers []GatewayEndpointProvider) (*GatewayEndpointRead, error) {
+	return request[GatewayEndpointRead](ctx, c, http.MethodPut,
+		apiPath("gateway", "endpoints", id, "providers"),
+		map[string][]GatewayEndpointProvider{"providers": providers})
 }
 
 // DeleteGatewayEndpoint idempotently deletes an endpoint.
 func (c *APIClient) DeleteGatewayEndpoint(ctx context.Context, id string) error {
-	_, err := c.doJSON(ctx, http.MethodDelete, gatewayEndpointPath(id), nil, nil, http.StatusNoContent)
-	return err
-}
-
-// gatewayEndpointsUnavailableError translates a 404 from the endpoint collection
-// route into an upgrade hint. That route has no 404 of its own, so a 404 means
-// the instance predates the Gateway endpoints API.
-func gatewayEndpointsUnavailableError(method string, err error) error {
-	if !IsNotFoundError(err) {
-		return err
-	}
-	return &EndpointUnavailableError{
-		Method:         method,
-		Path:           "/api/v1/gateway/endpoints/",
-		MinimumRelease: "v2026-10-29.02",
-		BackendVersion: BackendVersionFromError(err),
-	}
+	return c.remove(ctx, apiPath("gateway", "endpoints", id))
 }

@@ -6,7 +6,6 @@ package provider
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -14,6 +13,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -271,15 +271,75 @@ func projectBlock(label, body string) string {
 	return fmt.Sprintf("resource \"logfire_project\" %q {\n%s\n}\n", label, body)
 }
 
+const svcAddress = "logfire_project.svc"
+
+// svcProject is a project named svc in the provider block's organization, or in
+// the key's own organization when organization is empty.
+func svcProject(api *organizationInstance, organization string) string {
+	return providerBlock(api, organization) + projectBlock("svc", "name = \"svc\"")
+}
+
+// svcInOrganization is a project named svc whose organization argument is
+// organization, under a provider block without one.
+func svcInOrganization(api *organizationInstance, organization string) string {
+	body := fmt.Sprintf("organization = %q\nname = \"svc\"", organization)
+	return providerBlock(api, "") + projectBlock("svc", body)
+}
+
 func expectPlan(address string, action plancheck.ResourceActionType) tfresource.ConfigPlanChecks {
 	return tfresource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction(address, action)}}
 }
 
 var expectNoChange = tfresource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}}
 
-func runProjectLifecycle(t *testing.T, steps []tfresource.TestStep) {
+// projectIDKept returns a check that records the project's ID and a later check
+// that fails when the ID changed, so the project was updated and not replaced.
+func projectIDKept() (remember, same tfresource.TestCheckFunc) {
+	var projectID string
+	remember = func(s *terraform.State) error {
+		projectID = s.RootModule().Resources[svcAddress].Primary.ID
+		return nil
+	}
+	same = func(s *terraform.State) error {
+		if got := s.RootModule().Resources[svcAddress].Primary.ID; got != projectID {
+			return fmt.Errorf("project ID = %s, want %s", got, projectID)
+		}
+		return nil
+	}
+	return remember, same
+}
+
+func projectModel(organization, organizationID types.String) ProjectModel {
+	return ProjectModel{
+		ID: types.StringValue("project-1"), Organization: organization, OrganizationID: organizationID,
+		Name: types.StringValue("svc"), Description: types.StringNull(), Visibility: types.StringValue("public"),
+	}
+}
+
+// modifyProjectPlan runs the project's ModifyPlan against the instance for a plan
+// without refresh, which is the only way to reach an organization rename through
+// Terraform.
+func modifyProjectPlan(t *testing.T, api *organizationInstance, state, plan ProjectModel) resource.ModifyPlanResponse {
 	t.Helper()
-	tfresource.Test(t, tfresource.TestCase{IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories, Steps: steps})
+	client, err := logclient.NewAPIClient(api.URL, testAPIKey, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := &ProjectResource{configured{client}}
+	var schemaResponse resource.SchemaResponse
+	r.Schema(t.Context(), resource.SchemaRequest{}, &schemaResponse)
+	schema := schemaResponse.Schema
+	empty := tftypes.NewValue(schema.Type().TerraformType(t.Context()), nil)
+	priorState := tfsdk.State{Schema: schema, Raw: empty}
+	plannedState := tfsdk.Plan{Schema: schema, Raw: empty}
+	diags := priorState.Set(t.Context(), &state)
+	diags.Append(plannedState.Set(t.Context(), &plan)...)
+	if diags.HasError() {
+		t.Fatal(diags)
+	}
+	response := resource.ModifyPlanResponse{Plan: plannedState}
+	r.ModifyPlan(t.Context(), resource.ModifyPlanRequest{State: priorState, Plan: plannedState}, &response)
+	return response
 }
 
 func TestLifecycleProjectsInTheProviderAndAnotherOrganization(t *testing.T) {
@@ -287,7 +347,7 @@ func TestLifecycleProjectsInTheProviderAndAnotherOrganization(t *testing.T) {
 	config := providerBlock(api, "team-a") +
 		projectBlock("a", "name = \"svc\"") +
 		projectBlock("b", "organization = \"team-b\"\nname = \"svc\"")
-	runProjectLifecycle(t, []tfresource.TestStep{
+	runLifecycleSteps(t, []tfresource.TestStep{
 		{
 			Config: config,
 			Check: tfresource.ComposeTestCheckFunc(
@@ -321,11 +381,11 @@ func TestLifecycleProjectOrganizationFromTheEnvironment(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			api := newOrganizationInstance(t, "team-a", "team-b")
 			t.Setenv("LOGFIRE_ORGANIZATION", "team-a")
-			runProjectLifecycle(t, []tfresource.TestStep{{
-				Config: providerBlock(api, tc.provider) + projectBlock("svc", "name = \"svc\""),
+			runLifecycleSteps(t, []tfresource.TestStep{{
+				Config: svcProject(api, tc.provider),
 				Check: tfresource.ComposeTestCheckFunc(
-					tfresource.TestCheckResourceAttr("logfire_project.svc", "organization", tc.want),
-					tfresource.TestCheckResourceAttr("logfire_project.svc", "organization_id", "org-"+tc.want),
+					tfresource.TestCheckResourceAttr(svcAddress, "organization", tc.want),
+					tfresource.TestCheckResourceAttr(svcAddress, "organization_id", "org-"+tc.want),
 				),
 			}})
 			if left := api.projectsIn(tc.want); len(left) != 0 {
@@ -338,18 +398,22 @@ func TestLifecycleProjectOrganizationFromTheEnvironment(t *testing.T) {
 func TestLifecycleProjectOrganizationArgument(t *testing.T) {
 	api := newOrganizationInstance(t, "team-a", "team-b")
 	config := func(organization, description string) string {
-		return providerBlock(api, "") + projectBlock("svc", fmt.Sprintf("organization = %q\nname = \"svc\"\ndescription = %q", organization, description))
+		body := fmt.Sprintf("organization = %q\nname = \"svc\"\ndescription = %q", organization, description)
+		return providerBlock(api, "") + projectBlock("svc", body)
 	}
-	const address = "logfire_project.svc"
-	runProjectLifecycle(t, []tfresource.TestStep{
-		{Config: config("team-a", "one"), Check: tfresource.TestCheckResourceAttr(address, "organization_id", "org-team-a")},
+	runLifecycleSteps(t, []tfresource.TestStep{
+		{Config: config("team-a", "one"), Check: tfresource.TestCheckResourceAttr(svcAddress, "organization_id", "org-team-a")},
 		{Config: config("team-a", "one"), ConfigPlanChecks: expectNoChange},
-		{Config: config("team-a", "two"), ConfigPlanChecks: expectPlan(address, plancheck.ResourceActionUpdate), Check: tfresource.TestCheckResourceAttr(address, "description", "two")},
-		{Config: config("team-a", "two"), ResourceName: address, ImportState: true, ImportStateId: "team-a/svc", ImportStateVerify: true},
+		{
+			Config:           config("team-a", "two"),
+			ConfigPlanChecks: expectPlan(svcAddress, plancheck.ResourceActionUpdate),
+			Check:            tfresource.TestCheckResourceAttr(svcAddress, "description", "two"),
+		},
+		{Config: config("team-a", "two"), ResourceName: svcAddress, ImportState: true, ImportStateId: "team-a/svc", ImportStateVerify: true},
 		{
 			Config:           config("team-b", "two"),
-			ConfigPlanChecks: expectPlan(address, plancheck.ResourceActionDestroyBeforeCreate),
-			Check:            tfresource.TestCheckResourceAttr(address, "organization_id", "org-team-b"),
+			ConfigPlanChecks: expectPlan(svcAddress, plancheck.ResourceActionDestroyBeforeCreate),
+			Check:            tfresource.TestCheckResourceAttr(svcAddress, "organization_id", "org-team-b"),
 		},
 	})
 	if left := api.projectsIn("team-a"); len(left) != 0 {
@@ -359,14 +423,14 @@ func TestLifecycleProjectOrganizationArgument(t *testing.T) {
 
 func TestLifecycleProjectMoveIntoMissingOrganizationFailsAtApplyAndDeletesNothing(t *testing.T) {
 	api := newOrganizationInstance(t, "team-a")
-	config := func(organization string) string {
-		return providerBlock(api, "") + projectBlock("svc", fmt.Sprintf("organization = %q\nname = \"svc\"", organization))
-	}
-	runProjectLifecycle(t, []tfresource.TestStep{
-		{Config: config("team-a")},
-		{Config: config("team-gone"), ExpectError: regexp.MustCompile(`(?s)Update project failed.*team-gone`)},
+	runLifecycleSteps(t, []tfresource.TestStep{
+		{Config: svcInOrganization(api, "team-a")},
 		{
-			Config: config("team-a"), ConfigPlanChecks: expectNoChange,
+			Config:      svcInOrganization(api, "team-gone"),
+			ExpectError: regexp.MustCompile(`(?s)Update project failed.*team-gone`),
+		},
+		{
+			Config: svcInOrganization(api, "team-a"), ConfigPlanChecks: expectNoChange,
 			Check: func(*terraform.State) error {
 				if api.deletes != 0 || len(api.projectsIn("team-a")) != 1 {
 					return fmt.Errorf("the project was deleted: deletes = %d", api.deletes)
@@ -381,13 +445,13 @@ func TestLifecycleProjectMoveIntoMissingOrganizationFailsAtApplyAndDeletesNothin
 // create the project there fails before the replacement deletes it.
 func TestLifecycleProjectMoveFailsAtPlanWhenTheExchangeFails(t *testing.T) {
 	api := newOrganizationInstance(t, "team-b")
-	config := providerBlock(api, "") + projectBlock("svc", "name = \"svc\"")
+	config := svcProject(api, "")
 	setRefused := func(on bool) func() { return func() { api.Lock(); api.exchangeNeedsAdmin = on; api.Unlock() } }
-	runProjectLifecycle(t, []tfresource.TestStep{
+	runLifecycleSteps(t, []tfresource.TestStep{
 		{Config: config},
 		{
 			PreConfig:   setRefused(true),
-			Config:      providerBlock(api, "") + projectBlock("svc", "organization = \"team-b\"\nname = \"svc\""),
+			Config:      svcInOrganization(api, "team-b"),
 			ExpectError: regexp.MustCompile(`(?s)Cannot move the project.*instance-admin`),
 		},
 		{PreConfig: setRefused(false), Config: config, ConfigPlanChecks: expectNoChange},
@@ -401,8 +465,8 @@ func TestLifecycleProjectMoveFailsAtPlanWhenTheExchangeFails(t *testing.T) {
 // plan, before the replacement deletes the project.
 func TestLifecycleProjectMoveFailsAtPlanOnANameTaken(t *testing.T) {
 	api := newOrganizationInstance(t, "team-b")
-	config := providerBlock(api, "") + projectBlock("svc", "name = \"svc\"")
-	runProjectLifecycle(t, []tfresource.TestStep{
+	config := svcProject(api, "")
+	runLifecycleSteps(t, []tfresource.TestStep{
 		{Config: config},
 		{
 			PreConfig: func() {
@@ -410,7 +474,7 @@ func TestLifecycleProjectMoveFailsAtPlanOnANameTaken(t *testing.T) {
 				api.projects["taken"] = &testProject{ID: "taken", Name: "svc", Visibility: "public", OrganizationID: "org-team-b"}
 				api.Unlock()
 			},
-			Config:      providerBlock(api, "") + projectBlock("svc", "organization = \"team-b\"\nname = \"svc\""),
+			Config:      svcInOrganization(api, "team-b"),
 			ExpectError: regexp.MustCompile(`(?s)Cannot move the project.*already has a project named "svc"`),
 		},
 		{Config: config, ConfigPlanChecks: expectNoChange},
@@ -428,32 +492,9 @@ func TestProjectPlanForTheKeysRenamedOrganizationIsNoMove(t *testing.T) {
 	api := newOrganizationInstance(t)
 	api.projects["project-1"] = &testProject{ID: "project-1", Name: "svc", Visibility: "public", OrganizationID: "org-admin"}
 	api.rename("admin", "admin-2")
-	c, err := logclient.NewAPIClient(api.URL, testAPIKey, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx := t.Context()
-	r := &ProjectResource{client: c}
-	var schemaResp resource.SchemaResponse
-	r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
-	sch := schemaResp.Schema
-	model := func(organization string) ProjectModel {
-		return ProjectModel{
-			ID:           types.StringValue("project-1"),
-			Organization: types.StringValue(organization),
-			Name:         types.StringValue("svc"),
-			Visibility:   types.StringValue("public"),
-		}
-	}
-	state := tfsdk.State{Schema: sch, Raw: tftypes.NewValue(sch.Type().TerraformType(ctx), nil)}
-	plan := tfsdk.Plan{Schema: sch, Raw: tftypes.NewValue(sch.Type().TerraformType(ctx), nil)}
-	diags := state.Set(ctx, model("admin"))
-	diags.Append(plan.Set(ctx, model("admin-2"))...)
-	if diags.HasError() {
-		t.Fatal(diags)
-	}
-	resp := &resource.ModifyPlanResponse{Plan: plan}
-	r.ModifyPlan(ctx, resource.ModifyPlanRequest{State: state, Plan: plan}, resp)
+	state := projectModel(types.StringValue("admin"), types.StringNull())
+	plan := projectModel(types.StringValue("admin-2"), types.StringNull())
+	resp := modifyProjectPlan(t, api, state, plan)
 	if resp.Diagnostics.HasError() || len(resp.RequiresReplace) != 0 {
 		t.Errorf("diagnostics = %v, requires replace = %v, want an update in place", resp.Diagnostics, resp.RequiresReplace)
 	}
@@ -461,36 +502,23 @@ func TestProjectPlanForTheKeysRenamedOrganizationIsNoMove(t *testing.T) {
 
 func TestLifecycleProjectFollowsAnOrganizationRename(t *testing.T) {
 	api := newOrganizationInstance(t, "team-a")
-	const address = "logfire_project.svc"
-	var projectID string
-	remember := func(s *terraform.State) error {
-		projectID = s.RootModule().Resources[address].Primary.ID
-		return nil
-	}
-	providerOrganization := providerBlock(api, "team-a") + projectBlock("svc", "name = \"svc\"")
-	argument := func(organization string) string {
-		return providerBlock(api, "") + projectBlock("svc", fmt.Sprintf("organization = %q\nname = \"svc\"", organization))
-	}
-	runProjectLifecycle(t, []tfresource.TestStep{
+	remember, sameID := projectIDKept()
+	providerOrganization := svcProject(api, "team-a")
+	runLifecycleSteps(t, []tfresource.TestStep{
 		{Config: providerOrganization, Check: remember},
 		{
 			PreConfig:        func() { api.rename("team-a", "team-z") },
 			Config:           providerOrganization,
 			ConfigPlanChecks: expectNoChange,
 			Check: tfresource.ComposeTestCheckFunc(
-				tfresource.TestCheckResourceAttr(address, "organization", "team-z"),
-				tfresource.TestCheckResourceAttr(address, "organization_id", "org-team-a"),
-				func(s *terraform.State) error {
-					if got := s.RootModule().Resources[address].Primary.ID; got != projectID {
-						return fmt.Errorf("project ID = %s, want %s", got, projectID)
-					}
-					return nil
-				},
+				tfresource.TestCheckResourceAttr(svcAddress, "organization", "team-z"),
+				tfresource.TestCheckResourceAttr(svcAddress, "organization_id", "org-team-a"),
+				sameID,
 			),
 		},
 		// The old name no longer exists, so a configuration that still has it plans an in-place update that fails.
-		{Config: argument("team-a"), ExpectError: regexp.MustCompile(`(?s)Update project failed.*organization\s+"team-a"\s+does\s+not\s+exist\s+on\s+this\s+instance;\s+if\s+it\s+was\s+renamed,\s+set\s+the\s+new\s+name`)},
-		{Config: argument("team-z"), ConfigPlanChecks: expectNoChange},
+		{Config: svcInOrganization(api, "team-a"), ExpectError: regexp.MustCompile(`(?s)Update project failed.*organization\s+"team-a"\s+does\s+not\s+exist\s+on\s+this\s+instance;\s+if\s+it\s+was\s+renamed,\s+set\s+the\s+new\s+name`)},
+		{Config: svcInOrganization(api, "team-z"), ConfigPlanChecks: expectNoChange},
 	})
 	if api.creates != 1 {
 		t.Errorf("creates = %d, want the rename to keep the project", api.creates)
@@ -499,9 +527,8 @@ func TestLifecycleProjectFollowsAnOrganizationRename(t *testing.T) {
 
 func TestLifecycleProjectFollowsARenameWhenAnotherOrganizationTakesTheOldName(t *testing.T) {
 	api := newOrganizationInstance(t, "team-a")
-	const address = "logfire_project.svc"
-	config := providerBlock(api, "team-a") + projectBlock("svc", "name = \"svc\"")
-	runProjectLifecycle(t, []tfresource.TestStep{
+	config := svcProject(api, "team-a")
+	runLifecycleSteps(t, []tfresource.TestStep{
 		{Config: config},
 		{
 			PreConfig: func() {
@@ -511,8 +538,8 @@ func TestLifecycleProjectFollowsARenameWhenAnotherOrganizationTakesTheOldName(t 
 			Config:           config,
 			ConfigPlanChecks: expectNoChange,
 			Check: tfresource.ComposeTestCheckFunc(
-				tfresource.TestCheckResourceAttr(address, "organization", "team-z"),
-				tfresource.TestCheckResourceAttr(address, "organization_id", "org-team-a"),
+				tfresource.TestCheckResourceAttr(svcAddress, "organization", "team-z"),
+				tfresource.TestCheckResourceAttr(svcAddress, "organization_id", "org-team-a"),
 			),
 		},
 	})
@@ -523,8 +550,8 @@ func TestLifecycleProjectFollowsARenameWhenAnotherOrganizationTakesTheOldName(t 
 
 func TestLifecycleProjectLeavesStateWhenItsOrganizationIsDeleted(t *testing.T) {
 	api := newOrganizationInstance(t, "team-a")
-	config := providerBlock(api, "team-a") + projectBlock("svc", "name = \"svc\"")
-	runProjectLifecycle(t, []tfresource.TestStep{
+	config := svcProject(api, "team-a")
+	runLifecycleSteps(t, []tfresource.TestStep{
 		{Config: config},
 		// The refresh drops the project, so the plan creates it again, and that create fails
 		// because the organization is gone. A project that stayed in state would fail the read instead.
@@ -538,8 +565,8 @@ func TestLifecycleProjectLeavesStateWhenItsOrganizationIsDeleted(t *testing.T) {
 
 func TestLifecycleProjectDeletedOutsideTerraformIsCreatedAgain(t *testing.T) {
 	api := newOrganizationInstance(t, "team-a")
-	config := providerBlock(api, "team-a") + projectBlock("svc", "name = \"svc\"")
-	runProjectLifecycle(t, []tfresource.TestStep{
+	config := svcProject(api, "team-a")
+	runLifecycleSteps(t, []tfresource.TestStep{
 		{Config: config},
 		{
 			PreConfig: func() { clear(api.projects) },
@@ -553,9 +580,9 @@ func TestLifecycleProjectDeletedOutsideTerraformIsCreatedAgain(t *testing.T) {
 
 func TestLifecycleProjectKeepsStateOnAnotherForbiddenAnswer(t *testing.T) {
 	api := newOrganizationInstance(t, "team-a")
-	config := providerBlock(api, "team-a") + projectBlock("svc", "name = \"svc\"")
+	config := svcProject(api, "team-a")
 	setProxy := func(on bool) func() { return func() { api.Lock(); api.proxyForbids = on; api.Unlock() } }
-	runProjectLifecycle(t, []tfresource.TestStep{
+	runLifecycleSteps(t, []tfresource.TestStep{
 		{Config: config},
 		{PreConfig: setProxy(true), Config: config, ExpectError: regexp.MustCompile(`Blocked by proxy`)},
 		{PreConfig: setProxy(false), Config: config, ConfigPlanChecks: expectNoChange},
@@ -574,7 +601,7 @@ func TestAPIKeysRefuseAnOrganization(t *testing.T) {
 		"logfire_gateway_api_key": "name = \"k\"\nproject_id = \"00000000-0000-0000-0000-000000000001\"",
 	} {
 		t.Run(name, func(t *testing.T) {
-			runProjectLifecycle(t, []tfresource.TestStep{{
+			runLifecycleSteps(t, []tfresource.TestStep{{
 				Config:      providerBlock(api, "team-a") + fmt.Sprintf("resource %q \"k\" {\n%s\n}\n", name, body),
 				ExpectError: regexp.MustCompile(`Not available through an organization`),
 			}})
@@ -596,8 +623,8 @@ func TestAPIKeyOperationsRefuseAnOrganization(t *testing.T) {
 		resource.ResourceWithImportState
 	}
 	for name, r := range map[string]keyResource{
-		"logfire_api_key":         &APIKeyResource{client: c},
-		"logfire_gateway_api_key": &GatewayAPIKeyResource{client: c},
+		"logfire_api_key":         &APIKeyResource{configured{c}},
+		"logfire_gateway_api_key": &GatewayAPIKeyResource{configured{c}},
 	} {
 		ops := map[string]func() diag.Diagnostics{
 			"create": func() diag.Diagnostics {
@@ -639,15 +666,14 @@ func TestAPIKeyOperationsRefuseAnOrganization(t *testing.T) {
 
 func TestLifecycleProjectWithoutOrganizationUsesTheKey(t *testing.T) {
 	api := newOrganizationInstance(t)
-	config := providerBlock(api, "") + projectBlock("svc", "name = \"svc\"")
-	const address = "logfire_project.svc"
-	runProjectLifecycle(t, []tfresource.TestStep{
+	config := svcProject(api, "")
+	runLifecycleSteps(t, []tfresource.TestStep{
 		{Config: config, Check: tfresource.ComposeTestCheckFunc(
-			tfresource.TestCheckResourceAttr(address, "organization", "admin"),
-			tfresource.TestCheckNoResourceAttr(address, "organization_id"),
+			tfresource.TestCheckResourceAttr(svcAddress, "organization", "admin"),
+			tfresource.TestCheckNoResourceAttr(svcAddress, "organization_id"),
 		)},
 		{Config: config, ConfigPlanChecks: expectNoChange},
-		{Config: config, ResourceName: address, ImportState: true, ImportStateId: "admin/svc", ImportStateVerify: true},
+		{Config: config, ResourceName: svcAddress, ImportState: true, ImportStateId: "admin/svc", ImportStateVerify: true},
 	})
 	if api.exchanges != 0 {
 		t.Errorf("a provider without an organization made %d token exchanges", api.exchanges)
@@ -658,13 +684,12 @@ func TestProjectOrganizationNamesAreValidated(t *testing.T) {
 	api := newOrganizationInstance(t)
 	for name, tc := range map[string]struct{ config, want string }{
 		"resource": {providerBlock(api, "") + projectBlock("svc", "organization = \"team-a/\"\nname = \"svc\""), "lowercase letters"},
-		"provider": {providerBlock(api, "team-a/") + projectBlock("svc", "name = \"svc\""), "not an organization name"},
+		"provider": {svcProject(api, "team-a/"), "not an organization name"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			tfresource.Test(t, tfresource.TestCase{
-				IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-				Steps: []tfresource.TestStep{{Config: tc.config, PlanOnly: true, ExpectError: regexp.MustCompile(tc.want)}},
-			})
+			runLifecycleSteps(t, []tfresource.TestStep{{
+				Config: tc.config, PlanOnly: true, ExpectError: regexp.MustCompile(tc.want),
+			}})
 		})
 	}
 }
@@ -675,31 +700,9 @@ func TestProjectOrganizationNamesAreValidated(t *testing.T) {
 func TestProjectPlanReplacesOnlyForAnotherKnownOrganization(t *testing.T) {
 	api := newOrganizationInstance(t, "team-a", "team-b")
 	api.rename("team-a", "team-renamed")
-	client, err := logclient.NewAPIClient(api.URL, testAPIKey, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := &ProjectResource{client: client}
-	var schemaResponse resource.SchemaResponse
-	r.Schema(t.Context(), resource.SchemaRequest{}, &schemaResponse)
-	schema := schemaResponse.Schema
-	state := func(organization, organizationID types.String) tfsdk.State {
-		s := tfsdk.State{Schema: schema, Raw: tftypes.NewValue(schema.Type().TerraformType(t.Context()), nil)}
-		if diags := s.Set(t.Context(), &ProjectModel{
-			ID: types.StringValue("project-1"), Organization: organization, OrganizationID: organizationID,
-			Name: types.StringValue("svc"), Description: types.StringNull(), Visibility: types.StringValue("public"),
-		}); diags.HasError() {
-			t.Fatal(diags)
-		}
-		return s
-	}
-	plan := func(organization types.String) tfsdk.Plan {
-		return tfsdk.Plan{Schema: schema, Raw: state(organization, types.StringUnknown()).Raw}
-	}
 	for name, tc := range map[string]struct {
 		planned     types.String
 		wantReplace bool
-		wantError   string
 	}{
 		"same organization under its new name": {planned: types.StringValue("team-renamed")},
 		"another organization":                 {planned: types.StringValue("team-b"), wantReplace: true},
@@ -707,16 +710,8 @@ func TestProjectPlanReplacesOnlyForAnotherKnownOrganization(t *testing.T) {
 		"a name no organization has":           {planned: types.StringValue("nobody")},
 	} {
 		t.Run(name, func(t *testing.T) {
-			response := resource.ModifyPlanResponse{Plan: plan(tc.planned)}
-			r.ModifyPlan(t.Context(), resource.ModifyPlanRequest{
-				State: state(types.StringValue("team-a"), types.StringValue("org-team-a")), Plan: plan(tc.planned),
-			}, &response)
-			if tc.wantError != "" {
-				if !response.Diagnostics.HasError() || !strings.Contains(fmt.Sprint(response.Diagnostics), tc.wantError) {
-					t.Fatalf("diagnostics = %v, want %q", response.Diagnostics, tc.wantError)
-				}
-				return
-			}
+			state := projectModel(types.StringValue("team-a"), types.StringValue("org-team-a"))
+			response := modifyProjectPlan(t, api, state, projectModel(tc.planned, types.StringUnknown()))
 			if response.Diagnostics.HasError() {
 				t.Fatal(response.Diagnostics)
 			}
@@ -736,24 +731,15 @@ func TestLifecycleProjectFollowsAManagedOrganizationRename(t *testing.T) {
 			fmt.Sprintf("resource \"logfire_organization\" \"team\" {\nname = %q\ndeletion_protection = false\n}\n", name) +
 			projectBlock("svc", "organization = logfire_organization.team.name\nname = \"svc\"")
 	}
-	const address = "logfire_project.svc"
-	var projectID string
-	runProjectLifecycle(t, []tfresource.TestStep{
-		{Config: config("team-a"), Check: func(s *terraform.State) error {
-			projectID = s.RootModule().Resources[address].Primary.ID
-			return nil
-		}},
+	remember, sameID := projectIDKept()
+	runLifecycleSteps(t, []tfresource.TestStep{
+		{Config: config("team-a"), Check: remember},
 		{
 			Config:           config("team-z"),
-			ConfigPlanChecks: expectPlan(address, plancheck.ResourceActionUpdate),
+			ConfigPlanChecks: expectPlan(svcAddress, plancheck.ResourceActionUpdate),
 			Check: tfresource.ComposeTestCheckFunc(
-				tfresource.TestCheckResourceAttr(address, "organization", "team-z"),
-				func(s *terraform.State) error {
-					if got := s.RootModule().Resources[address].Primary.ID; got != projectID {
-						return fmt.Errorf("project ID = %s, want %s", got, projectID)
-					}
-					return nil
-				},
+				tfresource.TestCheckResourceAttr(svcAddress, "organization", "team-z"),
+				sameID,
 			),
 		},
 		{Config: config("team-z"), ConfigPlanChecks: expectNoChange},
@@ -764,50 +750,58 @@ func TestLifecycleProjectFollowsAManagedOrganizationRename(t *testing.T) {
 }
 
 func TestProjectImportReportsTheFailureOfTheTargetOrganization(t *testing.T) {
-	t.Run("a key without instance:admin cannot reach another organization", func(t *testing.T) {
-		api := newOrganizationInstance(t, "team-b")
-		api.exchangeNeedsAdmin = true
-		runProjectLifecycle(t, []tfresource.TestStep{{
-			Config:        providerBlock(api, "") + projectBlock("svc", "name = \"svc\""),
-			ResourceName:  "logfire_project.svc",
-			ImportState:   true,
-			ImportStateId: "team-b/svc",
-			ExpectError:   regexp.MustCompile(`"team-b"\s+is\s+another\s+organization,\s+an\s+instance-admin\s+key\s+is\s+needed`),
-		}})
-	})
-	t.Run("a project missing from the key's own organization is not blamed on the key", func(t *testing.T) {
-		api := newOrganizationInstance(t)
-		api.exchangeNeedsAdmin = true
-		runProjectLifecycle(t, []tfresource.TestStep{{
-			Config:        providerBlock(api, "") + projectBlock("svc", "name = \"svc\""),
-			ResourceName:  "logfire_project.svc",
-			ImportState:   true,
-			ImportStateId: "admin/missing",
-			ExpectError: regexp.MustCompile(
-				`(?s)project\s+"missing"\s+was\s+not\s+found\s+with\s+this\s+key;\s+if\s+"admin"\s+is\s+another\s+organization,\s+an\s+instance-admin\s+key\s+is\s+needed`),
-		}})
-	})
-	t.Run("a shorthand import keeps the own list's error", func(t *testing.T) {
-		api := newOrganizationInstance(t, "team-b")
-		api.exchangeNeedsAdmin = true
-		api.projectListRefused = true
-		runProjectLifecycle(t, []tfresource.TestStep{{
-			Config:        providerBlock(api, "") + projectBlock("svc", "name = \"svc\""),
-			ResourceName:  "logfire_project.svc",
-			ImportState:   true,
-			ImportStateId: "team-b/svc",
-			ExpectError:   regexp.MustCompile(`(?s)project:read.*instance-admin`),
-		}})
-	})
-	t.Run("a bare import reports a failed project list", func(t *testing.T) {
-		api := newOrganizationInstance(t, "team-b")
-		api.projectListRefused = true
-		runProjectLifecycle(t, []tfresource.TestStep{{
-			Config:        providerBlock(api, "team-b") + projectBlock("svc", "name = \"svc\""),
-			ResourceName:  "logfire_project.svc",
-			ImportState:   true,
-			ImportStateId: "svc",
-			ExpectError:   regexp.MustCompile(`project:read`),
-		}})
-	})
+	tests := []struct {
+		name                 string
+		organizations        []string
+		providerOrganization string
+		exchangeNeedsAdmin   bool
+		projectListRefused   bool
+		importID             string
+		wantErr              string
+	}{
+		{
+			name:               "a key without instance:admin cannot reach another organization",
+			organizations:      []string{"team-b"},
+			exchangeNeedsAdmin: true,
+			importID:           "team-b/svc",
+			wantErr:            `"team-b"\s+is\s+another\s+organization,\s+an\s+instance-admin\s+key\s+is\s+needed`,
+		},
+		{
+			name:               "a project missing from the key's own organization is not blamed on the key",
+			exchangeNeedsAdmin: true,
+			importID:           "admin/missing",
+			wantErr:            `(?s)project\s+"missing"\s+was\s+not\s+found\s+with\s+this\s+key;\s+if\s+"admin"\s+is\s+another\s+organization,\s+an\s+instance-admin\s+key\s+is\s+needed`,
+		},
+		{
+			name:               "a shorthand import keeps the own list's error",
+			organizations:      []string{"team-b"},
+			exchangeNeedsAdmin: true,
+			projectListRefused: true,
+			importID:           "team-b/svc",
+			wantErr:            `(?s)project:read.*instance-admin`,
+		},
+		{
+			name:                 "a bare import reports a failed project list",
+			organizations:        []string{"team-b"},
+			providerOrganization: "team-b",
+			projectListRefused:   true,
+			importID:             "svc",
+			wantErr:              `project:read`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := newOrganizationInstance(t, tt.organizations...)
+			api.exchangeNeedsAdmin = tt.exchangeNeedsAdmin
+			api.projectListRefused = tt.projectListRefused
+			runLifecycleSteps(t, []tfresource.TestStep{{
+				Config:        svcProject(api, tt.providerOrganization),
+				ResourceName:  svcAddress,
+				ImportState:   true,
+				ImportStateId: tt.importID,
+				ExpectError:   regexp.MustCompile(tt.wantErr),
+			}})
+		})
+	}
 }

@@ -5,126 +5,85 @@ package provider
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
 )
 
 func TestAlertModelToCreate_DescriptionAndActive(t *testing.T) {
 	t.Parallel()
 
-	channelSet := testChannelAssignments(t, logclient.ChannelAssignment{ChannelID: "channel-1"})
-
-	base := AlertModel{
-		Name:               types.StringValue("name"),
-		Query:              types.StringValue("select 1"),
-		TimeWindow:         newAlertDurationValue("5m"),
-		Frequency:          newAlertDurationValue("5m"),
-		ChannelAssignments: channelSet,
-		NotifyWhen:         types.StringValue("has_matches"),
+	cases := []struct {
+		name        string
+		description types.String
+		active      types.Bool
+		wantActive  *bool
+	}{
+		{
+			name:        "uses empty description string when null",
+			description: types.StringNull(),
+			active:      types.BoolNull(),
+			wantActive:  nil,
+		},
+		{
+			name:        "preserves empty description and false active",
+			description: types.StringValue(""),
+			active:      types.BoolValue(false),
+			wantActive:  new(false),
+		},
 	}
 
-	t.Run("uses empty description string when null", func(t *testing.T) {
-		t.Parallel()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-		m := base
-		m.Description = types.StringNull()
-		m.Active = types.BoolNull()
+			m := environmentsBaseModel(t)
+			m.Description = tc.description
+			m.Active = tc.active
 
-		create, gotDiags := alertModelToCreate(context.Background(), &m)
-		if gotDiags.HasError() {
-			t.Fatalf("unexpected diagnostics: %v", gotDiags)
-		}
-		if create.Description == nil || *create.Description != "" {
-			t.Fatalf("expected empty description pointer, got %#v", create.Description)
-		}
-		if create.Active != nil {
-			t.Fatalf("expected nil active, got %v", *create.Active)
-		}
-	})
-
-	t.Run("preserves empty description and false active", func(t *testing.T) {
-		t.Parallel()
-
-		m := base
-		m.Description = types.StringValue("")
-		m.Active = types.BoolValue(false)
-
-		create, gotDiags := alertModelToCreate(context.Background(), &m)
-		if gotDiags.HasError() {
-			t.Fatalf("unexpected diagnostics: %v", gotDiags)
-		}
-		if create.Description == nil || *create.Description != "" {
-			t.Fatalf("expected empty description pointer, got %#v", create.Description)
-		}
-		if create.Active == nil || *create.Active {
-			t.Fatalf("expected active=false pointer, got %#v", create.Active)
-		}
-	})
+			create, gotDiags := alertModelToCreate(context.Background(), &m)
+			if gotDiags.HasError() {
+				t.Fatalf("unexpected diagnostics: %v", gotDiags)
+			}
+			if create.Description == nil || *create.Description != "" {
+				t.Fatalf("expected empty description pointer, got %#v", create.Description)
+			}
+			if !reflect.DeepEqual(create.Active, tc.wantActive) {
+				t.Fatalf("active = %v, want %v", create.Active, tc.wantActive)
+			}
+		})
+	}
 }
 
 func TestAlertReadToModel_DescriptionAndActive(t *testing.T) {
 	t.Parallel()
 
-	t.Run("keeps empty description string", func(t *testing.T) {
-		t.Parallel()
+	cases := []struct {
+		name  string
+		prior types.String
+	}{
+		{name: "keeps empty description string", prior: types.StringValue("")},
+		{name: "keeps omitted empty description null", prior: types.StringNull()},
+	}
 
-		empty := ""
-		read := &logclient.AlertRead{
-			ID:          "id-1",
-			ProjectID:   "proj-1",
-			Name:        "name",
-			Description: &empty,
-			Query:       "select 1",
-			TimeWindow:  "PT5M",
-			Frequency:   "PT5M",
-			Watermark:   "PT10S",
-			Channels:    []logclient.AlertChannelRead{},
-			NotifyWhen:  "has_matches",
-			Active:      false,
-		}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-		var got AlertModel
-		got.Description = types.StringValue("")
-		diags := alertReadToModel(context.Background(), read, &got)
-		if diags.HasError() {
-			t.Fatalf("unexpected diagnostics: %v", diags)
-		}
-		if got.Description.IsNull() || got.Description.ValueString() != "" {
-			t.Fatalf("expected empty string description, got %#v", got.Description)
-		}
-		if got.Active.IsNull() || got.Active.ValueBool() {
-			t.Fatalf("expected active=false, got %#v", got.Active)
-		}
-	})
-
-	t.Run("keeps omitted empty description null", func(t *testing.T) {
-		t.Parallel()
-
-		empty := ""
-		read := &logclient.AlertRead{
-			ID:          "id-1",
-			ProjectID:   "proj-1",
-			Name:        "name",
-			Description: &empty,
-			Query:       "select 1",
-			TimeWindow:  "PT5M",
-			Frequency:   "PT5M",
-			Watermark:   "PT10S",
-			Channels:    []logclient.AlertChannelRead{},
-			NotifyWhen:  "has_matches",
-			Active:      false,
-		}
-
-		var got AlertModel
-		got.Description = types.StringNull()
-		diags := alertReadToModel(context.Background(), read, &got)
-		if diags.HasError() {
-			t.Fatalf("unexpected diagnostics: %v", diags)
-		}
-		if !got.Description.IsNull() {
-			t.Fatalf("expected null description, got %#v", got.Description)
-		}
-	})
+			read := testAlertRead()
+			read.Description = new("")
+			read.Active = false
+			got := AlertModel{Description: tc.prior}
+			if diags := alertReadToModel(context.Background(), read, &got); diags.HasError() {
+				t.Fatalf("unexpected diagnostics: %v", diags)
+			}
+			if !got.Description.Equal(tc.prior) {
+				t.Fatalf("description = %#v, want %#v", got.Description, tc.prior)
+			}
+			if got.Active.IsNull() || got.Active.ValueBool() {
+				t.Fatalf("expected active=false, got %#v", got.Active)
+			}
+		})
+	}
 }

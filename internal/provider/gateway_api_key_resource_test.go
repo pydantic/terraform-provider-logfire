@@ -12,12 +12,12 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/statecheck"
-	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 )
 
 func TestAccGatewayAPIKeyResource(t *testing.T) {
 	t.Parallel()
 
+	const address = "logfire_gateway_api_key.test"
 	projectID := testAccScopedProjectID(t)
 	keyName := fmt.Sprintf("acc-gw-%s", acctest.RandStringFromCharSet(6, acctest.CharSetAlphaNum))
 
@@ -28,33 +28,29 @@ func TestAccGatewayAPIKeyResource(t *testing.T) {
 			{
 				Config: testAccGatewayAPIKeyResourceConfig(projectID, keyName, "10", "false"),
 				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue("logfire_gateway_api_key.test", tfjsonpath.New("id"), knownvalue.NotNull()),
-					statecheck.ExpectKnownValue("logfire_gateway_api_key.test", tfjsonpath.New("token"), knownvalue.NotNull()),
-					statecheck.ExpectKnownValue("logfire_gateway_api_key.test", tfjsonpath.New("active"), knownvalue.Bool(true)),
-					statecheck.ExpectKnownValue("logfire_gateway_api_key.test", tfjsonpath.New("spending_limit_daily"), knownvalue.Int64Exact(10)),
+					expectAccValue(address, "id", knownvalue.NotNull()),
+					expectAccValue(address, "token", knownvalue.NotNull()),
+					expectAccValue(address, "active", knownvalue.Bool(true)),
+					expectAccValue(address, "spending_limit_daily", knownvalue.Int64Exact(10)),
 				},
 			},
 			{
 				// Spend caps update in place.
 				Config: testAccGatewayAPIKeyResourceConfig(projectID, keyName, "25", "true"),
-				ConfigPlanChecks: resource.ConfigPlanChecks{
-					PreApply: []plancheck.PlanCheck{
-						plancheck.ExpectResourceAction("logfire_gateway_api_key.test", plancheck.ResourceActionUpdate),
-					},
-				},
+				ConfigPlanChecks: accPreApply(
+					plancheck.ExpectResourceAction(address, plancheck.ResourceActionUpdate),
+				),
 				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue("logfire_gateway_api_key.test", tfjsonpath.New("spending_limit_daily"), knownvalue.Int64Exact(25)),
-					statecheck.ExpectKnownValue("logfire_gateway_api_key.test", tfjsonpath.New("cache_enabled"), knownvalue.Bool(true)),
+					expectAccValue(address, "spending_limit_daily", knownvalue.Int64Exact(25)),
+					expectAccValue(address, "cache_enabled", knownvalue.Bool(true)),
 				},
 			},
 			{
 				// Import recovers the key without the create-only token.
-				ResourceName:      "logfire_gateway_api_key.test",
-				ImportState:       true,
-				ImportStateVerify: true,
-				ImportStateVerifyIgnore: []string{
-					"token",
-				},
+				ResourceName:            address,
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"token"},
 			},
 		},
 	})

@@ -98,6 +98,10 @@ func (in *exchangeInstance) record(r *http.Request) {
 	in.seenAuth = append(in.seenAuth, r.URL.Path+" "+r.Header.Get("Authorization"))
 }
 
+func (in *exchangeInstance) failFirstExchange(status int, body string) {
+	in.exchangeStatus, in.exchangeBody = []int{status}, body
+}
+
 func (in *exchangeInstance) exchangeCount(organization string) int {
 	in.mu.Lock()
 	defer in.mu.Unlock()
@@ -152,13 +156,11 @@ func TestConcurrentRequestsShareOneExchangePerOrganization(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := range 40 {
 		organization := []string{"team-a", "team-b"}[i%2]
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			if _, err := base.ForOrganization(organization).ListProjects(t.Context()); err != nil {
 				t.Error(err)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	for _, organization := range []string{"team-a", "team-b"} {
@@ -183,13 +185,11 @@ func TestRejectedTokenIsReplacedOnce(t *testing.T) {
 	in.rejectToken.Store(in.URL + "/team-a#1")
 	var wg sync.WaitGroup
 	for range 10 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			if _, err := c.ListProjects(t.Context()); err != nil {
 				t.Error(err)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	if got := in.exchangeCount("team-a"); got != 2 {
@@ -207,19 +207,16 @@ func TestRejectedTokenIsReplacedOnce(t *testing.T) {
 	}
 }
 
-func retryingClient(t *testing.T, in *exchangeInstance) *APIClient {
-	t.Helper()
-	return in.client(t, &http.Client{Transport: &retryingTransport{
-		next: http.DefaultTransport, maxAttempts: defaultRetryMaxAttempts, baseDelay: time.Millisecond, maxDelay: 2 * time.Millisecond,
-	}})
-}
-
 func TestCreateWaitsForAnExchangeThatRetries(t *testing.T) {
 	t.Parallel()
 	in := newExchangeInstance(t)
-	in.exchangeStatus = []int{http.StatusServiceUnavailable}
-	in.exchangeBody = `unavailable`
-	c := retryingClient(t, in).ForOrganization("team-a")
+	in.failFirstExchange(http.StatusServiceUnavailable, `unavailable`)
+	c := in.client(t, &http.Client{Transport: &retryingTransport{
+		next:        http.DefaultTransport,
+		maxAttempts: defaultRetryMaxAttempts,
+		baseDelay:   time.Millisecond,
+		maxDelay:    2 * time.Millisecond,
+	}}).ForOrganization("team-a")
 	if _, err := c.CreateProject(t.Context(), ProjectCreate{ProjectName: "svc"}); err != nil {
 		t.Fatalf("a create must survive a retryable exchange failure: %v", err)
 	}
@@ -231,8 +228,7 @@ func TestCreateWaitsForAnExchangeThatRetries(t *testing.T) {
 func TestExchangeDropsExpiresInWhenTheInstanceCapsTheLifetime(t *testing.T) {
 	t.Parallel()
 	in := newExchangeInstance(t)
-	in.exchangeStatus = []int{http.StatusBadRequest}
-	in.exchangeBody = `{"error":"invalid_request","error_description":"expires_in 900 exceeds the maximum of 600"}`
+	in.failFirstExchange(http.StatusBadRequest, `{"error":"invalid_request","error_description":"expires_in 900 exceeds the maximum of 600"}`)
 	if _, err := in.client(t, nil).ForOrganization("team-a").ListProjects(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -246,69 +242,85 @@ func TestExchangeDropsExpiresInWhenTheInstanceCapsTheLifetime(t *testing.T) {
 
 func TestExchangeFailures(t *testing.T) {
 	t.Parallel()
-	t.Run("endpoint missing", func(t *testing.T) {
-		t.Parallel()
-		in := newExchangeInstance(t)
-		in.exchangeStatus, in.exchangeBody = []int{http.StatusNotFound}, `{"detail":"Not Found"}`
-		_, err := in.client(t, nil).ForOrganization("team-a").ListProjects(t.Context())
-		var unavailable *EndpointUnavailableError
-		if !errors.As(err, &unavailable) || unavailable.MinimumRelease != tokenExchangeMinimumRelease {
-			t.Fatalf("err = %v, want the endpoint to be reported missing", err)
-		}
-		if IsNotFoundError(err) {
-			t.Fatal("a missing token endpoint must never read as a resource that is not found")
-		}
-	})
-	t.Run("key without instance:admin", func(t *testing.T) {
-		t.Parallel()
-		in := newExchangeInstance(t)
-		in.exchangeStatus = []int{http.StatusBadRequest}
-		in.exchangeBody = `{"error":"invalid_scope","error_description":"subject_token must include instance:admin"}`
-		_, err := in.client(t, nil).ForOrganization("team-a").ListProjects(t.Context())
-		var adminErr *InstanceAdminRequiredError
-		if !errors.As(err, &adminErr) || !strings.Contains(err.Error(), "instance-admin API key") {
-			t.Fatalf("err = %v, want InstanceAdminRequiredError", err)
-		}
-	})
-	t.Run("audience outside the base URL keeps the server text", func(t *testing.T) {
-		t.Parallel()
-		in := newExchangeInstance(t)
-		in.exchangeStatus = []int{http.StatusBadRequest}
-		in.exchangeBody = `{"error":"invalid_target","error_description":"audience does not match the configured OIDC base URL"}`
-		_, err := in.client(t, nil).ForOrganization("team-a").ListProjects(t.Context())
-		if !IsInvalidTargetError(err) {
-			t.Fatalf("err = %v, want invalid_target", err)
-		}
-		var unknown *UnknownOrganizationError
-		if errors.As(err, &unknown) || !strings.Contains(err.Error(), "audience does not match the configured OIDC base URL") {
-			t.Fatalf("err = %q, want the server's base URL message", err)
-		}
-	})
-	t.Run("unknown organization from a path in the base URL keeps the server text", func(t *testing.T) {
-		t.Parallel()
-		in := newExchangeInstance(t)
-		in.exchangeStatus = []int{http.StatusBadRequest}
-		in.exchangeBody = `{"error":"invalid_target","error_description":"unknown organization: 'wrong'"}`
-		_, err := in.client(t, nil).ForOrganization("team-a").ListProjects(t.Context())
-		var unknown *UnknownOrganizationError
-		if errors.As(err, &unknown) || !strings.Contains(err.Error(), "unknown organization: 'wrong'") {
-			t.Fatalf("err = %q, want the server's message", err)
-		}
-	})
-	t.Run("unknown organization", func(t *testing.T) {
-		t.Parallel()
-		in := newExchangeInstance(t)
-		in.exchangeStatus = []int{http.StatusBadRequest}
-		in.exchangeBody = `{"error":"invalid_target","error_description":"unknown organization: 'team-a'"}`
-		_, err := in.client(t, nil).ForOrganization("team-a").ListProjects(t.Context())
-		if !IsInvalidTargetError(err) {
-			t.Fatalf("err = %v, want invalid_target", err)
-		}
-		const want = `organization "team-a" does not exist on this instance; if it was renamed, set the new name`
-		if err.Error() != want {
-			t.Fatalf("err = %q, want %q", err, want)
-		}
-	})
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+		check  func(*testing.T, error)
+	}{
+		{
+			name:   "endpoint missing",
+			status: http.StatusNotFound,
+			body:   `{"detail":"Not Found"}`,
+			check: func(t *testing.T, err error) {
+				var unavailable *EndpointUnavailableError
+				if !errors.As(err, &unavailable) || unavailable.MinimumRelease != tokenExchangeMinimumRelease {
+					t.Fatalf("err = %v, want the endpoint to be reported missing", err)
+				}
+				if IsNotFoundError(err) {
+					t.Fatal("a missing token endpoint must never read as a resource that is not found")
+				}
+			},
+		},
+		{
+			name:   "key without instance:admin",
+			status: http.StatusBadRequest,
+			body:   `{"error":"invalid_scope","error_description":"subject_token must include instance:admin"}`,
+			check: func(t *testing.T, err error) {
+				var adminErr *InstanceAdminRequiredError
+				if !errors.As(err, &adminErr) || !strings.Contains(err.Error(), "instance-admin API key") {
+					t.Fatalf("err = %v, want InstanceAdminRequiredError", err)
+				}
+			},
+		},
+		{
+			name:   "audience outside the base URL keeps the server text",
+			status: http.StatusBadRequest,
+			body:   `{"error":"invalid_target","error_description":"audience does not match the configured OIDC base URL"}`,
+			check: func(t *testing.T, err error) {
+				if !IsInvalidTargetError(err) {
+					t.Fatalf("err = %v, want invalid_target", err)
+				}
+				var unknown *UnknownOrganizationError
+				if errors.As(err, &unknown) || !strings.Contains(err.Error(), "audience does not match the configured OIDC base URL") {
+					t.Fatalf("err = %q, want the server's base URL message", err)
+				}
+			},
+		},
+		{
+			name:   "unknown organization from a path in the base URL keeps the server text",
+			status: http.StatusBadRequest,
+			body:   `{"error":"invalid_target","error_description":"unknown organization: 'wrong'"}`,
+			check: func(t *testing.T, err error) {
+				var unknown *UnknownOrganizationError
+				if errors.As(err, &unknown) || !strings.Contains(err.Error(), "unknown organization: 'wrong'") {
+					t.Fatalf("err = %q, want the server's message", err)
+				}
+			},
+		},
+		{
+			name:   "unknown organization",
+			status: http.StatusBadRequest,
+			body:   `{"error":"invalid_target","error_description":"unknown organization: 'team-a'"}`,
+			check: func(t *testing.T, err error) {
+				if !IsInvalidTargetError(err) {
+					t.Fatalf("err = %v, want invalid_target", err)
+				}
+				const want = `organization "team-a" does not exist on this instance; if it was renamed, set the new name`
+				if err.Error() != want {
+					t.Fatalf("err = %q, want %q", err, want)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			in := newExchangeInstance(t)
+			in.failFirstExchange(tc.status, tc.body)
+			_, err := in.client(t, nil).ForOrganization("team-a").ListProjects(t.Context())
+			tc.check(t, err)
+		})
+	}
 }
 
 // A token stays bound to the organization it was exchanged for. After a rename

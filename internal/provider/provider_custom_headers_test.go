@@ -41,49 +41,54 @@ func TestCustomHeadersFromConfigTreatsNullAsEmpty(t *testing.T) {
 	}
 }
 
-func TestCustomHeadersFromConfigRejectsReservedHeadersCaseInsensitively(t *testing.T) {
+func TestCustomHeadersFromConfigRejectsInvalidHeaders(t *testing.T) {
 	t.Parallel()
 
-	_, diags := customHeadersFromConfig(context.Background(), customHeadersMap(t, map[string]string{
-		"authorization": "secret",
-	}))
-	assertDiagnosticsContain(t, diags, "Reserved custom header")
-}
+	tests := []struct {
+		name    string
+		headers map[string]string
+		want    string
+	}{
+		{
+			name:    "reserved header, case-insensitively",
+			headers: map[string]string{"authorization": "secret"},
+			want:    "Reserved custom header",
+		},
+		{
+			name:    "empty header name",
+			headers: map[string]string{"": "secret"},
+			want:    "must not be empty",
+		},
+		{
+			name:    "invalid header name",
+			headers: map[string]string{"Invalid Header": "secret"},
+			want:    "not a valid HTTP header name",
+		},
+		{
+			name:    "empty header value",
+			headers: map[string]string{"Example-Header": ""},
+			want:    "must not have an empty value",
+		},
+		{
+			name:    "invalid header value",
+			headers: map[string]string{"Example-Header": "bad\nvalue"},
+			want:    "not a valid HTTP header value",
+		},
+	}
 
-func TestCustomHeadersFromConfigRejectsEmptyHeaderNames(t *testing.T) {
-	t.Parallel()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	_, diags := customHeadersFromConfig(context.Background(), customHeadersMap(t, map[string]string{
-		"": "secret",
-	}))
-	assertDiagnosticsContain(t, diags, "must not be empty")
-}
-
-func TestCustomHeadersFromConfigRejectsInvalidHeaderNames(t *testing.T) {
-	t.Parallel()
-
-	_, diags := customHeadersFromConfig(context.Background(), customHeadersMap(t, map[string]string{
-		"Invalid Header": "secret",
-	}))
-	assertDiagnosticsContain(t, diags, "not a valid HTTP header name")
-}
-
-func TestCustomHeadersFromConfigRejectsEmptyHeaderValues(t *testing.T) {
-	t.Parallel()
-
-	_, diags := customHeadersFromConfig(context.Background(), customHeadersMap(t, map[string]string{
-		"Example-Header": "",
-	}))
-	assertDiagnosticsContain(t, diags, "must not have an empty value")
-}
-
-func TestCustomHeadersFromConfigRejectsInvalidHeaderValues(t *testing.T) {
-	t.Parallel()
-
-	_, diags := customHeadersFromConfig(context.Background(), customHeadersMap(t, map[string]string{
-		"Example-Header": "bad\nvalue",
-	}))
-	assertDiagnosticsContain(t, diags, "not a valid HTTP header value")
+			_, diags := customHeadersFromConfig(context.Background(), customHeadersMap(t, tt.headers))
+			if !diags.HasError() {
+				t.Fatalf("expected error diagnostics containing %q, got none", tt.want)
+			}
+			if got := diagnosticsString(diags); !strings.Contains(got, tt.want) {
+				t.Fatalf("diagnostics = %q, want substring %q", got, tt.want)
+			}
+		})
+	}
 }
 
 func TestCustomHeadersSchemaIsSensitive(t *testing.T) {
@@ -120,18 +125,6 @@ func customHeadersMap(t *testing.T, values map[string]string) types.Map {
 		elements[name] = types.StringValue(value)
 	}
 	return types.MapValueMust(types.StringType, elements)
-}
-
-func assertDiagnosticsContain(t *testing.T, diags diag.Diagnostics, want string) {
-	t.Helper()
-
-	if !diags.HasError() {
-		t.Fatalf("expected error diagnostics containing %q, got none", want)
-	}
-	got := diagnosticsString(diags)
-	if !strings.Contains(got, want) {
-		t.Fatalf("diagnostics = %q, want substring %q", got, want)
-	}
 }
 
 func diagnosticsString(diags diag.Diagnostics) string {

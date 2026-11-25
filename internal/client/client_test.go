@@ -8,18 +8,68 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
-func TestConflictErrorClassification(t *testing.T) {
-	t.Parallel()
-	if !IsConflictError(&APIError{StatusCode: http.StatusConflict}) {
-		t.Fatal("409 must be classified as a conflict")
+func stubResponse(req *http.Request, status int, body string) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Request:    req,
 	}
-	if IsConflictError(errors.New("other")) {
-		t.Fatal("non-API error must not be classified as a conflict")
+}
+
+func newStubClient(t *testing.T, transport roundTripFunc) *APIClient {
+	t.Helper()
+	c, err := NewAPIClient("https://example.invalid", "admin-key", &http.Client{Transport: transport})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func newServerClient(t *testing.T, handler http.HandlerFunc) *APIClient {
+	t.Helper()
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	c, err := NewAPIClient(server.URL, "test", server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func requireRequest(t *testing.T, req *http.Request, method, path string) {
+	t.Helper()
+	if req.Method != method || req.URL.Path != path {
+		t.Errorf("request = %s %s, want %s %s", req.Method, req.URL.Path, method, path)
+	}
+}
+
+func TestErrorClassification(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		is   func(error) bool
+		err  error
+		want bool
+	}{
+		{"409 is a conflict", IsConflictError, &APIError{StatusCode: http.StatusConflict}, true},
+		{"non-API error is not a conflict", IsConflictError, errors.New("other"), false},
+		{"404 is not found", IsNotFoundError, &APIError{StatusCode: http.StatusNotFound}, true},
+		{"500 is not a not-found", IsNotFoundError, &APIError{StatusCode: http.StatusInternalServerError}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.is(tc.err); got != tc.want {
+				t.Fatalf("classified %v as %v, want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -110,36 +160,87 @@ func (rt *recordingTransport) RoundTrip(req *http.Request) (*http.Response, erro
 
 	rt.attempts++
 	if rt.attempts == 1 {
-		return &http.Response{
-			StatusCode: http.StatusTooManyRequests,
-			Header: http.Header{
-				"Retry-After": []string{"0"},
-			},
-			Body:    io.NopCloser(strings.NewReader("rate limited")),
-			Request: req,
-		}, nil
+		resp := stubResponse(req, http.StatusTooManyRequests, "rate limited")
+		resp.Header.Set("Retry-After", "0")
+		return resp, nil
 	}
-
-	return &http.Response{
-		StatusCode: http.StatusOK,
-		Header:     make(http.Header),
-		Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
-		Request:    req,
-	}, nil
+	return stubResponse(req, http.StatusOK, `{"ok":true}`), nil
 }
 
-func TestCreateScheduleIsNotAutomaticallyRetried(t *testing.T) {
+func TestCreatesAreNotAutomaticallyRetried(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
+	for name, call := range map[string]func(*APIClient) error{
+		"schedule": func(c *APIClient) error {
+			_, err := c.CreateSchedule(ctx, ScheduleCreate{Label: "office hours", Timezone: "UTC"})
+			return err
+		},
+		"frontend application": func(c *APIClient) error {
+			_, err := c.CreateFrontendApplication(ctx, "project-id", FrontendApplicationCreate{Name: "browser"})
+			return err
+		},
+		"frontend application token": func(c *APIClient) error {
+			_, err := c.CreateFrontendApplicationToken(ctx, "project-id", "app-id")
+			return err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			attempts := 0
+			c, err := NewAPIClient("https://example.com", "test", &http.Client{Transport: &retryingTransport{
+				maxAttempts: 3,
+				next: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+					attempts++
+					if attempts > 1 {
+						return stubResponse(req, http.StatusCreated, ""), nil
+					}
+					resp := stubResponse(req, http.StatusServiceUnavailable, "")
+					resp.Header.Set("Retry-After", "0")
+					return resp, nil
+				}),
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := call(c); err == nil {
+				t.Fatal("expected the first 503 response to be returned")
+			}
+			if attempts != 1 {
+				t.Fatalf("create request attempts = %d; want 1", attempts)
+			}
+		})
+	}
+}
 
-	probe := &frontendApplicationCreateRetryProbe{}
-	client, err := NewAPIClient("https://example.com", "test", &http.Client{Transport: &retryingTransport{next: probe, maxAttempts: 3}})
-	if err != nil {
-		t.Fatal(err)
+// A request path with an empty ID segment would reach a collection route
+// instead of the resource, so the client refuses it before sending.
+func TestEmptyResourceIDNeverReachesTheAPI(t *testing.T) {
+	var requests atomic.Int32
+	c := newServerClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	})
+	ctx := t.Context()
+	calls := map[string]func() error{
+		"delete channel": func() error { return c.DeleteChannel(ctx, "") },
+		"delete alert":   func() error { return c.DeleteAlert(ctx, "project-1", "") },
+		"update project": func() error {
+			_, err := c.UpdateProject(ctx, "", ProjectUpdate{})
+			return err
+		},
+		"get schedule": func() error {
+			_, _, err := c.GetSchedule(ctx, "")
+			return err
+		},
+		// An organization-scoped call refuses before it exchanges a token.
+		"org delete project": func() error { return c.ForOrganization("acme").DeleteProject(ctx, "") },
 	}
-	if _, err := client.CreateSchedule(context.Background(), ScheduleCreate{Label: "office hours", Timezone: "UTC"}); err == nil {
-		t.Fatal("expected the first 503 response to be returned")
+	for name, call := range calls {
+		err := call()
+		if err == nil || !strings.Contains(err.Error(), "the resource ID is missing") {
+			t.Errorf("%s: err = %v, want missing resource ID", name, err)
+		}
 	}
-	if probe.attempts != 1 {
-		t.Fatalf("create request attempts = %d; want 1", probe.attempts)
+	if requests.Load() != 0 {
+		t.Fatalf("empty IDs sent %d requests", requests.Load())
 	}
 }

@@ -17,87 +17,69 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 )
 
+func testAccRandName(prefix string) string {
+	return fmt.Sprintf("%s-%s", prefix, acctest.RandStringFromCharSet(6, acctest.CharSetAlphaNum))
+}
+
 func TestAccAlertResource(t *testing.T) {
 	t.Parallel()
 
-	projectName := fmt.Sprintf("acc-test-alert-%s", acctest.RandStringFromCharSet(6, acctest.CharSetAlphaNum))
-	channelPrimaryName := fmt.Sprintf("acc-alert-channel-%s", acctest.RandStringFromCharSet(6, acctest.CharSetAlphaNum))
-	channelSecondaryName := fmt.Sprintf("%s-secondary", channelPrimaryName)
-	alertName := fmt.Sprintf("acc-alert-%s", acctest.RandStringFromCharSet(6, acctest.CharSetAlphaNum))
+	projectName := testAccRandName("acc-test-alert")
+	channelName := testAccRandName("acc-alert-channel")
+	alertName := testAccRandName("acc-alert")
 	alertUpdatedName := fmt.Sprintf("%s-renamed", alertName)
+
+	initialConfig := testAccAlertResourceConfig(
+		projectName, channelName, alertName, stringPtr("Initial alert description"),
+		"select 1", "5m", "has_matches", true, false, nil,
+	)
+	updatedConfig := func(environments []string) string {
+		return testAccAlertResourceConfig(
+			projectName, channelName, alertUpdatedName, stringPtr("Updated alert description"),
+			"select 2", "1m", "has_matches_changed", false, true, environments,
+		)
+	}
+	expect := func(name string, want knownvalue.Check) statecheck.StateCheck {
+		return statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New(name), want)
+	}
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccAlertResourceConfig(
-					projectName,
-					channelPrimaryName,
-					channelSecondaryName,
-					alertName,
-					stringPtr("Initial alert description"),
-					"select 1",
-					"5m",
-					"5m",
-					"has_matches",
-					true,
-					false,
-					nil,
-				),
+				Config: initialConfig,
 				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("id"), knownvalue.NotNull()),
-					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("project_id"), knownvalue.NotNull()),
-					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("name"), knownvalue.StringExact(alertName)),
-					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("description"), knownvalue.StringExact("Initial alert description")),
-					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("query"), knownvalue.StringExact("select 1")),
-					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("time_window"), knownvalue.StringExact("5m")),
-					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("frequency"), knownvalue.StringExact("5m")),
-					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("watermark"), knownvalue.StringExact("10s")),
-					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("notify_when"), knownvalue.StringExact("has_matches")),
-					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("active"), knownvalue.Bool(true)),
-					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("channel_assignments"), knownvalue.SetSizeExact(1)),
-					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("environments"), knownvalue.Null()),
+					expect("id", knownvalue.NotNull()),
+					expect("project_id", knownvalue.NotNull()),
+					expect("name", knownvalue.StringExact(alertName)),
+					expect("description", knownvalue.StringExact("Initial alert description")),
+					expect("query", knownvalue.StringExact("select 1")),
+					expect("time_window", knownvalue.StringExact("5m")),
+					expect("frequency", knownvalue.StringExact("5m")),
+					expect("watermark", knownvalue.StringExact("10s")),
+					expect("notify_when", knownvalue.StringExact("has_matches")),
+					expect("active", knownvalue.Bool(true)),
+					expect("channel_assignments", knownvalue.SetSizeExact(1)),
+					expect("environments", knownvalue.Null()),
 				},
 			},
 			{
 				ResourceName:      "logfire_alert.test",
 				ImportState:       true,
 				ImportStateVerify: true,
-				ImportStateIdFunc: func(s *terraform.State) (string, error) {
-					resourceState, ok := s.RootModule().Resources["logfire_alert.test"]
-					if !ok || resourceState.Primary == nil {
-						return "", fmt.Errorf("resource state not found in root module")
-					}
-					projectID := resourceState.Primary.Attributes["project_id"]
-					id := resourceState.Primary.Attributes["id"]
-					return fmt.Sprintf("%s/%s", projectID, id), nil
-				},
+				ImportStateIdFunc: testAccImportID("logfire_alert.test", "project_id", "id"),
 			},
 			{
 				ResourceName:      "logfire_alert.test",
 				ImportState:       true,
 				ImportStateVerify: true,
-				ImportStateIdFunc: func(s *terraform.State) (string, error) {
-					// Import by project name + alert name
+				ImportStateIdFunc: func(*terraform.State) (string, error) {
 					return fmt.Sprintf("%s/%s", projectName, alertName), nil
 				},
 			},
 			{
-				Config: testAccAlertResourceConfig(
-					projectName,
-					channelPrimaryName,
-					channelSecondaryName,
-					alertName,
-					stringPtr("Initial alert description"),
-					"select 1",
-					"5m",
-					"5m",
-					"has_matches",
-					true,
-					false,
-					nil,
-				),
+				Config: initialConfig,
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectEmptyPlan(),
@@ -105,60 +87,34 @@ func TestAccAlertResource(t *testing.T) {
 				},
 			},
 			{
-				Config: testAccAlertResourceConfig(
-					projectName,
-					channelPrimaryName,
-					channelSecondaryName,
-					alertUpdatedName,
-					stringPtr("Updated alert description"),
-					"select 2",
-					"1m",
-					"1m",
-					"has_matches_changed",
-					false,
-					true,
-					[]string{"production", "staging"},
-				),
+				Config: updatedConfig([]string{"production", "staging"}),
 				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("name"), knownvalue.StringExact(alertUpdatedName)),
-					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("description"), knownvalue.StringExact("Updated alert description")),
-					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("query"), knownvalue.StringExact("select 2")),
-					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("time_window"), knownvalue.StringExact("1m")),
-					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("frequency"), knownvalue.StringExact("1m")),
-					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("watermark"), knownvalue.StringExact("10s")),
-					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("notify_when"), knownvalue.StringExact("has_matches_changed")),
-					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("active"), knownvalue.Bool(false)),
-					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("channel_assignments"), knownvalue.SetSizeExact(2)),
-					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("environments"), knownvalue.SetExact([]knownvalue.Check{
+					expect("name", knownvalue.StringExact(alertUpdatedName)),
+					expect("description", knownvalue.StringExact("Updated alert description")),
+					expect("query", knownvalue.StringExact("select 2")),
+					expect("time_window", knownvalue.StringExact("1m")),
+					expect("frequency", knownvalue.StringExact("1m")),
+					expect("watermark", knownvalue.StringExact("10s")),
+					expect("notify_when", knownvalue.StringExact("has_matches_changed")),
+					expect("active", knownvalue.Bool(false)),
+					expect("channel_assignments", knownvalue.SetSizeExact(2)),
+					expect("environments", knownvalue.SetExact([]knownvalue.Check{
 						knownvalue.StringExact("production"),
 						knownvalue.StringExact("staging"),
 					})),
 				},
 			},
 			{
-				Config: testAccAlertResourceConfig(
-					projectName,
-					channelPrimaryName,
-					channelSecondaryName,
-					alertUpdatedName,
-					stringPtr("Updated alert description"),
-					"select 2",
-					"1m",
-					"1m",
-					"has_matches_changed",
-					false,
-					true,
-					nil,
-				),
+				Config: updatedConfig(nil),
 				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue("logfire_alert.test", tfjsonpath.New("environments"), knownvalue.Null()),
+					expect("environments", knownvalue.Null()),
 				},
 			},
 		},
 	})
 }
 
-func testAccAlertResourceConfig(projectName, channelPrimaryName, channelSecondaryName, alertName string, description *string, query, timeWindow, frequency, notifyWhen string, active bool, includeSecondary bool, environments []string) string {
+func testAccAlertResourceConfig(projectName, channelName, alertName string, description *string, query, window, notifyWhen string, active, includeSecondary bool, environments []string) string {
 	channelIDs := "{ channel_id = logfire_channel.primary.id }"
 	if includeSecondary {
 		channelIDs = "{ channel_id = logfire_channel.primary.id }, { channel_id = logfire_channel.secondary.id }"
@@ -215,5 +171,5 @@ resource "logfire_alert" "test" {
   notify_when = %q
   active      = %t
 }
-`, testAccProviderConfig(), projectName, channelPrimaryName, channelSecondaryName, alertName, descLine, query, timeWindow, frequency, envLine, channelIDs, notifyWhen, active)
+`, testAccProviderConfig(), projectName, channelName, channelName+"-secondary", alertName, descLine, query, window, window, envLine, channelIDs, notifyWhen, active)
 }

@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"math/big"
-	"regexp"
 	"strings"
 	"time"
 
@@ -25,19 +24,7 @@ import (
 	logclient "github.com/pydantic/terraform-provider-logfire/internal/client"
 )
 
-var _ resource.Resource = &SloResource{}
-var _ resource.ResourceWithConfigure = &SloResource{}
-var _ resource.ResourceWithImportState = &SloResource{}
-var _ resource.ResourceWithValidateConfig = &SloResource{}
-var _ resource.ResourceWithModifyPlan = &SloResource{}
-
-func NewSloResource() resource.Resource { return &SloResource{} }
-
-type SloResource struct {
-	client *logclient.APIClient
-}
-
-var decimalRe = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?$`)
+type SloResource struct{ configured }
 
 type SloModel struct {
 	ID                types.String `tfsdk:"id"`
@@ -59,64 +46,43 @@ type SloModel struct {
 	Alerts types.Object `tfsdk:"alerts"`
 }
 
-func (r *SloResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
+func (r *SloResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_slo"
 }
 
-func (r *SloResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
+func (r *SloResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = rschema.Schema{
-		MarkdownDescription: "Manages a Logfire SLO (Service Level Objective).\n\n" +
-			"~> **Experimental:** this resource is backed by a Logfire API that is not yet stable. " +
-			"Its schema and behavior may change in backwards-incompatible ways in future releases. " +
-			"SLOs also require a Logfire plan that includes them.",
+		MarkdownDescription: "Manages a Logfire SLO (Service Level Objective).\n\n~> **Experimental:** this resource is backed by a Logfire API that is not yet stable. Its schema and behavior may change in backwards-incompatible ways in future releases. SLOs also require a Logfire plan that includes them.",
 		Attributes: map[string]rschema.Attribute{
 			"id": rschema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "SLO ID.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"project_id": rschema.StringAttribute{
 				Required:            true,
 				MarkdownDescription: "Project ID (UUID) used for SLO API paths.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
-				Validators: []validator.String{
-					stringvalidator.LengthAtLeast(1),
-				},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+				Validators:          []validator.String{stringvalidator.LengthAtLeast(1)},
 			},
 			"scope_kind": rschema.StringAttribute{
-				Optional: true,
-				Computed: true,
-				Default:  stringdefault.StaticString("service"),
-				MarkdownDescription: "What the SLO is anchored to: a service (`service`) or an LLM provider (`provider`). " +
-					"Defaults to `service`. Changing it forces a new SLO.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
-				Validators: []validator.String{
-					stringvalidator.OneOf("service", "provider"),
-				},
+				Optional:            true,
+				Computed:            true,
+				Default:             stringdefault.StaticString("service"),
+				MarkdownDescription: "What the SLO is anchored to: a service (`service`) or an LLM provider (`provider`). Defaults to `service`. Changing it forces a new SLO.",
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+				Validators:          []validator.String{stringvalidator.OneOf("service", "provider")},
 			},
 			"scope_value": rschema.StringAttribute{
-				Required: true,
-				MarkdownDescription: "The service name (`scope_kind = \"service\"`) or provider slug like `openai` " +
-					"(`scope_kind = \"provider\"`). Changing it forces a new SLO.",
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
-				Validators: []validator.String{
-					stringvalidator.LengthAtLeast(1),
-				},
+				Required:            true,
+				MarkdownDescription: "The service name (`scope_kind = \"service\"`) or provider slug like `openai` (`scope_kind = \"provider\"`). Changing it forces a new SLO.",
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+				Validators:          []validator.String{stringvalidator.LengthAtLeast(1)},
 			},
 			"name": rschema.StringAttribute{
 				Required:            true,
 				MarkdownDescription: "SLO name (unique per project).",
-				Validators: []validator.String{
-					stringvalidator.LengthAtLeast(1),
-				},
+				Validators:          []validator.String{stringvalidator.LengthAtLeast(1)},
 			},
 			"description": rschema.StringAttribute{
 				Optional:            true,
@@ -127,20 +93,17 @@ func (r *SloResource) Schema(ctx context.Context, req resource.SchemaRequest, re
 				Computed:            true,
 				Default:             stringdefault.StaticString("records"),
 				MarkdownDescription: "Whether the SLO ratio is computed over span events (`records`) or metric values (`metrics`). Defaults to `records`.",
-				Validators: []validator.String{
-					stringvalidator.OneOf("records", "metrics"),
-				},
+				Validators:          []validator.String{stringvalidator.OneOf("records", "metrics")},
 			},
 			"metric_aggregation": rschema.StringAttribute{
-				Optional: true,
-				Computed: true,
-				Default:  stringdefault.StaticString("additive"),
-				MarkdownDescription: "How a `metrics` SLO aggregates its SLI: `additive` (sum of scalar values, for delta-count metrics), " +
-					"`gauge_fraction` (fraction of samples meeting the condition, for gauges), `counter_rate` (sum of per-series increases, " +
-					"for cumulative counters), or `histogram_threshold` (fraction of histogram observations past a threshold; uses `threshold` " +
-					"and `comparison` instead of `bad_query`, and requires `source = \"metrics\"`). Ignored when `source = \"records\"`. Defaults to `additive`.",
+				Optional:            true,
+				Computed:            true,
+				Default:             stringdefault.StaticString("additive"),
+				MarkdownDescription: "How a `metrics` SLO aggregates its SLI: `additive` (sum of scalar values, for delta-count metrics), `gauge_fraction` (fraction of samples meeting the condition, for gauges), `counter_rate` (sum of per-series increases, for cumulative counters), or `histogram_threshold` (fraction of histogram observations past a threshold; uses `threshold` and `comparison` instead of `bad_query`, and requires `source = \"metrics\"`). Ignored when `source = \"records\"`. Defaults to `additive`.",
 				Validators: []validator.String{
-					stringvalidator.OneOf("additive", "gauge_fraction", "counter_rate", "histogram_threshold"),
+					stringvalidator.OneOf(
+						"additive", "gauge_fraction", "counter_rate", "histogram_threshold",
+					),
 				},
 			},
 			"total_query": rschema.StringAttribute{
@@ -148,39 +111,31 @@ func (r *SloResource) Schema(ctx context.Context, req resource.SchemaRequest, re
 				MarkdownDescription: "SQL boolean expression selecting all events counted by the SLO.",
 			},
 			"bad_query": rschema.StringAttribute{
-				Optional: true,
-				MarkdownDescription: "SQL boolean expression selecting the bad events counted by the SLO. " +
-					"Required for every mode except `metric_aggregation = \"histogram_threshold\"`, which uses `threshold` and `comparison` instead.",
+				Optional:            true,
+				MarkdownDescription: "SQL boolean expression selecting the bad events counted by the SLO. Required for every mode except `metric_aggregation = \"histogram_threshold\"`, which uses `threshold` and `comparison` instead.",
 			},
 			"threshold": rschema.StringAttribute{
-				Optional: true,
-				MarkdownDescription: "For `metric_aggregation = \"histogram_threshold\"`: the cutoff in the metric's native unit, as a decimal string " +
-					"(e.g. `\"60000\"` on a `_ms` latency metric). Required for that mode, and must be omitted otherwise.",
+				Optional:            true,
+				MarkdownDescription: "For `metric_aggregation = \"histogram_threshold\"`: the cutoff in the metric's native unit, as a decimal string (e.g. `\"60000\"` on a `_ms` latency metric). Required for that mode, and must be omitted otherwise.",
 				Validators: []validator.String{
-					newThresholdValidator(),
+					thresholdValidator{},
 				},
 			},
 			"comparison": rschema.StringAttribute{
-				Optional: true,
-				MarkdownDescription: "For `metric_aggregation = \"histogram_threshold\"`: the good side of the `threshold`. `less_than` " +
-					"(good is below the threshold, the latency case) or `greater_than`. Required for that mode, and must be omitted otherwise.",
-				Validators: []validator.String{
-					stringvalidator.OneOf("less_than", "greater_than"),
-				},
+				Optional:            true,
+				MarkdownDescription: "For `metric_aggregation = \"histogram_threshold\"`: the good side of the `threshold`. `less_than` (good is below the threshold, the latency case) or `greater_than`. Required for that mode, and must be omitted otherwise.",
+				Validators:          []validator.String{stringvalidator.OneOf("less_than", "greater_than")},
 			},
 			"target_percent": rschema.StringAttribute{
 				Required:            true,
 				MarkdownDescription: "Target percentage as a decimal string, exclusively between 0 and 100 (e.g. `\"99.9\"`).",
 				Validators: []validator.String{
-					newTargetPercentValidator(),
+					targetPercentValidator{},
 				},
 			},
 			"rolling_window": rschema.StringAttribute{
-				Required: true,
-				MarkdownDescription: "Rolling evaluation window as a duration string (e.g. `\"24h\"`, `\"30d\"`). Must be between 1h and 90d. " +
-					"The API enforces a lower effective cap: the window cannot exceed your subscription plan's maximum SLO window, " +
-					"nor the project's data retention for the SLO source (`records` or `metrics`) — a longer window would compute against missing data. " +
-					"Requests over either cap are rejected with a validation error.",
+				Required:            true,
+				MarkdownDescription: "Rolling evaluation window as a duration string (e.g. `\"24h\"`, `\"30d\"`). Must be between 1h and 90d. The API enforces a lower effective cap: the window cannot exceed your subscription plan's maximum SLO window, nor the project's data retention for the SLO source (`records` or `metrics`) — a longer window would compute against missing data. Requests over either cap are rejected with a validation error.",
 			},
 			"environments": rschema.SetAttribute{
 				ElementType:         types.StringType,
@@ -192,24 +147,8 @@ func (r *SloResource) Schema(ctx context.Context, req resource.SchemaRequest, re
 	}
 }
 
-func (r *SloResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		return
-	}
-	c, ok := req.ProviderData.(*logclient.APIClient)
-	if !ok {
-		resp.Diagnostics.AddError("Unexpected provider data", fmt.Sprintf("expected *APIClient, got %T", req.ProviderData))
-		return
-	}
-	r.client = c
-}
-
-// ValidateConfig enforces the SLI-mode field pairing the API requires, so a
-// misconfiguration fails at plan time with a field-scoped error instead of a
-// 422 at apply. `histogram_threshold` is a metrics-only bucket-ratio mode that
-// swaps `bad_query` for `threshold` + `comparison`; every other mode is the
-// reverse. Defaults are not applied during config validation, so unset
-// `metric_aggregation`/`source` are read as their schema defaults.
+// ValidateConfig fails a misconfigured SLI mode at plan time with a
+// field-scoped error instead of a 422 at apply.
 func (r *SloResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
 	var m SloModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &m)...)
@@ -231,8 +170,9 @@ func (r *SloResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanReq
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	targetChanged := plan.TargetPercent.IsUnknown() || state.TargetPercent.IsNull() ||
-		!decimalStringsEqual(plan.TargetPercent.ValueString(), state.TargetPercent.ValueString())
+	// An unknown planned target compares as changed.
+	targetChanged := !decimalStringsEqual(
+		plan.TargetPercent.ValueString(), state.TargetPercent.ValueString())
 	alerts, diags := sloPlanAlerts(ctx, config.Alerts, plan.Alerts, state.Alerts, targetChanged)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
@@ -242,6 +182,8 @@ func (r *SloResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanReq
 }
 
 // validateSloSliConfig checks the SLI-mode field pairing on a config model.
+// `histogram_threshold` is a metrics-only bucket-ratio mode that swaps
+// `bad_query` for `threshold` + `comparison`; every other mode is the reverse.
 // Defaults are not applied during config validation, so unset
 // `metric_aggregation`/`source` are read as their schema defaults. Values that
 // reference other resources (unknown) are left for apply-time.
@@ -257,66 +199,53 @@ func validateSloSliConfig(m *SloModel) diag.Diagnostics {
 	var diags diag.Diagnostics
 
 	if agg == "histogram_threshold" {
-		if !m.Source.IsUnknown() {
-			source := "records"
-			if !m.Source.IsNull() {
-				source = m.Source.ValueString()
-			}
-			if source != "metrics" {
-				diags.Append(diag.NewAttributeErrorDiagnostic(
-					path.Root("metric_aggregation"),
-					"histogram_threshold requires source = \"metrics\"",
-					"metric_aggregation = \"histogram_threshold\" is a metric SLI and requires source = \"metrics\".",
-				))
-			}
+		if !m.Source.IsUnknown() && m.Source.ValueString() != "metrics" {
+			diags.AddAttributeError(
+				path.Root("metric_aggregation"),
+				"histogram_threshold requires source = \"metrics\"",
+				"metric_aggregation = \"histogram_threshold\" is a metric SLI and requires source = \"metrics\".",
+			)
 		}
-		if m.Threshold.IsNull() && !m.Threshold.IsUnknown() {
-			diags.Append(diag.NewAttributeErrorDiagnostic(
+		if m.Threshold.IsNull() {
+			diags.AddAttributeError(
 				path.Root("threshold"),
 				"threshold is required for histogram_threshold",
 				"metric_aggregation = \"histogram_threshold\" requires threshold.",
-			))
+			)
 		}
-		if m.Comparison.IsNull() && !m.Comparison.IsUnknown() {
-			diags.Append(diag.NewAttributeErrorDiagnostic(
+		if m.Comparison.IsNull() {
+			diags.AddAttributeError(
 				path.Root("comparison"),
 				"comparison is required for histogram_threshold",
 				"metric_aggregation = \"histogram_threshold\" requires comparison.",
-			))
+			)
 		}
 		return diags
 	}
 
-	if m.BadQuery.IsNull() && !m.BadQuery.IsUnknown() {
-		diags.Append(diag.NewAttributeErrorDiagnostic(
+	if m.BadQuery.IsNull() {
+		diags.AddAttributeError(
 			path.Root("bad_query"),
 			"bad_query is required",
 			fmt.Sprintf("bad_query is required for metric_aggregation = %q.", agg),
-		))
+		)
 	}
 	if !m.Threshold.IsNull() && !m.Threshold.IsUnknown() {
-		diags.Append(diag.NewAttributeErrorDiagnostic(
+		diags.AddAttributeError(
 			path.Root("threshold"),
 			"threshold is only valid for histogram_threshold",
 			"threshold is only valid with metric_aggregation = \"histogram_threshold\".",
-		))
+		)
 	}
 	if !m.Comparison.IsNull() && !m.Comparison.IsUnknown() {
-		diags.Append(diag.NewAttributeErrorDiagnostic(
+		diags.AddAttributeError(
 			path.Root("comparison"),
 			"comparison is only valid for histogram_threshold",
 			"comparison is only valid with metric_aggregation = \"histogram_threshold\".",
-		))
+		)
 	}
 	return diags
 }
-
-// --- Helpers ---
-
-const (
-	minSloRollingWindow = time.Hour
-	maxSloRollingWindow = 90 * 24 * time.Hour
-)
 
 func decimalStringsEqual(a, b string) bool {
 	ra, okA := new(big.Rat).SetString(strings.TrimSpace(a))
@@ -334,39 +263,27 @@ func normalizeDecimalString(s string) string {
 	return strings.TrimSuffix(strings.TrimRight(s, "0"), ".")
 }
 
-// sloDurationCompact renders whole days as "Nd" (SLO windows are commonly
-// day-sized), otherwise falls back to the generic compact form.
-func sloDurationCompact(d time.Duration) string {
-	if d > 0 && d%(24*time.Hour) == 0 {
-		return fmt.Sprintf("%dd", int64(d/(24*time.Hour)))
+func parseSloRollingWindow(s string) (time.Duration, diag.Diagnostics) {
+	d, err := parseDurationText(s)
+	if err == nil && (d < time.Hour || d > 90*24*time.Hour) {
+		err = fmt.Errorf("rolling_window must be between 1h and 90d, got %q", s)
 	}
-	return durationCompact(d)
-}
-
-func parseSloRollingWindow(s types.String) (time.Duration, error) {
-	d, err := parseDurationText(s.ValueString())
 	if err != nil {
-		return 0, err
-	}
-	if d < minSloRollingWindow || d > maxSloRollingWindow {
-		return 0, fmt.Errorf("rolling_window must be between 1h and 90d, got %q", s.ValueString())
+		return 0, diag.Diagnostics{diag.NewErrorDiagnostic("Invalid rolling_window", err.Error())}
 	}
 	return d, nil
 }
 
 // windowMatches reports whether a configured window string denotes duration d.
 func windowMatches(s types.String, d time.Duration) bool {
-	if s.IsNull() || s.IsUnknown() {
-		return false
-	}
 	prev, err := parseDurationText(s.ValueString())
 	return err == nil && prev == d
 }
 
 func sloModelToCreate(ctx context.Context, m *SloModel) (logclient.SloCreate, diag.Diagnostics) {
-	window, err := parseSloRollingWindow(m.RollingWindow)
-	if err != nil {
-		return logclient.SloCreate{}, diag.Diagnostics{diag.NewErrorDiagnostic("Invalid rolling_window", err.Error())}
+	window, diags := parseSloRollingWindow(m.RollingWindow.ValueString())
+	if diags.HasError() {
+		return logclient.SloCreate{}, diags
 	}
 	in := logclient.SloCreate{
 		ScopeKind:            m.ScopeKind.ValueString(),
@@ -375,43 +292,23 @@ func sloModelToCreate(ctx context.Context, m *SloModel) (logclient.SloCreate, di
 		TotalQuery:           m.TotalQuery.ValueString(),
 		TargetPercent:        m.TargetPercent.ValueString(),
 		RollingWindowSeconds: int64(window / time.Second),
+		BadQuery:             m.BadQuery.ValueStringPointer(),
+		Threshold:            m.Threshold.ValueStringPointer(),
+		Comparison:           m.Comparison.ValueStringPointer(),
+		Description:          m.Description.ValueStringPointer(),
+		Source:               m.Source.ValueStringPointer(),
+		MetricAggregation:    m.MetricAggregation.ValueStringPointer(),
 	}
-	if !m.BadQuery.IsNull() && !m.BadQuery.IsUnknown() {
-		v := m.BadQuery.ValueString()
-		in.BadQuery = &v
-	}
-	if !m.Threshold.IsNull() && !m.Threshold.IsUnknown() {
-		v := m.Threshold.ValueString()
-		in.Threshold = &v
-	}
-	if !m.Comparison.IsNull() && !m.Comparison.IsUnknown() {
-		v := m.Comparison.ValueString()
-		in.Comparison = &v
-	}
-	if !m.Description.IsNull() && !m.Description.IsUnknown() {
-		v := m.Description.ValueString()
-		in.Description = &v
-	}
-	if !m.Source.IsNull() && !m.Source.IsUnknown() {
-		v := m.Source.ValueString()
-		in.Source = &v
-	}
-	if !m.MetricAggregation.IsNull() && !m.MetricAggregation.IsUnknown() {
-		v := m.MetricAggregation.ValueString()
-		in.MetricAggregation = &v
-	}
-	if !m.Environments.IsNull() && !m.Environments.IsUnknown() {
-		var envs []string
-		if diags := m.Environments.ElementsAs(ctx, &envs, false); diags.HasError() {
+	if !m.Environments.IsNull() {
+		diags := m.Environments.ElementsAs(ctx, &in.Environments, false)
+		if diags.HasError() {
 			return logclient.SloCreate{}, diags
 		}
-		in.Environments = envs
 	}
-	alerts, diags := sloAlertsDelivery(ctx, m.Alerts, func(string, types.Set) bool { return true })
+	in.Alerts, diags = sloAlertsDelivery(ctx, m.Alerts, nil)
 	if diags.HasError() {
 		return logclient.SloCreate{}, diags
 	}
-	in.Alerts = alerts
 	return in, nil
 }
 
@@ -419,120 +316,89 @@ func sloModelToCreate(ctx context.Context, m *SloModel) (logclient.SloCreate, di
 // unchanged fields stay out of the PATCH (the API treats the presence of any
 // SLI-shape field as a predicate change and resets the SLO's cached status).
 func changedString(plan, state types.String) *string {
-	if plan.IsNull() || plan.IsUnknown() {
+	if plan.IsNull() || plan.Equal(state) {
 		return nil
 	}
-	v := plan.ValueString()
-	if !state.IsNull() && !state.IsUnknown() && state.ValueString() == v {
-		return nil
-	}
-	return &v
-}
-
-// explicitNull returns a `**string` encoding an explicit JSON null (clears a
-// nullable field on PATCH). explicitStringValue encodes a string value.
-func explicitNull() **string {
-	var p *string
-	return &p
-}
-
-func explicitStringValue(s string) **string {
-	p := &s
-	return &p
+	return plan.ValueStringPointer()
 }
 
 // nullableStringUpdate builds the tri-state `**string` for a nullable field:
 // nil (omit) when the plan value is unchanged, an explicit null when it is
 // cleared, and the value when it changes. equal compares two set values.
 func nullableStringUpdate(plan, state types.String, equal func(a, b string) bool) **string {
-	if plan.IsUnknown() {
-		return nil
-	}
 	if plan.IsNull() {
-		if !state.IsNull() && !state.IsUnknown() {
-			return explicitNull()
+		if state.IsNull() {
+			return nil
 		}
-		return nil
+		var null *string
+		return &null
 	}
 	v := plan.ValueString()
-	if !state.IsNull() && !state.IsUnknown() && equal(state.ValueString(), v) {
+	if !state.IsNull() && equal(state.ValueString(), v) {
 		return nil
 	}
-	return explicitStringValue(v)
+	value := &v
+	return &value
 }
 
 func sloModelToUpdate(ctx context.Context, plan, state *SloModel) (logclient.SloUpdate, diag.Diagnostics) {
+	exact := func(a, b string) bool { return a == b }
 	payload := logclient.SloUpdate{
 		Name:              changedString(plan.Name, state.Name),
+		Description:       changedString(plan.Description, state.Description),
 		Source:            changedString(plan.Source, state.Source),
 		MetricAggregation: changedString(plan.MetricAggregation, state.MetricAggregation),
 		TotalQuery:        changedString(plan.TotalQuery, state.TotalQuery),
 		BadQuery:          changedString(plan.BadQuery, state.BadQuery),
-		Threshold:         nullableStringUpdate(plan.Threshold, state.Threshold, decimalStringsEqual),
-		Comparison:        nullableStringUpdate(plan.Comparison, state.Comparison, func(a, b string) bool { return a == b }),
+		Threshold: nullableStringUpdate(
+			plan.Threshold, state.Threshold, decimalStringsEqual),
+		Comparison: nullableStringUpdate(plan.Comparison, state.Comparison, exact),
+	}
+	// Clearing the description sends an empty string.
+	if plan.Description.IsNull() && !state.Description.IsNull() {
+		payload.Description = new(string)
+	}
+	if !decimalStringsEqual(plan.TargetPercent.ValueString(), state.TargetPercent.ValueString()) {
+		payload.TargetPercent = plan.TargetPercent.ValueStringPointer()
 	}
 
-	if !plan.Description.IsUnknown() {
-		switch {
-		case plan.Description.IsNull():
-			if !state.Description.IsNull() && !state.Description.IsUnknown() {
-				empty := ""
-				payload.Description = &empty
-			}
-		default:
-			payload.Description = changedString(plan.Description, state.Description)
-		}
+	window, diags := parseSloRollingWindow(plan.RollingWindow.ValueString())
+	if diags.HasError() {
+		return logclient.SloUpdate{}, diags
+	}
+	if !windowMatches(state.RollingWindow, window) {
+		seconds := int64(window / time.Second)
+		payload.RollingWindowSeconds = &seconds
 	}
 
-	if !plan.TargetPercent.IsNull() && !plan.TargetPercent.IsUnknown() {
-		v := plan.TargetPercent.ValueString()
-		if state.TargetPercent.IsNull() || state.TargetPercent.IsUnknown() || !decimalStringsEqual(state.TargetPercent.ValueString(), v) {
-			payload.TargetPercent = &v
-		}
-	}
-
-	if !plan.RollingWindow.IsNull() && !plan.RollingWindow.IsUnknown() {
-		d, err := parseSloRollingWindow(plan.RollingWindow)
-		if err != nil {
-			return logclient.SloUpdate{}, diag.Diagnostics{diag.NewErrorDiagnostic("Invalid rolling_window", err.Error())}
-		}
-		if !windowMatches(state.RollingWindow, d) {
-			seconds := int64(d / time.Second)
-			payload.RollingWindowSeconds = &seconds
-		}
-	}
-
-	if !plan.Environments.IsUnknown() {
-		switch {
-		case plan.Environments.IsNull():
-			if !state.Environments.IsNull() && !state.Environments.IsUnknown() {
-				empty := []string{}
-				payload.Environments = &empty
-			}
-		case !plan.Environments.Equal(state.Environments):
-			var envs []string
-			if diags := plan.Environments.ElementsAs(ctx, &envs, false); diags.HasError() {
-				return logclient.SloUpdate{}, diags
-			}
-			payload.Environments = &envs
+	switch {
+	case plan.Environments.IsNull() && !state.Environments.IsNull():
+		payload.Environments = &[]string{}
+	case !plan.Environments.IsNull() && !plan.Environments.Equal(state.Environments):
+		payload.Environments = &[]string{}
+		diags := plan.Environments.ElementsAs(ctx, payload.Environments, false)
+		if diags.HasError() {
+			return logclient.SloUpdate{}, diags
 		}
 	}
 
 	// A tier is sent when its planned channels differ from state. A tier that
 	// is not configured is planned as its state value, or unknown, so it is
 	// never sent.
-	var tierDiags diag.Diagnostics
-	alerts, diags := sloAlertsDelivery(ctx, plan.Alerts, func(tier string, planned types.Set) bool {
-		current, d := sloStateTierAssignments(ctx, state.Alerts, tier)
-		tierDiags.Append(d...)
-		return !planned.Equal(current)
-	})
-	diags.Append(tierDiags...)
+	stateAlerts, _, d := sloAlertsFromObject(ctx, state.Alerts)
+	diags.Append(d...)
+	alerts, d := sloAlertsDelivery(
+		ctx, plan.Alerts, func(tier string, planned types.Set) bool {
+			current, _, d := sloTierFromObject(ctx, *stateAlerts.tier(tier))
+			diags.Append(d...)
+			return !planned.Equal(current.ChannelAssignments)
+		},
+	)
+	diags.Append(d...)
 	if diags.HasError() {
 		return logclient.SloUpdate{}, diags
 	}
 	payload.Alerts = alerts
-
 	return payload, nil
 }
 
@@ -544,7 +410,7 @@ func sloReadToModel(ctx context.Context, s *logclient.SloRead, m *SloModel) diag
 	m.ScopeKind = types.StringValue(s.ScopeKind)
 	m.ScopeValue = types.StringValue(s.ScopeValue)
 	m.Name = types.StringValue(s.Name)
-	if s.Description == nil || (*s.Description == "" && (m.Description.IsNull() || m.Description.IsUnknown())) {
+	if s.Description == nil || (*s.Description == "" && m.Description.IsNull()) {
 		m.Description = types.StringNull()
 	} else {
 		m.Description = types.StringValue(*s.Description)
@@ -553,92 +419,79 @@ func sloReadToModel(ctx context.Context, s *logclient.SloRead, m *SloModel) diag
 	m.MetricAggregation = types.StringValue(s.MetricAggregation)
 	m.TotalQuery = types.StringValue(s.TotalQuery)
 
-	// `histogram_threshold` SLOs don't use bad_query (they use threshold/comparison),
-	// so keep it absent regardless of what the API echoes: a freshly created one
-	// returns "", but a row switched into the mode in place may retain its prior
-	// predicate. For every other mode an empty bad_query maps back to an absent
-	// attribute so config and state agree.
+	// `histogram_threshold` SLOs don't use bad_query (they use
+	// threshold/comparison), so keep it absent regardless of what the API
+	// echoes: a freshly created one returns "", but a row switched into the
+	// mode in place may retain its prior predicate. For every other mode an
+	// empty bad_query maps back to an absent attribute so config and state
+	// agree.
 	switch {
 	case s.MetricAggregation == "histogram_threshold":
 		m.BadQuery = types.StringNull()
-	case s.BadQuery == "" && (m.BadQuery.IsNull() || m.BadQuery.IsUnknown()):
+	case s.BadQuery == "" && m.BadQuery.IsNull():
 		m.BadQuery = types.StringNull()
 	default:
 		m.BadQuery = types.StringValue(s.BadQuery)
 	}
 
-	// threshold is a decimal; keep the configured spelling when it denotes the
-	// same number (mirrors target_percent). comparison is a plain enum string.
-	if s.Threshold == nil {
+	// threshold and target_percent are decimals; keep the configured spelling
+	// when it denotes the same number. The API normalizes the target to a fixed
+	// number of decimal places.
+	switch {
+	case s.Threshold == nil:
 		m.Threshold = types.StringNull()
-	} else if m.Threshold.IsNull() || m.Threshold.IsUnknown() || !decimalStringsEqual(m.Threshold.ValueString(), *s.Threshold) {
+	case !decimalStringsEqual(m.Threshold.ValueString(), *s.Threshold):
 		m.Threshold = types.StringValue(normalizeDecimalString(*s.Threshold))
 	}
-	if s.Comparison == nil {
-		m.Comparison = types.StringNull()
-	} else {
-		m.Comparison = types.StringValue(*s.Comparison)
-	}
-
-	// The API normalizes the target to a fixed number of decimal places; keep
-	// the configured spelling when it denotes the same number.
-	if m.TargetPercent.IsNull() || m.TargetPercent.IsUnknown() || !decimalStringsEqual(m.TargetPercent.ValueString(), s.TargetPercent) {
+	m.Comparison = types.StringPointerValue(s.Comparison)
+	if !decimalStringsEqual(m.TargetPercent.ValueString(), s.TargetPercent) {
 		m.TargetPercent = types.StringValue(normalizeDecimalString(s.TargetPercent))
 	}
 
-	// Same for the window: the API returns an ISO-8601 duration.
-	if d, err := iso8601ToDuration(s.RollingWindow); err == nil {
-		if !windowMatches(m.RollingWindow, d) {
-			m.RollingWindow = types.StringValue(sloDurationCompact(d))
-		}
-	} else {
+	// The API returns the window as an ISO-8601 duration. Keep the configured
+	// spelling when it denotes the same duration, and render whole days as
+	// "Nd" (SLO windows are commonly day-sized).
+	d, err := iso8601ToDuration(s.RollingWindow)
+	switch {
+	case err != nil:
 		m.RollingWindow = types.StringValue("")
+	case !windowMatches(m.RollingWindow, d):
+		compact := durationCompact(d)
+		if d > 0 && d%(24*time.Hour) == 0 {
+			compact = fmt.Sprintf("%dd", int64(d/(24*time.Hour)))
+		}
+		m.RollingWindow = types.StringValue(compact)
 	}
 
-	if len(s.Environments) == 0 && (m.Environments.IsNull() || m.Environments.IsUnknown()) {
+	if len(s.Environments) == 0 && m.Environments.IsNull() {
 		m.Environments = types.SetNull(types.StringType)
 	} else {
-		set, diags := types.SetValueFrom(ctx, types.StringType, s.Environments)
+		var diags diag.Diagnostics
+		m.Environments, diags = types.SetValueFrom(ctx, types.StringType, s.Environments)
 		if diags.HasError() {
 			return diags
 		}
-		m.Environments = set
 	}
 
-	alerts, diags := sloAlertsToObject(ctx, s.Alerts, m.Alerts)
-	if diags.HasError() {
-		return diags
-	}
-	m.Alerts = alerts
-	return nil
+	var diags diag.Diagnostics
+	m.Alerts, diags = sloAlertsToObject(ctx, s.Alerts, m.Alerts)
+	return diags
 }
 
-// --- CRUD ---
-
 func (r *SloResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	if r.client == nil {
-		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
-		return
-	}
-
 	var plan SloModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	if plan.ProjectID.IsNull() || plan.ProjectID.IsUnknown() || plan.ProjectID.ValueString() == "" {
-		resp.Diagnostics.AddError("Missing project_id", "The SLO requires a project_id to construct API paths.")
-		return
-	}
-
-	projectID := plan.ProjectID.ValueString()
 	in, diags := sloModelToCreate(ctx, &plan)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
+	projectID := plan.ProjectID.ValueString()
 	out, err := r.client.CreateSlo(ctx, projectID, in)
 	if err != nil {
 		resp.Diagnostics.AddError("Create SLO failed", err.Error())
@@ -646,12 +499,9 @@ func (r *SloResource) Create(ctx context.Context, req resource.CreateRequest, re
 	}
 
 	state := plan
-	if diags := sloReadToModel(ctx, out, &state); diags.HasError() {
-		resp.Diagnostics.Append(diags...)
+	resp.Diagnostics.Append(sloReadToModel(ctx, out, &state)...)
+	if resp.Diagnostics.HasError() {
 		return
-	}
-	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
-		state.ProjectID = plan.ProjectID
 	}
 	// The SLO exists, so its state is saved even when its channels were not
 	// applied. With the error, Terraform marks it tainted and replaces it on
@@ -663,42 +513,30 @@ func (r *SloResource) Create(ctx context.Context, req resource.CreateRequest, re
 		}
 	}
 
-	tflog.Trace(ctx, "created slo", map[string]any{"id": state.ID.ValueString(), "project_id": projectID})
+	tflog.Trace(ctx, "created slo", map[string]any{
+		"id":         state.ID.ValueString(),
+		"project_id": projectID,
+	})
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
 func (r *SloResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	if r.client == nil {
-		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
-		return
-	}
-
 	var state SloModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
-		resp.Diagnostics.AddError("Missing project_id", "Cannot read SLO because the state is missing a project_id.")
-		return
-	}
-
-	if state.ID.IsNull() || state.ID.IsUnknown() || state.ID.ValueString() == "" {
+	// Crossplane observes before create with an absent ID.
+	if state.ID.ValueString() == "" {
 		resp.State.RemoveResource(ctx)
 		return
 	}
 
 	projectID := state.ProjectID.ValueString()
-	id := state.ID.ValueString()
-
-	out, status, err := r.client.GetSlo(ctx, projectID, id)
+	out, status, err := r.client.GetSlo(ctx, projectID, state.ID.ValueString())
 	if err != nil {
-		if status == 404 {
-			resp.State.RemoveResource(ctx)
-			return
-		}
-		if projectMissing(ctx, r.client, projectID) {
+		if status == 404 || projectMissing(ctx, r.client, projectID, err) {
 			resp.State.RemoveResource(ctx)
 			return
 		}
@@ -706,45 +544,24 @@ func (r *SloResource) Read(ctx context.Context, req resource.ReadRequest, resp *
 		return
 	}
 
-	if diags := sloReadToModel(ctx, out, &state); diags.HasError() {
-		resp.Diagnostics.Append(diags...)
+	resp.Diagnostics.Append(sloReadToModel(ctx, out, &state)...)
+	if resp.Diagnostics.HasError() {
 		return
 	}
-	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
-		state.ProjectID = types.StringValue(projectID)
-	}
-
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
 func (r *SloResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	if r.client == nil {
-		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
-		return
-	}
-
-	var plan SloModel
+	var plan, state SloModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	var state SloModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if state.ID.IsNull() || state.ID.IsUnknown() {
-		resp.Diagnostics.AddError("Missing ID", "Cannot update SLO because the current state has no ID.")
-		return
-	}
-	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
-		resp.Diagnostics.AddError("Missing project_id", "Cannot update SLO because the current state has no project_id.")
-		return
-	}
 
-	projectID := state.ProjectID.ValueString()
-	id := state.ID.ValueString()
+	if missingID(state.ID, &resp.Diagnostics) {
+		return
+	}
 
 	payload, diags := sloModelToUpdate(ctx, &plan, &state)
 	resp.Diagnostics.Append(diags...)
@@ -752,20 +569,17 @@ func (r *SloResource) Update(ctx context.Context, req resource.UpdateRequest, re
 		return
 	}
 
-	out, err := r.client.UpdateSlo(ctx, projectID, id, payload)
+	out, err := r.client.UpdateSlo(
+		ctx, state.ProjectID.ValueString(), state.ID.ValueString(), payload)
 	if err != nil {
 		resp.Diagnostics.AddError("Update SLO failed", err.Error())
 		return
 	}
 
 	newState := plan
-	newState.ProjectID = state.ProjectID
-	if diags := sloReadToModel(ctx, out, &newState); diags.HasError() {
-		resp.Diagnostics.Append(diags...)
+	resp.Diagnostics.Append(sloReadToModel(ctx, out, &newState)...)
+	if resp.Diagnostics.HasError() {
 		return
-	}
-	if newState.ProjectID.IsNull() || newState.ProjectID.IsUnknown() || newState.ProjectID.ValueString() == "" {
-		newState.ProjectID = state.ProjectID
 	}
 	// Without `alerts` in the response, keep the prior channels in state so
 	// the next plan sends the configured channels again.
@@ -779,100 +593,41 @@ func (r *SloResource) Update(ctx context.Context, req resource.UpdateRequest, re
 }
 
 func (r *SloResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	if r.client == nil {
-		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
-		return
-	}
-
 	var state SloModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
-		resp.Diagnostics.AddError("Missing project_id", "Cannot delete SLO because the state is missing a project_id.")
+	if missingID(state.ID, &resp.Diagnostics) {
 		return
 	}
 
 	projectID := state.ProjectID.ValueString()
-	id := state.ID.ValueString()
-
-	if err := r.client.DeleteSlo(ctx, projectID, id); err != nil {
-		if logclient.IsNotFoundError(err) {
-			// Already gone, treat as successful delete
-			return
-		}
-		if projectMissing(ctx, r.client, projectID) {
-			return
-		}
+	err := r.client.DeleteSlo(ctx, projectID, state.ID.ValueString())
+	if err != nil && !logclient.IsNotFoundError(err) &&
+		!projectMissing(ctx, r.client, projectID, err) {
 		resp.Diagnostics.AddError("Delete SLO failed", err.Error())
 	}
 }
 
 func (r *SloResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	if r.client == nil {
-		resp.Diagnostics.AddError("Not configured", "The provider is not configured.")
+	projectID, match, ok := importProjectItem(ctx, r.client, req, resp, projectImport[logclient.SloRead]{
+		noun:    "SLO",
+		counts:  []int{2},
+		missing: `Expected a non-empty ID. Use either "project_id/slo_id" or "project_name/slo_name" (also accepts "," or "|").`,
+		invalid: `Expected "project_id/slo_id" or "project_name/slo_name" (also accepts "project,slo" or "project|slo").`,
+		list:    r.client.ListSlos,
+		keys:    func(s *logclient.SloRead) (string, string) { return s.ID, s.Name },
+	})
+	if !ok {
 		return
 	}
 
-	rawID := strings.TrimSpace(req.ID)
-	if rawID == "" {
-		resp.Diagnostics.AddError(
-			"Missing import ID",
-			`Expected a non-empty ID. Use either "project_id/slo_id" or "project_name/slo_name" (also accepts "," or "|").`,
-		)
+	state := SloModel{ProjectID: types.StringValue(projectID)}
+	resp.Diagnostics.Append(sloReadToModel(ctx, match, &state)...)
+	if resp.Diagnostics.HasError() {
 		return
-	}
-
-	parts, err := splitImportParts(rawID, 2)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Invalid import ID",
-			`Expected "project_id/slo_id" or "project_name/slo_name" (also accepts "project,slo" or "project|slo").`,
-		)
-		return
-	}
-
-	projectKey := parts[0]
-	sloKey := parts[1]
-
-	projectID, projectName, err := findProjectByNameOrID(ctx, r.client, projectKey)
-	if err != nil {
-		resp.Diagnostics.AddError("Import SLO failed", err.Error())
-		return
-	}
-
-	slos, err := r.client.ListSlos(ctx, projectID)
-	if err != nil {
-		resp.Diagnostics.AddError("Import SLO failed", fmt.Sprintf("listing SLOs for project %q: %v", projectID, err))
-		return
-	}
-
-	var match *logclient.SloRead
-	for i := range slos {
-		s := &slos[i]
-		if s.ID == sloKey {
-			match = s
-			break
-		}
-		if s.Name == sloKey && match == nil {
-			match = s
-		}
-	}
-	if match == nil {
-		resp.Diagnostics.AddError("Import SLO failed", fmt.Sprintf("SLO %q not found in project %q", sloKey, projectName))
-		return
-	}
-
-	var state SloModel
-	state.ProjectID = types.StringValue(projectID)
-	if diags := sloReadToModel(ctx, match, &state); diags.HasError() {
-		resp.Diagnostics.Append(diags...)
-		return
-	}
-	if state.ProjectID.IsNull() || state.ProjectID.IsUnknown() || state.ProjectID.ValueString() == "" {
-		state.ProjectID = types.StringValue(projectID)
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }

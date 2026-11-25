@@ -126,114 +126,124 @@ func (a *dashboardLifecycleAPIState) ServeHTTP(w http.ResponseWriter, req *http.
 	}
 }
 
-func TestLifecycleDashboardJSONFile(t *testing.T) {
-	t.Parallel()
-	api := &dashboardLifecycleAPIState{}
+const dashboardAddress = "logfire_dashboard.test"
+
+func (a *dashboardLifecycleAPIState) mutate(change func()) func() {
+	return func() {
+		a.Lock()
+		defer a.Unlock()
+		change()
+	}
+}
+
+func startDashboardLifecycleAPI(t *testing.T, api *dashboardLifecycleAPIState) string {
+	t.Helper()
 	server := httptest.NewServer(api)
-	defer server.Close()
-	dir := t.TempDir()
-	initial, updated, authored := filepath.Join(dir, "initial.json"), filepath.Join(dir, "updated.json"), filepath.Join(dir, "authored.json")
-	withoutMetadata := strings.Replace(dashboardLifecycleFile, `  "metadata": {"name": "Copied", "project": "source", "version": 7, "layoutUpdatedAt": "old"},`+"\n", "", 1)
-	withoutMetadata = strings.Replace(withoutMetadata, `"display": {"title": "", "collapse": {"open": true}}, `, "", 1)
-	edited := strings.Replace(dashboardLifecycleFile, `"text": "initial"`, `"text": "edited"`, 1)
-	reexportedAPI := `{"kind":"Dashboard","metadata":{"name":"Renamed","project":"test","version":8},"spec":{"display":{"name":"Dashboard title","description":null},"panels":{"text":{"kind":"Panel","spec":{"display":{"name":"Text"},"plugin":{"kind":"Markdown","spec":{"text":"edited","largeInteger":9007199254740992,"number":1.0,"fraction":0.3333333333333333}}}},"extra":{"kind":"Panel","spec":{"display":{"name":"Added in UI"},"plugin":{"kind":"Markdown","spec":{"text":"added in UI"}}}}},"layouts":[{"kind":"Grid","spec":{"items":[{"x":8,"y":4,"width":16,"height":6,"content":{"$ref":"#/spec/panels/text"}},{"x":0,"y":0,"width":8,"height":4,"content":{"$ref":"#/spec/panels/extra"}}]}}],"variables":[],"datasources":{},"duration":"1h","refreshInterval":"0s"}}`
-	reexported := strings.Replace(reexportedAPI, `"layouts":[{"kind":"Grid","spec":{`, `"annotations":[],"links":[],"layouts":[{"kind":"Grid","spec":{"display":{"title":"","collapse":{"open":true}},`, 1)
-	editedExport := strings.Replace(reexported, `"text":"added in UI"`, `"text":"edited in Terraform"`, 1)
-	for path, definition := range map[string]string{initial: dashboardLifecycleFile, updated: edited, authored: withoutMetadata} {
-		if err := os.WriteFile(path, []byte(definition), 0600); err != nil {
-			t.Fatal(err)
-		}
+	t.Cleanup(server.Close)
+	return server.URL
+}
+
+func writeDashboardFile(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "dashboard.json")
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
 	}
-	config := func(name, path string) string {
-		return lifecycleConfig(server.URL, "dashboard", fmt.Sprintf("project_id = \"project-1\"\nname = %q\nslug = \"main\"\ndefinition = file(%q)", name, path))
-	}
-	const address = "logfire_dashboard.test"
-	inPlace := resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction(address, plancheck.ResourceActionUpdate)}}
-	empty := resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}}
-	resource.Test(t, resource.TestCase{
-		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{
-				Config: config("Main", authored),
-				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr(address, "id", "dashboard-1"),
-					resource.TestCheckResourceAttr(address, "definition", withoutMetadata)),
-			},
-			{Config: config("Main", initial), ConfigPlanChecks: empty},
-			{
-				Config: fmt.Sprintf(`provider "logfire" {
+	return path
+}
+
+func dashboardLifecycleConfig(baseURL, name, path, extra string) string {
+	body := fmt.Sprintf("project_id = \"project-1\"\nname = %q\nslug = \"main\"\ndefinition = file(%q)\n%s", name, path, extra)
+	return lifecycleConfig(baseURL, "dashboard", body)
+}
+
+func dashboardLifecycleRemoved(baseURL string) string {
+	return fmt.Sprintf(`provider "logfire" {
   base_url = %q
   api_key = "test-token"
 }
 removed {
   from = logfire_dashboard.test
   lifecycle { destroy = false }
-}`, server.URL),
-			},
+}`, baseURL)
+}
+
+func TestLifecycleDashboardJSONFile(t *testing.T) {
+	t.Parallel()
+	api := &dashboardLifecycleAPIState{}
+	baseURL := startDashboardLifecycleAPI(t, api)
+	withoutMetadata := strings.Replace(dashboardLifecycleFile, `  "metadata": {"name": "Copied", "project": "source", "version": 7, "layoutUpdatedAt": "old"},`+"\n", "", 1)
+	withoutMetadata = strings.Replace(withoutMetadata, `"display": {"title": "", "collapse": {"open": true}}, `, "", 1)
+	edited := strings.Replace(dashboardLifecycleFile, `"text": "initial"`, `"text": "edited"`, 1)
+	reexportedAPI := `{"kind":"Dashboard","metadata":{"name":"Renamed","project":"test","version":8},"spec":{"display":{"name":"Dashboard title","description":null},"panels":{"text":{"kind":"Panel","spec":{"display":{"name":"Text"},"plugin":{"kind":"Markdown","spec":{"text":"edited","largeInteger":9007199254740992,"number":1.0,"fraction":0.3333333333333333}}}},"extra":{"kind":"Panel","spec":{"display":{"name":"Added in UI"},"plugin":{"kind":"Markdown","spec":{"text":"added in UI"}}}}},"layouts":[{"kind":"Grid","spec":{"items":[{"x":8,"y":4,"width":16,"height":6,"content":{"$ref":"#/spec/panels/text"}},{"x":0,"y":0,"width":8,"height":4,"content":{"$ref":"#/spec/panels/extra"}}]}}],"variables":[],"datasources":{},"duration":"1h","refreshInterval":"0s"}}`
+	reexported := strings.Replace(reexportedAPI, `"layouts":[{"kind":"Grid","spec":{`, `"annotations":[],"links":[],"layouts":[{"kind":"Grid","spec":{"display":{"title":"","collapse":{"open":true}},`, 1)
+	editedExport := strings.Replace(reexported, `"text":"added in UI"`, `"text":"edited in Terraform"`, 1)
+	authored := writeDashboardFile(t, withoutMetadata)
+	initial := writeDashboardFile(t, dashboardLifecycleFile)
+	updated := writeDashboardFile(t, edited)
+	config := func(name, path string) string {
+		return dashboardLifecycleConfig(baseURL, name, path, "")
+	}
+	inPlace := accPreApply(plancheck.ExpectResourceAction(dashboardAddress, plancheck.ResourceActionUpdate))
+	empty := accPreApply(plancheck.ExpectEmptyPlan())
+	checkID := resource.TestCheckResourceAttr(dashboardAddress, "id", "dashboard-1")
+	resource.Test(t, resource.TestCase{
+		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
 			{
-				Config: config("Main", initial), ResourceName: address,
+				Config: config("Main", authored),
+				Check: resource.ComposeTestCheckFunc(
+					checkID,
+					resource.TestCheckResourceAttr(dashboardAddress, "definition", withoutMetadata)),
+			},
+			{Config: config("Main", initial), ConfigPlanChecks: empty},
+			{Config: dashboardLifecycleRemoved(baseURL)},
+			{
+				Config: config("Main", initial), ResourceName: dashboardAddress,
 				ImportState: true, ImportStateId: "test/main", ImportStatePersist: true,
 			},
-			{
-				Config: config("Main", initial), ConfigPlanChecks: empty,
-				Check: resource.TestCheckResourceAttr(address, "id", "dashboard-1"),
-			},
+			{Config: config("Main", initial), ConfigPlanChecks: empty, Check: checkID},
 			{
 				Config: config("Renamed", initial), ConfigPlanChecks: inPlace,
-				PreConfig: func() {
-					api.Lock()
-					defer api.Unlock()
-					api.denyProjectRead = true
-				},
+				PreConfig: api.mutate(func() { api.denyProjectRead = true }),
 				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr(address, "id", "dashboard-1"),
-					resource.TestCheckResourceAttr(address, "name", "Renamed")),
+					checkID,
+					resource.TestCheckResourceAttr(dashboardAddress, "name", "Renamed")),
 			},
 			{
 				Config: config("Renamed", updated), ConfigPlanChecks: inPlace,
-				PreConfig: func() {
-					api.Lock()
-					defer api.Unlock()
-					api.denyProjectRead = false
-				},
+				PreConfig: api.mutate(func() { api.denyProjectRead = false }),
 				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr(address, "id", "dashboard-1"),
-					resource.TestCheckResourceAttr(address, "definition", edited)),
+					checkID,
+					resource.TestCheckResourceAttr(dashboardAddress, "definition", edited)),
 			},
 			{Config: config("Renamed", updated), ConfigPlanChecks: empty},
 			{
 				Config: config("Renamed", updated), ConfigPlanChecks: inPlace,
-				PreConfig: func() {
-					api.Lock()
-					defer api.Unlock()
+				PreConfig: api.mutate(func() {
 					api.name = "External name"
 					api.definition = strings.Replace(api.definition, `"text":"edited"`, `"text":"external"`, 1)
-				},
+				}),
 				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr(address, "id", "dashboard-1"),
-					resource.TestCheckResourceAttr(address, "name", "Renamed"),
-					resource.TestCheckResourceAttr(address, "definition", edited)),
+					checkID,
+					resource.TestCheckResourceAttr(dashboardAddress, "name", "Renamed"),
+					resource.TestCheckResourceAttr(dashboardAddress, "definition", edited)),
 			},
 			{Config: config("Renamed", updated), ConfigPlanChecks: empty},
 			{
 				Config: config("Renamed", updated), ConfigPlanChecks: empty,
-				PreConfig: func() {
-					api.Lock()
-					defer api.Unlock()
+				PreConfig: api.mutate(func() {
 					api.definition = reexportedAPI
 					if err := os.WriteFile(updated, []byte(reexported), 0600); err != nil {
 						t.Fatal(err)
 					}
-				},
+				}),
 				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr(address, "id", "dashboard-1"),
-					resource.TestCheckResourceAttr(address, "definition", strings.Replace(reexportedAPI,
+					checkID,
+					resource.TestCheckResourceAttr(dashboardAddress, "definition", strings.Replace(reexportedAPI,
 						`"metadata":{`, `"metadata":{"managedAllowEdits":false,"managedBy":"terraform",`, 1))),
 			},
-			{
-				Config: config("Renamed", updated), ConfigPlanChecks: empty,
-				Check: resource.TestCheckResourceAttr(address, "id", "dashboard-1"),
-			},
+			{Config: config("Renamed", updated), ConfigPlanChecks: empty, Check: checkID},
 			{
 				Config: config("Renamed", updated), ConfigPlanChecks: inPlace,
 				PreConfig: func() {
@@ -242,19 +252,17 @@ removed {
 					}
 				},
 				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr(address, "id", "dashboard-1"),
-					resource.TestCheckResourceAttr(address, "definition", editedExport)),
+					checkID,
+					resource.TestCheckResourceAttr(dashboardAddress, "definition", editedExport)),
 			},
 			{Config: config("Renamed", updated), ConfigPlanChecks: empty},
 			{
-				Config: config("Main", initial),
-				PreConfig: func() {
-					api.Lock()
-					defer api.Unlock()
-					api.id = ""
-				},
-				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction(address, plancheck.ResourceActionCreate)}},
-				Check:            resource.TestCheckResourceAttr(address, "id", "dashboard-2"),
+				Config:    config("Main", initial),
+				PreConfig: api.mutate(func() { api.id = "" }),
+				ConfigPlanChecks: accPreApply(
+					plancheck.ExpectResourceAction(dashboardAddress, plancheck.ResourceActionCreate),
+				),
+				Check: resource.TestCheckResourceAttr(dashboardAddress, "id", "dashboard-2"),
 			},
 		},
 	})
@@ -289,60 +297,42 @@ removed {
 func TestLifecycleDashboardManagedAllowEdits(t *testing.T) {
 	t.Parallel()
 	api := &dashboardLifecycleAPIState{}
-	server := httptest.NewServer(api)
-	defer server.Close()
-	file := filepath.Join(t.TempDir(), "dashboard.json")
-	if err := os.WriteFile(file, []byte(dashboardLifecycleFile), 0600); err != nil {
-		t.Fatal(err)
-	}
+	baseURL := startDashboardLifecycleAPI(t, api)
+	file := writeDashboardFile(t, dashboardLifecycleFile)
 	config := func(extra string) string {
-		return lifecycleConfig(server.URL, "dashboard", fmt.Sprintf("project_id = \"project-1\"\nname = \"Main\"\nslug = \"main\"\ndefinition = file(%q)\n%s", file, extra))
+		return dashboardLifecycleConfig(baseURL, "Main", file, extra)
 	}
-	const address = "logfire_dashboard.test"
+	update := accPreApply(plancheck.ExpectResourceAction(dashboardAddress, plancheck.ResourceActionUpdate))
+	empty := accPreApply(plancheck.ExpectEmptyPlan())
+	allowed := resource.TestCheckResourceAttr(dashboardAddress, "managed_allow_edits", "true")
 	resource.Test(t, resource.TestCase{
 		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
 				Config: config(""),
-				Check:  resource.TestCheckResourceAttr(address, "managed_allow_edits", "false"),
+				Check:  resource.TestCheckResourceAttr(dashboardAddress, "managed_allow_edits", "false"),
 			},
+			{Config: config(""), ConfigPlanChecks: empty},
+			{Config: config("managed_allow_edits = true"), Check: allowed},
+			{Config: config(""), ConfigPlanChecks: empty, Check: allowed},
 			{
-				Config:           config(""),
-				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}},
-			},
-			{
-				Config: config("managed_allow_edits = true"),
-				Check:  resource.TestCheckResourceAttr(address, "managed_allow_edits", "true"),
-			},
-			{
-				Config:           config(""),
-				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}},
-				Check:            resource.TestCheckResourceAttr(address, "managed_allow_edits", "true"),
-			},
-			{
-				PreConfig:        func() { api.Lock(); api.allowEdits = false; api.Unlock() },
+				PreConfig:        api.mutate(func() { api.allowEdits = false }),
 				Config:           config("managed_allow_edits = true"),
-				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction(address, plancheck.ResourceActionUpdate)}},
-				Check:            resource.TestCheckResourceAttr(address, "managed_allow_edits", "true"),
+				ConfigPlanChecks: update,
+				Check:            allowed,
 			},
+			{Config: dashboardLifecycleRemoved(baseURL)},
 			{
-				Config: fmt.Sprintf("provider \"logfire\" {\nbase_url = %q\napi_key = \"test-token\"\n}\nremoved {\nfrom = %s\nlifecycle { destroy = false }\n}", server.URL, address),
-			},
-			{
-				PreConfig: func() { api.Lock(); api.managedBy = ""; api.Unlock() },
-				Config:    config(""), ResourceName: address,
+				PreConfig: api.mutate(func() { api.managedBy = "" }),
+				Config:    config(""), ResourceName: dashboardAddress,
 				ImportState: true, ImportStateId: "test/main", ImportStatePersist: true,
 			},
 			{
 				Config:           config(""),
-				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}},
-				Check:            resource.TestCheckNoResourceAttr(address, "managed_allow_edits"),
+				ConfigPlanChecks: empty,
+				Check:            resource.TestCheckNoResourceAttr(dashboardAddress, "managed_allow_edits"),
 			},
-			{
-				Config:           config("managed_allow_edits = true"),
-				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction(address, plancheck.ResourceActionUpdate)}},
-				Check:            resource.TestCheckResourceAttr(address, "managed_allow_edits", "true"),
-			},
+			{Config: config("managed_allow_edits = true"), ConfigPlanChecks: update, Check: allowed},
 		},
 	})
 	api.Lock()
@@ -357,20 +347,14 @@ func TestLifecycleDashboardManagedAllowEdits(t *testing.T) {
 func TestLifecycleDashboardOnOlderLogfire(t *testing.T) {
 	t.Parallel()
 	api := &dashboardLifecycleAPIState{olderLogfire: true}
-	server := httptest.NewServer(api)
-	defer server.Close()
-	file := filepath.Join(t.TempDir(), "dashboard.json")
-	if err := os.WriteFile(file, []byte(dashboardLifecycleFile), 0600); err != nil {
-		t.Fatal(err)
-	}
-	config := lifecycleConfig(server.URL, "dashboard", fmt.Sprintf("project_id = \"project-1\"\nname = \"Main\"\nslug = \"main\"\ndefinition = file(%q)", file))
-	const address = "logfire_dashboard.test"
+	baseURL := startDashboardLifecycleAPI(t, api)
+	config := dashboardLifecycleConfig(baseURL, "Main", writeDashboardFile(t, dashboardLifecycleFile), "")
 	resource.Test(t, resource.TestCase{
 		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
-			{Config: config, Check: resource.TestCheckNoResourceAttr(address, "managed_allow_edits")},
+			{Config: config, Check: resource.TestCheckNoResourceAttr(dashboardAddress, "managed_allow_edits")},
 			{
-				Config: config, ResourceName: address, ImportState: true, ImportStateId: "test/main",
+				Config: config, ResourceName: dashboardAddress, ImportState: true, ImportStateId: "test/main",
 				ImportStateVerify: true, ImportStateVerifyIgnore: []string{"definition"},
 			},
 		},
@@ -382,27 +366,18 @@ func TestLifecycleDashboardOnOlderLogfire(t *testing.T) {
 func TestLifecycleDashboardRetriesIgnoredLock(t *testing.T) {
 	t.Parallel()
 	api := &dashboardLifecycleAPIState{olderLogfire: true}
-	server := httptest.NewServer(api)
-	defer server.Close()
-	file := filepath.Join(t.TempDir(), "dashboard.json")
-	if err := os.WriteFile(file, []byte(dashboardLifecycleFile), 0600); err != nil {
-		t.Fatal(err)
-	}
-	config := lifecycleConfig(server.URL, "dashboard", fmt.Sprintf("project_id = \"project-1\"\nname = \"Main\"\nslug = \"main\"\ndefinition = file(%q)\nmanaged_allow_edits = false", file))
-	const address = "logfire_dashboard.test"
+	baseURL := startDashboardLifecycleAPI(t, api)
+	file := writeDashboardFile(t, dashboardLifecycleFile)
+	config := dashboardLifecycleConfig(baseURL, "Main", file, "managed_allow_edits = false")
 	resource.Test(t, resource.TestCase{
 		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{Config: config, ExpectNonEmptyPlan: true},
 			{
-				PreConfig: func() {
-					api.Lock()
-					defer api.Unlock()
-					api.olderLogfire = false
-				},
-				Config: config,
+				PreConfig: api.mutate(func() { api.olderLogfire = false }),
+				Config:    config,
 				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr(address, "managed_allow_edits", "false"),
+					resource.TestCheckResourceAttr(dashboardAddress, "managed_allow_edits", "false"),
 					func(*terraform.State) error {
 						api.Lock()
 						defer api.Unlock()

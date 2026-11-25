@@ -15,7 +15,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
@@ -29,7 +28,9 @@ func TestSloDeliveryApplied(t *testing.T) {
 	t.Parallel()
 
 	sent := &logclient.SloAlertsDelivery{
-		Fast: &logclient.SloTierDelivery{ChannelAssignments: []logclient.ChannelAssignment{testPagerduty, testIncidents}},
+		Fast: &logclient.SloTierDelivery{
+			ChannelAssignments: []logclient.ChannelAssignment{testPagerduty, testIncidents},
+		},
 		Slow: &logclient.SloTierDelivery{ChannelAssignments: []logclient.ChannelAssignment{}},
 	}
 	for _, tt := range []struct {
@@ -42,7 +43,11 @@ func TestSloDeliveryApplied(t *testing.T) {
 		{
 			"every sent tier applied, in another order, with an unsent tier that differs",
 			sent,
-			sloReadWithTiers([]logclient.ChannelAssignment{testIncidents, testPagerduty}, []logclient.ChannelAssignment{testReliability}, nil).Alerts,
+			sloReadWithTiers(
+				[]logclient.ChannelAssignment{testIncidents, testPagerduty},
+				[]logclient.ChannelAssignment{testReliability},
+				nil,
+			).Alerts,
 			"",
 		},
 		{"no alerts in the response", sent, nil, "does not return per-tier `alerts`"},
@@ -55,7 +60,11 @@ func TestSloDeliveryApplied(t *testing.T) {
 		{
 			"a different schedule",
 			sent,
-			sloReadWithTiers([]logclient.ChannelAssignment{testPagerduty, {ChannelID: "incidents"}}, nil, nil).Alerts,
+			sloReadWithTiers(
+				[]logclient.ChannelAssignment{testPagerduty, {ChannelID: "incidents"}},
+				nil,
+				nil,
+			).Alerts,
 			"the `fast` tier alert",
 		},
 	} {
@@ -80,19 +89,13 @@ func TestSloDeliveryApplied(t *testing.T) {
 }
 
 // fakeSloLogfire serves the SLO routes as a Logfire release of the given
-// behaviour does:
+// behaviour does, and appends the body of every SLO create request to creates
+// when it is not nil. It returns the server URL.
 //   - "no-alerts": SLO responses have no `alerts` (before tier alerts).
 //   - "ignores-alerts": responses list the tier alerts, but writes ignore
 //     `alerts`, so every alert keeps no channels (v2026-09-22.02).
 //   - "applies-alerts": writes set the named tiers' channels.
-func fakeSloLogfire(t *testing.T, behaviour string) *httptest.Server {
-	t.Helper()
-	return fakeSloLogfireRecording(t, behaviour, nil)
-}
-
-// fakeSloLogfireRecording is fakeSloLogfire that also appends the body of
-// every SLO create request to creates, when it is not nil.
-func fakeSloLogfireRecording(t *testing.T, behaviour string, creates *[]map[string]any) *httptest.Server {
+func fakeSloLogfire(t *testing.T, behaviour string, creates *[]map[string]any) string {
 	t.Helper()
 	var mu sync.Mutex
 	var slo map[string]any
@@ -112,7 +115,10 @@ func fakeSloLogfireRecording(t *testing.T, behaviour string, creates *[]map[stri
 				if tier == "slow" {
 					severity = "ticket"
 				}
-				alerts[tier] = map[string]any{"alert_id": "alert-" + tier, "severity": severity, "viable": true, "channel_assignments": channels[tier]}
+				alerts[tier] = map[string]any{
+					"alert_id": "alert-" + tier, "severity": severity, "viable": true,
+					"channel_assignments": channels[tier],
+				}
 			}
 			body["alerts"] = alerts
 		}
@@ -120,7 +126,7 @@ func fakeSloLogfireRecording(t *testing.T, behaviour string, creates *[]map[stri
 		w.WriteHeader(status)
 		_ = json.NewEncoder(w).Encode(body)
 	}
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
 		const collection = "/api/v1/projects/proj-1/slos/"
@@ -163,7 +169,8 @@ func fakeSloLogfireRecording(t *testing.T, behaviour string, creates *[]map[stri
 				"created_at": "2026-09-22T00:00:00Z", "updated_at": nil, "predicate_version": 1,
 			}
 			respond(w, http.StatusCreated)
-		case (r.Method == http.MethodGet || r.Method == http.MethodPatch) && r.URL.Path == collection+"slo-1/" && slo != nil:
+		case (r.Method == http.MethodGet || r.Method == http.MethodPatch) &&
+			r.URL.Path == collection+"slo-1/" && slo != nil:
 			respond(w, http.StatusOK)
 		case r.Method == http.MethodDelete && r.URL.Path == collection+"slo-1/":
 			slo = nil
@@ -172,11 +179,21 @@ func fakeSloLogfireRecording(t *testing.T, behaviour string, creates *[]map[stri
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
+	t.Cleanup(server.Close)
+	return server.URL
 }
 
 const testSloFastChannels = `
   alerts = {
     fast = { channel_assignments = [{ channel_id = "pagerduty" }] }
+  }
+`
+
+const testSloEveryTierChannels = `
+  alerts = {
+    fast   = { channel_assignments = [{ channel_id = "pagerduty" }] }
+    medium = { channel_assignments = [{ channel_id = "incidents" }] }
+    slow   = { channel_assignments = [{ channel_id = "reliability" }] }
   }
 `
 
@@ -199,6 +216,27 @@ resource "logfire_slo" "test" {
 `, baseURL, alerts)
 }
 
+func runSloSteps(t *testing.T, steps ...resource.TestStep) {
+	t.Helper()
+	resource.Test(t, resource.TestCase{
+		IsUnitTest:               true,
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps:                    steps,
+	})
+}
+
+func sloEmptyPlan() resource.ConfigPlanChecks {
+	return resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}}
+}
+
+func sloTierCheck(tier, attribute string, value knownvalue.Check) statecheck.StateCheck {
+	return statecheck.ExpectKnownValue(
+		"logfire_slo.test",
+		tfjsonpath.New("alerts").AtMapKey(tier).AtMapKey(attribute),
+		value,
+	)
+}
+
 // TestSloDeliveryOnOlderLogfire applies SLO channels against Logfire releases
 // that do not set them, on create and on an update that adds them. The apply
 // must fail, instead of saving the SLO with alerts that notify no channel.
@@ -206,43 +244,32 @@ func TestSloDeliveryOnOlderLogfire(t *testing.T) {
 	tooOld := regexp.MustCompile(`Logfire release too old for SLO channel assignments`)
 	for _, behaviour := range []string{"no-alerts", "ignores-alerts"} {
 		t.Run(behaviour+"/create", func(t *testing.T) {
-			server := fakeSloLogfire(t, behaviour)
-			defer server.Close()
-			resource.Test(t, resource.TestCase{
-				IsUnitTest:               true,
-				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-				Steps: []resource.TestStep{{
-					Config:      testSloDeliveryReleaseConfig(server.URL, testSloFastChannels),
-					ExpectError: tooOld,
-				}},
+			url := fakeSloLogfire(t, behaviour, nil)
+			runSloSteps(t, resource.TestStep{
+				Config:      testSloDeliveryReleaseConfig(url, testSloFastChannels),
+				ExpectError: tooOld,
 			})
 		})
 		t.Run(behaviour+"/update", func(t *testing.T) {
-			server := fakeSloLogfire(t, behaviour)
-			defer server.Close()
-			resource.Test(t, resource.TestCase{
-				IsUnitTest:               true,
-				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-				Steps: []resource.TestStep{
-					{Config: testSloDeliveryReleaseConfig(server.URL, "")},
-					{Config: testSloDeliveryReleaseConfig(server.URL, testSloFastChannels), ExpectError: tooOld},
+			url := fakeSloLogfire(t, behaviour, nil)
+			runSloSteps(
+				t,
+				resource.TestStep{Config: testSloDeliveryReleaseConfig(url, "")},
+				resource.TestStep{
+					Config:      testSloDeliveryReleaseConfig(url, testSloFastChannels),
+					ExpectError: tooOld,
 				},
-			})
+			)
 		})
 	}
 
 	t.Run("applies-alerts", func(t *testing.T) {
-		server := fakeSloLogfire(t, "applies-alerts")
-		defer server.Close()
-		resource.Test(t, resource.TestCase{
-			IsUnitTest:               true,
-			ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-			Steps: []resource.TestStep{{
-				Config: testSloDeliveryReleaseConfig(server.URL, testSloFastChannels),
-				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("alerts").AtMapKey("fast").AtMapKey("channel_assignments"), knownvalue.SetSizeExact(1)),
-				},
-			}},
+		url := fakeSloLogfire(t, "applies-alerts", nil)
+		runSloSteps(t, resource.TestStep{
+			Config: testSloDeliveryReleaseConfig(url, testSloFastChannels),
+			ConfigStateChecks: []statecheck.StateCheck{
+				sloTierCheck("fast", "channel_assignments", knownvalue.SetSizeExact(1)),
+			},
 		})
 	})
 }
@@ -251,59 +278,40 @@ func TestSloDeliveryOnOlderLogfire(t *testing.T) {
 // `alerts`, that is removed from the configuration plans no change and keeps
 // its channels.
 func TestSloUnconfiguredTiersAreNotManaged(t *testing.T) {
-	server := fakeSloLogfire(t, "applies-alerts")
-	defer server.Close()
-	every := `
-  alerts = {
-    fast   = { channel_assignments = [{ channel_id = "pagerduty" }] }
-    medium = { channel_assignments = [{ channel_id = "incidents" }] }
-    slow   = { channel_assignments = [{ channel_id = "reliability" }] }
-  }
-`
+	url := fakeSloLogfire(t, "applies-alerts", nil)
 	fastWithoutAssignments := `
   alerts = {
     fast = {}
   }
 `
-	resource.Test(t, resource.TestCase{
-		IsUnitTest:               true,
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{Config: testSloDeliveryReleaseConfig(server.URL, every)},
-			{
-				Config: testSloDeliveryReleaseConfig(server.URL, testSloFastChannels),
-				ConfigPlanChecks: resource.ConfigPlanChecks{
-					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
-				},
-				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("alerts").AtMapKey("slow").AtMapKey("channel_assignments"), knownvalue.SetSizeExact(1)),
-				},
-			},
-			{
-				// A tier object without channel_assignments also leaves its
-				// current channels unmanaged.
-				Config: testSloDeliveryReleaseConfig(server.URL, fastWithoutAssignments),
-				ConfigPlanChecks: resource.ConfigPlanChecks{
-					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
-				},
-				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("alerts").AtMapKey("fast").AtMapKey("channel_assignments"), knownvalue.SetSizeExact(1)),
-				},
-			},
-			{
-				Config: testSloDeliveryReleaseConfig(server.URL, ""),
-				ConfigPlanChecks: resource.ConfigPlanChecks{
-					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
-				},
-			},
-			{
-				Config: testSloDeliveryReleaseConfig(server.URL, "  alerts = null\n"),
-				ConfigPlanChecks: resource.ConfigPlanChecks{
-					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
-				},
+	runSloSteps(
+		t,
+		resource.TestStep{Config: testSloDeliveryReleaseConfig(url, testSloEveryTierChannels)},
+		resource.TestStep{
+			Config:           testSloDeliveryReleaseConfig(url, testSloFastChannels),
+			ConfigPlanChecks: sloEmptyPlan(),
+			ConfigStateChecks: []statecheck.StateCheck{
+				sloTierCheck("slow", "channel_assignments", knownvalue.SetSizeExact(1)),
 			},
 		},
-	})
+		resource.TestStep{
+			// A tier object without channel_assignments also leaves its
+			// current channels unmanaged.
+			Config:           testSloDeliveryReleaseConfig(url, fastWithoutAssignments),
+			ConfigPlanChecks: sloEmptyPlan(),
+			ConfigStateChecks: []statecheck.StateCheck{
+				sloTierCheck("fast", "channel_assignments", knownvalue.SetSizeExact(1)),
+			},
+		},
+		resource.TestStep{
+			Config:           testSloDeliveryReleaseConfig(url, ""),
+			ConfigPlanChecks: sloEmptyPlan(),
+		},
+		resource.TestStep{
+			Config:           testSloDeliveryReleaseConfig(url, "  alerts = null\n"),
+			ConfigPlanChecks: sloEmptyPlan(),
+		},
+	)
 }
 
 // TestSloConfiguredUnknownAssignmentsAreNotTakenFromState checks an update
@@ -373,23 +381,14 @@ resource "terraform_data" "schedule" {
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			server := fakeSloLogfire(t, "applies-alerts")
-			defer server.Close()
-			withUnknown := testSloDeliveryReleaseConfig(server.URL, tt.alerts) + tt.dependency
-			resource.Test(t, resource.TestCase{
-				IsUnitTest:               true,
-				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-				Steps: []resource.TestStep{
-					{Config: testSloDeliveryReleaseConfig(server.URL, testSloFastChannels)},
-					{Config: withUnknown},
-					{
-						Config: withUnknown,
-						ConfigPlanChecks: resource.ConfigPlanChecks{
-							PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
-						},
-					},
-				},
-			})
+			url := fakeSloLogfire(t, "applies-alerts", nil)
+			withUnknown := testSloDeliveryReleaseConfig(url, tt.alerts) + tt.dependency
+			runSloSteps(
+				t,
+				resource.TestStep{Config: testSloDeliveryReleaseConfig(url, testSloFastChannels)},
+				resource.TestStep{Config: withUnknown},
+				resource.TestStep{Config: withUnknown, ConfigPlanChecks: sloEmptyPlan()},
+			)
 		})
 	}
 }
@@ -406,32 +405,11 @@ func TestSloPlanAlerts(t *testing.T) {
 
 	// What Terraform plans for `alerts = { fast = { channel_assignments = ... } }`
 	// on an update: every computed value, and every other tier, unknown.
-	fast, diags := types.ObjectValueFrom(ctx, sloTierAttrTypes, sloTierModel{
-		ChannelAssignments: testChannelAssignments(t, testPagerduty, testIncidents),
-		AlertID:            types.StringUnknown(), Severity: types.StringUnknown(), Viable: types.BoolUnknown(),
-	})
-	if diags.HasError() {
-		t.Fatal(diags)
-	}
-	configFast, diags := types.ObjectValueFrom(ctx, sloTierAttrTypes, sloTierModel{
-		ChannelAssignments: testChannelAssignments(t, testPagerduty, testIncidents),
-		AlertID:            types.StringNull(), Severity: types.StringNull(), Viable: types.BoolNull(),
-	})
-	if diags.HasError() {
-		t.Fatal(diags)
-	}
-	config, diags := types.ObjectValue(sloAlertsAttrTypes, map[string]attr.Value{
-		"fast": configFast, "medium": types.ObjectNull(sloTierAttrTypes), "slow": types.ObjectNull(sloTierAttrTypes),
-	})
-	if diags.HasError() {
-		t.Fatal(diags)
-	}
-	plan, diags := types.ObjectValue(sloAlertsAttrTypes, map[string]attr.Value{
-		"fast": fast, "medium": types.ObjectUnknown(sloTierAttrTypes), "slow": types.ObjectUnknown(sloTierAttrTypes),
-	})
-	if diags.HasError() {
-		t.Fatal(diags)
-	}
+	assignments := testChannelAssignments(t, testPagerduty, testIncidents)
+	nullTier := types.ObjectNull(sloTierAttrTypes)
+	unknownTier := types.ObjectUnknown(sloTierAttrTypes)
+	config := sloAlertsObject(t, sloTierObject(t, assignments, false), nullTier, nullTier)
+	plan := sloAlertsObject(t, sloTierObject(t, assignments, true), unknownTier, unknownTier)
 
 	for _, tt := range []struct {
 		name          string
@@ -450,12 +428,13 @@ func TestSloPlanAlerts(t *testing.T) {
 			m := state
 			m.Alerts = got
 			f := sloTier(t, m, "fast")
-			if !f.ChannelAssignments.Equal(testChannelAssignments(t, testPagerduty, testIncidents)) ||
-				f.AlertID.ValueString() != "alert-fast" || f.Severity.ValueString() != "page" || !f.Viable.Equal(tt.wantViable) {
+			if !f.ChannelAssignments.Equal(assignments) || f.AlertID.ValueString() != "alert-fast" ||
+				f.Severity.ValueString() != "page" || !f.Viable.Equal(tt.wantViable) {
 				t.Fatalf("fast: got %+v", f)
 			}
 			medium := sloTier(t, m, "medium")
-			if !medium.ChannelAssignments.Equal(stateMedium.ChannelAssignments) || !medium.AlertID.Equal(stateMedium.AlertID) || !medium.Viable.Equal(tt.wantViable) {
+			if !medium.ChannelAssignments.Equal(stateMedium.ChannelAssignments) ||
+				!medium.AlertID.Equal(stateMedium.AlertID) || !medium.Viable.Equal(tt.wantViable) {
 				t.Fatalf("medium: got %+v", medium)
 			}
 		})
@@ -467,32 +446,23 @@ func TestSloPlanAlerts(t *testing.T) {
 // change. The new SLO must be created without the old SLO's channels.
 func TestSloReplacementWithoutAlertsSendsNoChannels(t *testing.T) {
 	var creates []map[string]any
-	server := fakeSloLogfireRecording(t, "applies-alerts", &creates)
-	defer server.Close()
-	every := `
-  alerts = {
-    fast   = { channel_assignments = [{ channel_id = "pagerduty" }] }
-    medium = { channel_assignments = [{ channel_id = "incidents" }] }
-    slow   = { channel_assignments = [{ channel_id = "reliability" }] }
-  }
-`
-	replaced := strings.Replace(testSloDeliveryReleaseConfig(server.URL, ""), `"payments-api"`, `"orders-api"`, 1)
-	resource.Test(t, resource.TestCase{
-		IsUnitTest:               true,
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{Config: testSloDeliveryReleaseConfig(server.URL, every)},
-			{
-				Config: replaced,
-				ConfigPlanChecks: resource.ConfigPlanChecks{
-					PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction("logfire_slo.test", plancheck.ResourceActionDestroyBeforeCreate)},
-				},
-				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue("logfire_slo.test", tfjsonpath.New("alerts").AtMapKey("fast").AtMapKey("channel_assignments"), knownvalue.SetSizeExact(0)),
+	url := fakeSloLogfire(t, "applies-alerts", &creates)
+	replaced := strings.Replace(testSloDeliveryReleaseConfig(url, ""), `"payments-api"`, `"orders-api"`, 1)
+	runSloSteps(
+		t,
+		resource.TestStep{Config: testSloDeliveryReleaseConfig(url, testSloEveryTierChannels)},
+		resource.TestStep{
+			Config: replaced,
+			ConfigPlanChecks: resource.ConfigPlanChecks{
+				PreApply: []plancheck.PlanCheck{
+					plancheck.ExpectResourceAction("logfire_slo.test", plancheck.ResourceActionDestroyBeforeCreate),
 				},
 			},
+			ConfigStateChecks: []statecheck.StateCheck{
+				sloTierCheck("fast", "channel_assignments", knownvalue.SetSizeExact(0)),
+			},
 		},
-	})
+	)
 	if len(creates) != 2 {
 		t.Fatalf("got %d create requests, want 2", len(creates))
 	}

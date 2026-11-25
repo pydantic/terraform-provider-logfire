@@ -5,6 +5,7 @@ package provider
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -14,122 +15,113 @@ import (
 func environmentsBaseModel(t *testing.T) AlertModel {
 	t.Helper()
 
-	channelSet := testChannelAssignments(t, logclient.ChannelAssignment{ChannelID: "channel-1"})
-
 	return AlertModel{
 		Name:               types.StringValue("name"),
 		Query:              types.StringValue("select 1"),
 		TimeWindow:         newAlertDurationValue("5m"),
 		Frequency:          newAlertDurationValue("5m"),
-		ChannelAssignments: channelSet,
+		ChannelAssignments: testChannelAssignments(t, logclient.ChannelAssignment{ChannelID: "channel-1"}),
 		NotifyWhen:         types.StringValue("has_matches"),
+	}
+}
+
+func testAlertRead() *logclient.AlertRead {
+	return &logclient.AlertRead{
+		ID:         "id-1",
+		ProjectID:  "proj-1",
+		Name:       "name",
+		Query:      "select 1",
+		TimeWindow: "PT5M",
+		Frequency:  "PT5M",
+		Watermark:  "PT10S",
+		Channels:   []logclient.AlertChannelRead{},
+		NotifyWhen: "has_matches",
+		Active:     true,
 	}
 }
 
 func TestAlertModelToCreate_Environments(t *testing.T) {
 	t.Parallel()
 
-	t.Run("omits environments when null", func(t *testing.T) {
-		t.Parallel()
+	envSet, diags := types.SetValueFrom(context.Background(), types.StringType, []string{"production", "staging"})
+	if diags.HasError() {
+		t.Fatalf("failed to build environments set: %v", diags)
+	}
 
-		m := environmentsBaseModel(t)
-		m.Environments = types.SetNull(types.StringType)
+	cases := []struct {
+		name         string
+		environments types.Set
+		want         []string
+	}{
+		{name: "omits environments when null", environments: types.SetNull(types.StringType), want: nil},
+		{name: "passes configured environments", environments: envSet, want: []string{"production", "staging"}},
+	}
 
-		create, diags := alertModelToCreate(context.Background(), &m)
-		if diags.HasError() {
-			t.Fatalf("unexpected diagnostics: %v", diags)
-		}
-		if len(create.Environments) != 0 {
-			t.Fatalf("expected no environments, got %#v", create.Environments)
-		}
-	})
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	t.Run("passes configured environments", func(t *testing.T) {
-		t.Parallel()
+			m := environmentsBaseModel(t)
+			m.Environments = tc.environments
 
-		envSet, diags := types.SetValueFrom(context.Background(), types.StringType, []string{"production", "staging"})
-		if diags.HasError() {
-			t.Fatalf("failed to build environments set: %v", diags)
-		}
-		m := environmentsBaseModel(t)
-		m.Environments = envSet
-
-		create, gotDiags := alertModelToCreate(context.Background(), &m)
-		if gotDiags.HasError() {
-			t.Fatalf("unexpected diagnostics: %v", gotDiags)
-		}
-		if len(create.Environments) != 2 {
-			t.Fatalf("expected 2 environments, got %#v", create.Environments)
-		}
-		got := map[string]bool{}
-		for _, e := range create.Environments {
-			got[e] = true
-		}
-		if !got["production"] || !got["staging"] {
-			t.Fatalf("expected production and staging, got %#v", create.Environments)
-		}
-	})
+			create, diags := alertModelToCreate(context.Background(), &m)
+			if diags.HasError() {
+				t.Fatalf("unexpected diagnostics: %v", diags)
+			}
+			if got := slices.Sorted(slices.Values(create.Environments)); !slices.Equal(got, tc.want) {
+				t.Fatalf("environments = %#v, want %#v", create.Environments, tc.want)
+			}
+		})
+	}
 }
 
 func TestAlertReadToModel_Environments(t *testing.T) {
 	t.Parallel()
 
-	read := func(envs []string) *logclient.AlertRead {
-		return &logclient.AlertRead{
-			ID:           "id-1",
-			ProjectID:    "proj-1",
-			Name:         "name",
-			Query:        "select 1",
-			TimeWindow:   "PT5M",
-			Frequency:    "PT5M",
-			Watermark:    "PT10S",
-			Environments: envs,
-			Channels:     []logclient.AlertChannelRead{},
-			NotifyWhen:   "has_matches",
-			Active:       true,
-		}
+	emptySet, diags := types.SetValueFrom(context.Background(), types.StringType, []string{})
+	if diags.HasError() {
+		t.Fatalf("failed to build empty set: %v", diags)
 	}
 
-	t.Run("keeps null when API returns empty and config omitted it", func(t *testing.T) {
-		t.Parallel()
+	cases := []struct {
+		name     string
+		prior    types.Set
+		returned []string
+		wantNull bool
+		wantLen  int
+	}{
+		{
+			name:     "keeps null when API returns empty and config omitted it",
+			prior:    types.SetNull(types.StringType),
+			returned: []string{},
+			wantNull: true,
+		},
+		{
+			name:     "keeps empty set when configured empty",
+			prior:    emptySet,
+			returned: []string{},
+		},
+		{
+			name:     "maps returned environments",
+			prior:    types.SetNull(types.StringType),
+			returned: []string{"production", "staging"},
+			wantLen:  2,
+		},
+	}
 
-		var got AlertModel
-		got.Environments = types.SetNull(types.StringType)
-		if diags := alertReadToModel(context.Background(), read([]string{}), &got); diags.HasError() {
-			t.Fatalf("unexpected diagnostics: %v", diags)
-		}
-		if !got.Environments.IsNull() {
-			t.Fatalf("expected null environments, got %#v", got.Environments)
-		}
-	})
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	t.Run("keeps empty set when configured empty", func(t *testing.T) {
-		t.Parallel()
-
-		emptySet, diags := types.SetValueFrom(context.Background(), types.StringType, []string{})
-		if diags.HasError() {
-			t.Fatalf("failed to build empty set: %v", diags)
-		}
-		var got AlertModel
-		got.Environments = emptySet
-		if gotDiags := alertReadToModel(context.Background(), read([]string{}), &got); gotDiags.HasError() {
-			t.Fatalf("unexpected diagnostics: %v", gotDiags)
-		}
-		if got.Environments.IsNull() || len(got.Environments.Elements()) != 0 {
-			t.Fatalf("expected empty environments set, got %#v", got.Environments)
-		}
-	})
-
-	t.Run("maps returned environments", func(t *testing.T) {
-		t.Parallel()
-
-		var got AlertModel
-		got.Environments = types.SetNull(types.StringType)
-		if diags := alertReadToModel(context.Background(), read([]string{"production", "staging"}), &got); diags.HasError() {
-			t.Fatalf("unexpected diagnostics: %v", diags)
-		}
-		if got.Environments.IsNull() || len(got.Environments.Elements()) != 2 {
-			t.Fatalf("expected 2 environments, got %#v", got.Environments)
-		}
-	})
+			read := testAlertRead()
+			read.Environments = tc.returned
+			got := AlertModel{Environments: tc.prior}
+			if diags := alertReadToModel(context.Background(), read, &got); diags.HasError() {
+				t.Fatalf("unexpected diagnostics: %v", diags)
+			}
+			if got.Environments.IsNull() != tc.wantNull || len(got.Environments.Elements()) != tc.wantLen {
+				t.Fatalf("environments = %#v, want null=%v with %d elements", got.Environments, tc.wantNull, tc.wantLen)
+			}
+		})
+	}
 }

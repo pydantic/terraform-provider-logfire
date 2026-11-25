@@ -13,109 +13,88 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/statecheck"
-	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 )
 
 func TestAccReadTokenResource(t *testing.T) {
 	t.Parallel()
+	testAccTokenResource(t, "read")
+}
 
-	projectName := fmt.Sprintf("acc-read-token-%s", acctest.RandStringFromCharSet(6, acctest.CharSetAlphaNum))
+// testAccTokenResource runs the expiry lifecycle shared by the read and write
+// token resources. Logfire returns token_prefix only when listing tokens, so the
+// prefix is checked after a refresh and not right after a create.
+func testAccTokenResource(t *testing.T, kind string) {
+	address := fmt.Sprintf("logfire_%s_token.test", kind)
+	projectName := fmt.Sprintf("acc-%s-token-%s", kind, acctest.RandStringFromCharSet(6, acctest.CharSetAlphaNum))
 	expiresAt := time.Now().UTC().AddDate(0, 1, 0).Format("2006-01-02") + "T23:59:59Z"
+	withExpiry := fmt.Sprintf("%q", expiresAt)
+	replace := accPreApply(plancheck.ExpectResourceAction(address, plancheck.ResourceActionReplace))
+	empty := accPreApply(plancheck.ExpectEmptyPlan())
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccReadTokenResourceConfig(projectName, nil),
+				Config: testAccTokenResourceConfig(kind, projectName, ""),
 				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue("logfire_read_token.test", tfjsonpath.New("id"), knownvalue.NotNull()),
-					statecheck.ExpectKnownValue("logfire_read_token.test", tfjsonpath.New("project_id"), knownvalue.NotNull()),
-					statecheck.ExpectKnownValue("logfire_read_token.test", tfjsonpath.New("token"), knownvalue.NotNull()),
-					statecheck.ExpectKnownValue("logfire_read_token.test", tfjsonpath.New("expires_at"), knownvalue.Null()),
+					expectAccValue(address, "id", knownvalue.NotNull()),
+					expectAccValue(address, "project_id", knownvalue.NotNull()),
+					expectAccValue(address, "token", knownvalue.NotNull()),
+					expectAccValue(address, "expires_at", knownvalue.Null()),
 				},
 			},
 			{
-				Config: testAccReadTokenResourceConfig(projectName, nil),
-				ConfigPlanChecks: resource.ConfigPlanChecks{
-					PreApply: []plancheck.PlanCheck{
-						plancheck.ExpectEmptyPlan(),
-					},
-				},
+				Config:           testAccTokenResourceConfig(kind, projectName, ""),
+				ConfigPlanChecks: empty,
 				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue("logfire_read_token.test", tfjsonpath.New("token_prefix"), knownvalue.NotNull()),
-					statecheck.ExpectKnownValue("logfire_read_token.test", tfjsonpath.New("token"), knownvalue.NotNull()),
-					statecheck.ExpectKnownValue("logfire_read_token.test", tfjsonpath.New("expires_at"), knownvalue.Null()),
+					expectAccValue(address, "token_prefix", knownvalue.NotNull()),
+					expectAccValue(address, "token", knownvalue.NotNull()),
+					expectAccValue(address, "expires_at", knownvalue.Null()),
 				},
 			},
 			{
-				Config: testAccReadTokenResourceConfig(projectName, stringPtr(expiresAt)),
-				ConfigPlanChecks: resource.ConfigPlanChecks{
-					PreApply: []plancheck.PlanCheck{
-						plancheck.ExpectResourceAction("logfire_read_token.test", plancheck.ResourceActionReplace),
-					},
-				},
+				Config:           testAccTokenResourceConfig(kind, projectName, withExpiry),
+				ConfigPlanChecks: replace,
 				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue("logfire_read_token.test", tfjsonpath.New("token"), knownvalue.NotNull()),
-					statecheck.ExpectKnownValue("logfire_read_token.test", tfjsonpath.New("expires_at"), knownvalue.StringExact(expiresAt)),
+					expectAccValue(address, "token", knownvalue.NotNull()),
+					expectAccValue(address, "expires_at", knownvalue.StringExact(expiresAt)),
 				},
 			},
 			{
-				Config: testAccReadTokenResourceConfig(projectName, stringPtr(expiresAt)),
-				ConfigPlanChecks: resource.ConfigPlanChecks{
-					PreApply: []plancheck.PlanCheck{
-						plancheck.ExpectEmptyPlan(),
-					},
-				},
+				Config:           testAccTokenResourceConfig(kind, projectName, withExpiry),
+				ConfigPlanChecks: empty,
 				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue("logfire_read_token.test", tfjsonpath.New("expires_at"), knownvalue.StringExact(expiresAt)),
+					expectAccValue(address, "expires_at", knownvalue.StringExact(expiresAt)),
 				},
 			},
 			{
-				Config: testAccReadTokenResourceConfigWithNullExpires(projectName),
-				ConfigPlanChecks: resource.ConfigPlanChecks{
-					PreApply: []plancheck.PlanCheck{
-						plancheck.ExpectResourceAction("logfire_read_token.test", plancheck.ResourceActionReplace),
-					},
-				},
+				Config:           testAccTokenResourceConfig(kind, projectName, "null"),
+				ConfigPlanChecks: replace,
 				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue("logfire_read_token.test", tfjsonpath.New("expires_at"), knownvalue.Null()),
+					expectAccValue(address, "expires_at", knownvalue.Null()),
 				},
 			},
 		},
 	})
 }
 
-func testAccReadTokenResourceConfig(projectName string, expiresAt *string) string {
+// testAccTokenResourceConfig renders a project and its token. expiresAt is an HCL expression,
+// and the empty string omits the attribute.
+func testAccTokenResourceConfig(kind, projectName, expiresAt string) string {
 	expiresAtLine := ""
-	if expiresAt != nil {
-		expiresAtLine = fmt.Sprintf("  expires_at = %q\n", *expiresAt)
+	if expiresAt != "" {
+		expiresAtLine = fmt.Sprintf("  expires_at = %s\n", expiresAt)
 	}
-
 	return fmt.Sprintf(`%s
 
 resource "logfire_project" "test" {
   name        = %q
-  description = "Acceptance test project for read token"
+  description = "Acceptance test project for %s token"
 }
 
-resource "logfire_read_token" "test" {
+resource "logfire_%s_token" "test" {
   project_id = logfire_project.test.id
 %s}
-`, testAccProviderConfig(), projectName, expiresAtLine)
-}
-
-func testAccReadTokenResourceConfigWithNullExpires(projectName string) string {
-	return fmt.Sprintf(`%s
-
-resource "logfire_project" "test" {
-  name        = %q
-  description = "Acceptance test project for read token"
-}
-
-resource "logfire_read_token" "test" {
-  project_id = logfire_project.test.id
-  expires_at = null
-}
-`, testAccProviderConfig(), projectName)
+`, testAccProviderConfig(), projectName, kind, kind, expiresAtLine)
 }

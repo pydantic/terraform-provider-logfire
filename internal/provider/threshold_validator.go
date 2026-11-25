@@ -12,8 +12,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 )
 
-var _ validator.String = thresholdValidator{}
-
 // thresholdRe matches a plain (optionally negative) decimal number in the
 // metric's native unit, e.g. "60000" or "1.5". Rejects fractions/scientific
 // notation so the value round-trips as a decimal string.
@@ -43,8 +41,4 @@ func (v thresholdValidator) ValidateString(_ context.Context, req validator.Stri
 			fmt.Sprintf("threshold must be a decimal number, e.g. \"60000\", got %q", raw),
 		)
 	}
-}
-
-func newThresholdValidator() validator.String {
-	return thresholdValidator{}
 }

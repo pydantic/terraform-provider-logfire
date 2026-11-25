@@ -34,18 +34,6 @@ func TestRetryDelayHonorsRetryAfterHeader(t *testing.T) {
 	}
 }
 
-func TestIsNotFoundError(t *testing.T) {
-	err := &APIError{StatusCode: http.StatusNotFound}
-	if !IsNotFoundError(err) {
-		t.Fatalf("expected IsNotFoundError to be true for 404")
-	}
-
-	err = &APIError{StatusCode: http.StatusInternalServerError}
-	if IsNotFoundError(err) {
-		t.Fatalf("expected IsNotFoundError to be false for non-404")
-	}
-}
-
 func TestRateLimiterIsPerHost(t *testing.T) {
 	transport := &rateLimitedTransport{next: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil

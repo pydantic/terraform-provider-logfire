@@ -23,7 +23,6 @@ func TestAlertDurationTypeValueFromTerraformPreservesConfigValue(t *testing.T) {
 	if !ok {
 		t.Fatalf("unexpected value type %T", value)
 	}
-
 	if durationValue.ValueString() != "90m" {
 		t.Fatalf("config value must be preserved exactly, got %q", durationValue.ValueString())
 	}
@@ -32,41 +31,7 @@ func TestAlertDurationTypeValueFromTerraformPreservesConfigValue(t *testing.T) {
 func TestAlertDurationSemanticEquals(t *testing.T) {
 	t.Parallel()
 
-	cases := []struct {
-		name  string
-		prior string
-		next  string
-		want  bool
-	}{
-		{name: "same spelling", prior: "20m", next: "20m", want: true},
-		{name: "minutes as hours and minutes", prior: "90m", next: "1h30m", want: true},
-		{name: "hours and minutes as minutes", prior: "1h30m", next: "90m", want: true},
-		{name: "days as hours", prior: "2d", next: "48h", want: true},
-		{name: "hours as days", prior: "48h", next: "2d", want: true},
-		{name: "seconds as minutes", prior: "120s", next: "2m", want: true},
-		{name: "week as hours", prior: "7d", next: "168h", want: true},
-		{name: "different durations", prior: "20m", next: "30m", want: false},
-		{name: "hour against day", prior: "24h", next: "2d", want: false},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			equal, diags := newAlertDurationValue(tc.prior).StringSemanticEquals(context.Background(), newAlertDurationValue(tc.next))
-			if diags.HasError() {
-				t.Fatalf("unexpected diagnostics: %v", diags)
-			}
-			if equal != tc.want {
-				t.Fatalf("StringSemanticEquals(%q, %q) = %v, want %v", tc.prior, tc.next, equal, tc.want)
-			}
-		})
-	}
-}
-
-func TestAlertDurationSemanticEqualsNullAndUnknown(t *testing.T) {
-	t.Parallel()
-
+	dur := newAlertDurationValue
 	nullValue := alertDurationValue{StringValue: basetypes.NewStringNull()}
 	unknownValue := alertDurationValue{StringValue: basetypes.NewStringUnknown()}
 
@@ -76,9 +41,18 @@ func TestAlertDurationSemanticEqualsNullAndUnknown(t *testing.T) {
 		next  alertDurationValue
 		want  bool
 	}{
+		{name: "same spelling", prior: dur("20m"), next: dur("20m"), want: true},
+		{name: "minutes as hours and minutes", prior: dur("90m"), next: dur("1h30m"), want: true},
+		{name: "hours and minutes as minutes", prior: dur("1h30m"), next: dur("90m"), want: true},
+		{name: "days as hours", prior: dur("2d"), next: dur("48h"), want: true},
+		{name: "hours as days", prior: dur("48h"), next: dur("2d"), want: true},
+		{name: "seconds as minutes", prior: dur("120s"), next: dur("2m"), want: true},
+		{name: "week as hours", prior: dur("7d"), next: dur("168h"), want: true},
+		{name: "different durations", prior: dur("20m"), next: dur("30m"), want: false},
+		{name: "hour against day", prior: dur("24h"), next: dur("2d"), want: false},
 		{name: "null equals null", prior: nullValue, next: nullValue, want: true},
 		{name: "unknown equals unknown", prior: unknownValue, next: unknownValue, want: true},
-		{name: "null against a value", prior: nullValue, next: newAlertDurationValue("20m"), want: false},
+		{name: "null against a value", prior: nullValue, next: dur("20m"), want: false},
 	}
 
 	for _, tc := range cases {
@@ -90,7 +64,7 @@ func TestAlertDurationSemanticEqualsNullAndUnknown(t *testing.T) {
 				t.Fatalf("unexpected diagnostics: %v", diags)
 			}
 			if equal != tc.want {
-				t.Fatalf("StringSemanticEquals = %v, want %v", equal, tc.want)
+				t.Fatalf("StringSemanticEquals(%v, %v) = %v, want %v", tc.prior, tc.next, equal, tc.want)
 			}
 		})
 	}

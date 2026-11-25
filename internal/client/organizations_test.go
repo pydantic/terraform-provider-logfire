@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -35,37 +34,30 @@ const organizationReadBody = `{"id":"9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff","orga
 const exchangeOKBody = `{"access_token":"exchanged-token","token_type":"Bearer","expires_in":900,
 	"scope":"organization:read organization:write","issued_token_type":"urn:ietf:params:oauth:token-type:access_token"}`
 
-// exchangeTransport answers the OAuth token exchange with a valid token.
-func exchangeTransport() roundTripFunc {
-	return func(req *http.Request) (*http.Response, error) {
-		if req.Method != http.MethodPost || req.URL.Path != "/api/oauth/token" {
-			return nil, fmt.Errorf("unexpected request: %s %s", req.Method, req.URL.Path)
-		}
-		if ct := req.Header.Get("Content-Type"); ct != "application/x-www-form-urlencoded" {
-			return nil, fmt.Errorf("exchange content type = %s", ct)
-		}
-		if auth := req.Header.Get("Authorization"); auth != "" {
-			return nil, fmt.Errorf("exchange must not send an Authorization header, got %q", auth)
-		}
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(exchangeOKBody)),
-			Request:    req,
-		}, nil
+// serveExchange answers the OAuth token exchange with a valid token.
+func serveExchange(req *http.Request) (*http.Response, error) {
+	if req.Method != http.MethodPost || req.URL.Path != "/api/oauth/token" {
+		return nil, fmt.Errorf("unexpected request: %s %s", req.Method, req.URL.Path)
 	}
+	if ct := req.Header.Get("Content-Type"); ct != "application/x-www-form-urlencoded" {
+		return nil, fmt.Errorf("exchange content type = %s", ct)
+	}
+	if auth := req.Header.Get("Authorization"); auth != "" {
+		return nil, fmt.Errorf("exchange must not send an Authorization header, got %q", auth)
+	}
+	return stubResponse(req, http.StatusOK, exchangeOKBody), nil
 }
 
 // TestOrganizationCreateListRoutes pins the create/list migration to the
 // instance routes.
 func TestOrganizationCreateListRoutes(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
+	for _, tc := range []struct {
 		name   string
 		status int
 		call   func(*APIClient) error
 		method string
-		path   string
+		body   string
 	}{
 		{
 			name:   "create uses instance route",
@@ -74,7 +66,8 @@ func TestOrganizationCreateListRoutes(t *testing.T) {
 				_, err := c.CreateOrganization(context.Background(), OrganizationCreate{OrganizationName: "acme"})
 				return err
 			},
-			method: http.MethodPost, path: "/api/v1/instance/organizations/",
+			method: http.MethodPost,
+			body:   organizationReadBody,
 		},
 		{
 			name:   "list uses instance route",
@@ -83,32 +76,16 @@ func TestOrganizationCreateListRoutes(t *testing.T) {
 				_, err := c.ListOrganizations(context.Background())
 				return err
 			},
-			method: http.MethodGet, path: "/api/v1/instance/organizations/",
+			method: http.MethodGet,
+			body:   "[" + organizationReadBody + "]",
 		},
-	}
-	for _, tc := range cases {
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			body := organizationReadBody
-			if tc.method == http.MethodGet {
-				body = "[" + organizationReadBody + "]"
-			}
-			c, err := NewAPIClient("https://example.invalid", "test-token", &http.Client{
-				Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-					if req.Method != tc.method || req.URL.Path != tc.path {
-						t.Fatalf("request = %s %s, want %s %s", req.Method, req.URL.Path, tc.method, tc.path)
-					}
-					return &http.Response{
-						StatusCode: tc.status,
-						Header:     make(http.Header),
-						Body:       io.NopCloser(strings.NewReader(body)),
-						Request:    req,
-					}, nil
-				}),
+			c := newStubClient(t, func(req *http.Request) (*http.Response, error) {
+				requireRequest(t, req, tc.method, "/api/v1/instance/organizations/")
+				return stubResponse(req, tc.status, tc.body), nil
 			})
-			if err != nil {
-				t.Fatal(err)
-			}
 			if err := tc.call(c); err != nil {
 				t.Fatalf("call failed: %v", err)
 			}
@@ -120,43 +97,36 @@ func TestOrganizationCreateListRoutes(t *testing.T) {
 // org-context routes authenticating with the exchanged credential.
 func TestOrganizationContextExchange(t *testing.T) {
 	t.Parallel()
-	c, err := NewAPIClient("https://example.invalid/", "admin-key", &http.Client{
-		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			switch {
-			case req.Method == http.MethodPost && req.URL.Path == "/api/oauth/token":
-				form := formBody(req)
-				if form.Get("grant_type") != "urn:ietf:params:oauth:grant-type:token-exchange" {
-					t.Fatalf("grant_type = %q", form.Get("grant_type"))
-				}
-				if form.Get("subject_token") != "admin-key" {
-					t.Fatalf("subject_token = %q", form.Get("subject_token"))
-				}
-				if form.Get("subject_token_type") != "urn:ietf:params:oauth:token-type:access_token" {
-					t.Fatalf("subject_token_type = %q", form.Get("subject_token_type"))
-				}
-				if want := "https://example.invalid/acme"; form.Get("audience") != want {
-					t.Fatalf("audience = %q, want %q", form.Get("audience"), want)
-				}
-				if form.Get("scope") != organizationContextScopes {
-					t.Fatalf("scope = %q", form.Get("scope"))
-				}
-				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header),
-					Body: io.NopCloser(strings.NewReader(exchangeOKBody)), Request: req}, nil
-			case req.Method == http.MethodGet && req.URL.Path == "/api/v1/organization/":
-				if auth := req.Header.Get("Authorization"); auth != "Bearer exchanged-token" {
-					t.Fatalf("Authorization = %q", auth)
-				}
-				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header),
-					Body: io.NopCloser(strings.NewReader(organizationReadBody)), Request: req}, nil
-			default:
-				t.Fatalf("unexpected request: %s %s", req.Method, req.URL.Path)
-				return nil, nil
+	c := newStubClient(t, func(req *http.Request) (*http.Response, error) {
+		switch {
+		case req.Method == http.MethodPost && req.URL.Path == "/api/oauth/token":
+			form := formBody(req)
+			if form.Get("grant_type") != "urn:ietf:params:oauth:grant-type:token-exchange" {
+				t.Fatalf("grant_type = %q", form.Get("grant_type"))
 			}
-		}),
+			if form.Get("subject_token") != "admin-key" {
+				t.Fatalf("subject_token = %q", form.Get("subject_token"))
+			}
+			if form.Get("subject_token_type") != "urn:ietf:params:oauth:token-type:access_token" {
+				t.Fatalf("subject_token_type = %q", form.Get("subject_token_type"))
+			}
+			if want := "https://example.invalid/acme"; form.Get("audience") != want {
+				t.Fatalf("audience = %q, want %q", form.Get("audience"), want)
+			}
+			if form.Get("scope") != organizationContextScopes {
+				t.Fatalf("scope = %q", form.Get("scope"))
+			}
+			return stubResponse(req, http.StatusOK, exchangeOKBody), nil
+		case req.Method == http.MethodGet && req.URL.Path == "/api/v1/organization/":
+			if auth := req.Header.Get("Authorization"); auth != "Bearer exchanged-token" {
+				t.Fatalf("Authorization = %q", auth)
+			}
+			return stubResponse(req, http.StatusOK, organizationReadBody), nil
+		default:
+			t.Fatalf("unexpected request: %s %s", req.Method, req.URL.Path)
+			return nil, nil
+		}
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	out, status, err := c.GetOrganizationContext(context.Background(), "acme")
 	if err != nil || status != http.StatusOK {
 		t.Fatalf("get failed: status=%d err=%v", status, err)
@@ -175,6 +145,7 @@ func TestOrganizationContextUpdateDelete(t *testing.T) {
 		name   string
 		call   func(*APIClient) error
 		method string
+		status int
 		body   string
 	}{
 		{
@@ -183,36 +154,28 @@ func TestOrganizationContextUpdateDelete(t *testing.T) {
 				_, err := c.UpdateOrganizationContext(context.Background(), "acme", OrganizationUpdate{})
 				return err
 			},
-			method: http.MethodPut, body: organizationReadBody,
+			method: http.MethodPut,
+			status: http.StatusOK,
+			body:   organizationReadBody,
 		},
 		{
 			name: "delete",
 			call: func(c *APIClient) error {
 				return c.DeleteOrganizationContext(context.Background(), "acme")
 			},
-			method: http.MethodDelete, body: "",
+			method: http.MethodDelete,
+			status: http.StatusNoContent,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			c, err := NewAPIClient("https://example.invalid", "admin-key", &http.Client{
-				Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-					if req.URL.Path == "/api/oauth/token" {
-						return exchangeTransport().RoundTrip(req)
-					}
-					if req.Method != tc.method || req.URL.Path != "/api/v1/organization/" {
-						t.Fatalf("request = %s %s", req.Method, req.URL.Path)
-					}
-					return &http.Response{StatusCode: map[string]int{
-						http.MethodPut:    http.StatusOK,
-						http.MethodDelete: http.StatusNoContent,
-					}[tc.method], Header: make(http.Header),
-						Body: io.NopCloser(strings.NewReader(tc.body)), Request: req}, nil
-				}),
+			c := newStubClient(t, func(req *http.Request) (*http.Response, error) {
+				if req.URL.Path == "/api/oauth/token" {
+					return serveExchange(req)
+				}
+				requireRequest(t, req, tc.method, "/api/v1/organization/")
+				return stubResponse(req, tc.status, tc.body), nil
 			})
-			if err != nil {
-				t.Fatal(err)
-			}
 			if err := tc.call(c); err != nil {
 				t.Fatalf("call failed: %v", err)
 			}
@@ -225,19 +188,13 @@ func TestOrganizationContextUpdateDelete(t *testing.T) {
 func TestOrganizationContextTokenCaching(t *testing.T) {
 	t.Parallel()
 	var exchanges atomic.Int64
-	c, err := NewAPIClient("https://example.invalid", "admin-key", &http.Client{
-		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			if req.URL.Path == "/api/oauth/token" {
-				exchanges.Add(1)
-				return exchangeTransport().RoundTrip(req)
-			}
-			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header),
-				Body: io.NopCloser(strings.NewReader(organizationReadBody)), Request: req}, nil
-		}),
+	c := newStubClient(t, func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path == "/api/oauth/token" {
+			exchanges.Add(1)
+			return serveExchange(req)
+		}
+		return stubResponse(req, http.StatusOK, organizationReadBody), nil
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	for range 2 {
 		if _, _, err := c.GetOrganizationContext(context.Background(), "acme"); err != nil {
 			t.Fatalf("get failed: %v", err)
@@ -252,17 +209,11 @@ func TestOrganizationContextTokenCaching(t *testing.T) {
 // the token endpoint is classified as an invalid_target OAuthTokenError.
 func TestOrganizationContextInvalidTarget(t *testing.T) {
 	t.Parallel()
-	c, err := NewAPIClient("https://example.invalid", "admin-key", &http.Client{
-		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			return &http.Response{StatusCode: http.StatusBadRequest, Header: make(http.Header),
-				Body: io.NopCloser(strings.NewReader(
-					`{"error":"invalid_target","error_description":"unknown organization: 'acme'"}`)), Request: req}, nil
-		}),
+	c := newStubClient(t, func(req *http.Request) (*http.Response, error) {
+		return stubResponse(req, http.StatusBadRequest,
+			`{"error":"invalid_target","error_description":"unknown organization: 'acme'"}`), nil
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _, err = c.GetOrganizationContext(context.Background(), "acme")
+	_, _, err := c.GetOrganizationContext(context.Background(), "acme")
 	if err == nil || !IsInvalidTargetError(err) {
 		t.Fatalf("expected invalid_target, got %v", err)
 	}

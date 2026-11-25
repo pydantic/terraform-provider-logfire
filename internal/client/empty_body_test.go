@@ -4,7 +4,6 @@
 package client
 
 import (
-	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -17,12 +16,9 @@ func TestListProjectsRejectsAnEmptyBody(t *testing.T) {
 	for name, body := range map[string]string{"empty": "", "blank": "  \n"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			c, err := NewAPIClient("https://logfire.example.invalid", "key", &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Request: req, Body: io.NopCloser(strings.NewReader(body))}, nil
-			})})
-			if err != nil {
-				t.Fatal(err)
-			}
+			c := newStubClient(t, func(req *http.Request) (*http.Response, error) {
+				return stubResponse(req, http.StatusOK, body), nil
+			})
 			projects, err := c.ListProjects(t.Context())
 			if err == nil || !strings.Contains(err.Error(), "empty body") {
 				t.Fatalf("ListProjects = %v, %v, want an error that names the empty body", projects, err)
@@ -34,12 +30,9 @@ func TestListProjectsRejectsAnEmptyBody(t *testing.T) {
 // An answer that carries no content on purpose is not an empty body.
 func TestNoContentAnswerNeedsNoBody(t *testing.T) {
 	t.Parallel()
-	c, err := NewAPIClient("https://logfire.example.invalid", "key", &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: http.StatusNoContent, Header: make(http.Header), Request: req, Body: http.NoBody}, nil
-	})})
-	if err != nil {
-		t.Fatal(err)
-	}
+	c := newStubClient(t, func(req *http.Request) (*http.Response, error) {
+		return stubResponse(req, http.StatusNoContent, ""), nil
+	})
 	var out struct{}
 	if _, err := c.doJSON(t.Context(), http.MethodPatch, "/x/", nil, &out, http.StatusNoContent); err != nil {
 		t.Fatalf("a 204 with an output to fill must succeed: %v", err)

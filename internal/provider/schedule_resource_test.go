@@ -31,7 +31,8 @@ type scheduleTransport struct {
 func (t scheduleTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	status, body := http.StatusOK, t.response
 	switch {
-	case req.Method == http.MethodGet && strings.HasPrefix(req.URL.Path, "/api/v1/notification-windows/") && req.URL.Path != "/api/v1/notification-windows/":
+	case req.Method == http.MethodGet && strings.HasPrefix(req.URL.Path, "/api/v1/notification-windows/") &&
+		req.URL.Path != "/api/v1/notification-windows/":
 		if t.notFound {
 			status, body = http.StatusNotFound, `{"detail":"No schedule with that ID in this organization."}`
 		}
@@ -53,10 +54,20 @@ func (t scheduleTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	}, nil
 }
 
-const officeHoursRead = `{"id":"33333333-3333-3333-3333-333333333333","organization_id":"22222222-2222-2222-2222-222222222222",` +
+const officeHoursRead = `{"id":"33333333-3333-3333-3333-333333333333",` +
+	`"organization_id":"22222222-2222-2222-2222-222222222222",` +
 	`"label":"Office hours","timezone":"Europe/London",` +
 	`"windows":[{"days":[1,2,3,4,5],"start_time":"09:00:00","end_time":"18:00:00"}],` +
 	`"created_at":"2026-09-21T00:00:00Z","updated_at":null}`
+
+func newScheduleResource(t *testing.T, transport scheduleTransport) *ScheduleResource {
+	t.Helper()
+	c, err := logclient.NewAPIClient("https://example.invalid", "test-token", &http.Client{Transport: transport})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &ScheduleResource{configured{c}}
+}
 
 func scheduleSchemaState(t *testing.T) (resource.SchemaResponse, tftypes.Value) {
 	t.Helper()
@@ -93,11 +104,7 @@ func officeHoursModel(t *testing.T, start, end string) ScheduleModel {
 func TestScheduleCreateSendsAndReadsWindows(t *testing.T) {
 	t.Parallel()
 	var bodies []string
-	c, err := logclient.NewAPIClient("https://example.invalid", "test-token", &http.Client{Transport: scheduleTransport{response: officeHoursRead, bodies: &bodies}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := &ScheduleResource{client: c}
+	r := newScheduleResource(t, scheduleTransport{response: officeHoursRead, bodies: &bodies})
 	schemaResponse, raw := scheduleSchemaState(t)
 
 	plan := tfsdk.Plan{Schema: schemaResponse.Schema, Raw: raw}
@@ -151,11 +158,7 @@ func TestScheduleTimeValue(t *testing.T) {
 func TestScheduleUpdateSendsEveryField(t *testing.T) {
 	t.Parallel()
 	var bodies []string
-	c, err := logclient.NewAPIClient("https://example.invalid", "test-token", &http.Client{Transport: scheduleTransport{response: officeHoursRead, bodies: &bodies}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := &ScheduleResource{client: c}
+	r := newScheduleResource(t, scheduleTransport{response: officeHoursRead, bodies: &bodies})
 	schemaResponse, raw := scheduleSchemaState(t)
 
 	prior := officeHoursModel(t, "08:00", "18:00")
@@ -206,11 +209,7 @@ func TestScheduleImport(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			c, err := logclient.NewAPIClient("https://example.invalid", "test-token", &http.Client{Transport: scheduleTransport{response: officeHoursRead, notFound: tt.notFound}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			r := &ScheduleResource{client: c}
+			r := newScheduleResource(t, scheduleTransport{response: officeHoursRead, notFound: tt.notFound})
 			schemaResponse, raw := scheduleSchemaState(t)
 			resp := resource.ImportStateResponse{State: tfsdk.State{Schema: schemaResponse.Schema, Raw: raw}}
 			r.ImportState(t.Context(), resource.ImportStateRequest{ID: tt.id}, &resp)

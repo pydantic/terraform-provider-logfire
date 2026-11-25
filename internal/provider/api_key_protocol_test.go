@@ -14,14 +14,16 @@ import (
 	"github.com/pydantic/terraform-provider-logfire/internal/provider"
 )
 
+const apiKeyProjectID = "33333333-3333-3333-3333-333333333333"
+
 func apiKeySchema(t *testing.T, typeName string) schema.Schema {
 	t.Helper()
 	var r resource.Resource
 	switch typeName {
 	case "logfire_api_key":
-		r = provider.NewAPIKeyResource()
+		r = &provider.APIKeyResource{}
 	case "logfire_gateway_api_key":
-		r = provider.NewGatewayAPIKeyResource()
+		r = &provider.GatewayAPIKeyResource{}
 	default:
 		t.Fatalf("unknown resource %q", typeName)
 	}
@@ -30,20 +32,21 @@ func apiKeySchema(t *testing.T, typeName string) schema.Schema {
 	return response.Schema
 }
 
-func apiKeyValue(t *testing.T, s schema.Schema, values map[string]any) tftypes.Value {
+func apiKeyDynamicValue(t *testing.T, s schema.Schema, values map[string]any) tfprotov6.DynamicValue {
 	t.Helper()
 	attributeTypes := map[string]tftypes.Type{}
 	attributes := map[string]tftypes.Value{}
 	for name, attribute := range s.Attributes {
 		typ := attribute.GetType().TerraformType(t.Context())
 		attributeTypes[name] = typ
-		v, ok := values[name]
-		if !ok {
-			v = nil
-		}
-		attributes[name] = tftypes.NewValue(typ, v)
+		attributes[name] = tftypes.NewValue(typ, values[name])
 	}
-	return tftypes.NewValue(tftypes.Object{AttributeTypes: attributeTypes}, attributes)
+	raw := tftypes.NewValue(tftypes.Object{AttributeTypes: attributeTypes}, attributes)
+	value, err := tfprotov6.NewDynamicValue(raw.Type(), raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
 }
 
 func stringSetValue(t *testing.T, scopes ...string) []tftypes.Value {
@@ -53,6 +56,26 @@ func stringSetValue(t *testing.T, scopes ...string) []tftypes.Value {
 		elements = append(elements, tftypes.NewValue(tftypes.String, s))
 	}
 	return elements
+}
+
+func gatewayBlock(cacheEnabled any) map[string]tftypes.Value {
+	return map[string]tftypes.Value{
+		"spending_limit_daily":   tftypes.NewValue(tftypes.Number, nil),
+		"spending_limit_weekly":  tftypes.NewValue(tftypes.Number, nil),
+		"spending_limit_monthly": tftypes.NewValue(tftypes.Number, nil),
+		"spending_limit_total":   tftypes.NewValue(tftypes.Number, nil),
+		"cache_enabled":          tftypes.NewValue(tftypes.Bool, cacheEnabled),
+	}
+}
+
+func merged(maps ...map[string]any) map[string]any {
+	result := map[string]any{}
+	for _, m := range maps {
+		for k, v := range m {
+			result[k] = v
+		}
+	}
+	return result
 }
 
 func TestAPIKeyValidateConfig(t *testing.T) {
@@ -68,7 +91,7 @@ func TestAPIKeyValidateConfig(t *testing.T) {
 			name: "project otlp key with project",
 			values: map[string]any{
 				"name": "otel", "scopes": stringSetValue(t, "project:write_otlp"),
-				"project_id": "33333333-3333-3333-3333-333333333333",
+				"project_id": apiKeyProjectID,
 			},
 		},
 		{
@@ -81,7 +104,7 @@ func TestAPIKeyValidateConfig(t *testing.T) {
 			name: "multi-scope otlp key with project",
 			values: map[string]any{
 				"name": "both", "scopes": stringSetValue(t, "project:read_otlp", "project:write_otlp"),
-				"project_id": "33333333-3333-3333-3333-333333333333",
+				"project_id": apiKeyProjectID,
 			},
 		},
 		{
@@ -102,14 +125,7 @@ func TestAPIKeyValidateConfig(t *testing.T) {
 			name: "gateway block without gateway scope",
 			values: map[string]any{
 				"name": "bad", "scopes": stringSetValue(t, "project:write_otlp"),
-				"project_id": "33333333-3333-3333-3333-333333333333",
-				"gateway": map[string]tftypes.Value{
-					"spending_limit_daily":   tftypes.NewValue(tftypes.Number, nil),
-					"spending_limit_weekly":  tftypes.NewValue(tftypes.Number, nil),
-					"spending_limit_monthly": tftypes.NewValue(tftypes.Number, nil),
-					"spending_limit_total":   tftypes.NewValue(tftypes.Number, nil),
-					"cache_enabled":          tftypes.NewValue(tftypes.Bool, true),
-				},
+				"project_id": apiKeyProjectID, "gateway": gatewayBlock(true),
 			},
 			wantErr: true,
 		},
@@ -117,39 +133,21 @@ func TestAPIKeyValidateConfig(t *testing.T) {
 			name: "gateway block with gateway scope",
 			values: map[string]any{
 				"name": "gateway", "scopes": stringSetValue(t, "project:gateway_proxy"),
-				"project_id": "33333333-3333-3333-3333-333333333333",
-				"gateway": map[string]tftypes.Value{
-					"spending_limit_daily":   tftypes.NewValue(tftypes.Number, nil),
-					"spending_limit_weekly":  tftypes.NewValue(tftypes.Number, nil),
-					"spending_limit_monthly": tftypes.NewValue(tftypes.Number, nil),
-					"spending_limit_total":   tftypes.NewValue(tftypes.Number, nil),
-					"cache_enabled":          tftypes.NewValue(tftypes.Bool, true),
-				},
+				"project_id": apiKeyProjectID, "gateway": gatewayBlock(true),
 			},
 		},
 		{
 			name: "empty gateway block",
 			values: map[string]any{
 				"name": "gateway", "scopes": stringSetValue(t, "project:gateway_proxy"),
-				"project_id": "33333333-3333-3333-3333-333333333333",
-				"gateway": map[string]tftypes.Value{
-					"spending_limit_daily":   tftypes.NewValue(tftypes.Number, nil),
-					"spending_limit_weekly":  tftypes.NewValue(tftypes.Number, nil),
-					"spending_limit_monthly": tftypes.NewValue(tftypes.Number, nil),
-					"spending_limit_total":   tftypes.NewValue(tftypes.Number, nil),
-					"cache_enabled":          tftypes.NewValue(tftypes.Bool, nil),
-				},
+				"project_id": apiKeyProjectID, "gateway": gatewayBlock(nil),
 			},
 			wantErr: true,
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			raw := apiKeyValue(t, s, tt.values)
-			config, err := tfprotov6.NewDynamicValue(raw.Type(), raw)
-			if err != nil {
-				t.Fatal(err)
-			}
+			config := apiKeyDynamicValue(t, s, tt.values)
 			response, err := server.ValidateResourceConfig(t.Context(), &tfprotov6.ValidateResourceConfigRequest{
 				TypeName: "logfire_api_key", Config: &config,
 			})
@@ -169,137 +167,81 @@ func TestAPIKeyValidateConfig(t *testing.T) {
 
 func TestAPIKeyReplacementPlan(t *testing.T) {
 	t.Parallel()
-	s := apiKeySchema(t, "logfire_api_key")
 	server := providerserver.NewProtocol6(provider.New("test")())()
-	computed := map[string]any{
-		"id": "11111111-1111-1111-1111-111111111111", "token": "secret",
-		"project_name": "prod", "all_projects": false, "active": true,
-		"created_at": "2026-01-01T00:00:00Z", "created_by_name": "Ada",
-	}
-	for _, tt := range []struct {
+	type change struct {
 		attribute string
 		value     any
 		replace   bool
+	}
+	for _, kind := range []struct {
+		typeName string
+		config   map[string]any
+		computed map[string]any
+		changes  []change
 	}{
-		{"name", "renamed", false},
-		{"description", "docs", false},
-		{"scopes", stringSetValue(t, "project:read_otlp"), true},
-		{"project_id", "55555555-5555-5555-5555-555555555555", true},
-		{"expires_at", "2027-01-01T00:00:00Z", true},
-		{"gateway", map[string]tftypes.Value{
-			"spending_limit_daily":   tftypes.NewValue(tftypes.Number, nil),
-			"spending_limit_weekly":  tftypes.NewValue(tftypes.Number, nil),
-			"spending_limit_monthly": tftypes.NewValue(tftypes.Number, nil),
-			"spending_limit_total":   tftypes.NewValue(tftypes.Number, nil),
-			"cache_enabled":          tftypes.NewValue(tftypes.Bool, true),
-		}, false},
-	} {
-		t.Run(tt.attribute, func(t *testing.T) {
-			t.Parallel()
-			base := map[string]any{
+		{
+			typeName: "logfire_api_key",
+			config: map[string]any{
 				"name": "otel", "scopes": stringSetValue(t, "project:write_otlp"),
-				"project_id": "33333333-3333-3333-3333-333333333333",
-			}
-			for k, v := range computed {
-				base[k] = v
-			}
-			priorRaw := apiKeyValue(t, s, base)
-			prior, err := tfprotov6.NewDynamicValue(priorRaw.Type(), priorRaw)
-			if err != nil {
-				t.Fatal(err)
-			}
-			base[tt.attribute] = tt.value
-			proposedRaw := apiKeyValue(t, s, base)
-			proposed, err := tfprotov6.NewDynamicValue(proposedRaw.Type(), proposedRaw)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for k := range computed {
-				delete(base, k)
-			}
-			configRaw := apiKeyValue(t, s, base)
-			config, err := tfprotov6.NewDynamicValue(configRaw.Type(), configRaw)
-			if err != nil {
-				t.Fatal(err)
-			}
-			response, err := server.PlanResourceChange(t.Context(), &tfprotov6.PlanResourceChangeRequest{
-				TypeName: "logfire_api_key", PriorState: &prior, Config: &config, ProposedNewState: &proposed,
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, diagnostic := range response.Diagnostics {
-				if diagnostic.Severity == tfprotov6.DiagnosticSeverityError {
-					t.Fatal(diagnostic)
-				}
-			}
-			if (len(response.RequiresReplace) > 0) != tt.replace {
-				t.Fatalf("requires replacement = %v", response.RequiresReplace)
-			}
-		})
-	}
-}
-
-func TestGatewayAPIKeyReplacementPlan(t *testing.T) {
-	t.Parallel()
-	s := apiKeySchema(t, "logfire_gateway_api_key")
-	server := providerserver.NewProtocol6(provider.New("test")())()
-	computed := map[string]any{
-		"id": "11111111-1111-1111-1111-111111111111", "token": "secret",
-		"project_name": "prod", "active": true, "created_at": "2026-01-01T00:00:00Z",
-	}
-	for _, tt := range []struct {
-		attribute string
-		value     any
-		replace   bool
-	}{
-		{"name", "renamed", false},
-		{"description", "docs", false},
-		{"cache_enabled", true, false},
-		{"project_id", "55555555-5555-5555-5555-555555555555", true},
-		{"expires_at", "2027-01-01T00:00:00Z", true},
+				"project_id": apiKeyProjectID,
+			},
+			computed: map[string]any{
+				"id": "11111111-1111-1111-1111-111111111111", "token": "secret",
+				"project_name": "prod", "all_projects": false, "active": true,
+				"created_at": "2026-01-01T00:00:00Z", "created_by_name": "Ada",
+			},
+			changes: []change{
+				{"name", "renamed", false},
+				{"description", "docs", false},
+				{"scopes", stringSetValue(t, "project:read_otlp"), true},
+				{"project_id", "55555555-5555-5555-5555-555555555555", true},
+				{"expires_at", "2027-01-01T00:00:00Z", true},
+				{"gateway", gatewayBlock(true), false},
+			},
+		},
+		{
+			typeName: "logfire_gateway_api_key",
+			config:   map[string]any{"name": "gateway", "project_id": apiKeyProjectID},
+			computed: map[string]any{
+				"id": "11111111-1111-1111-1111-111111111111", "token": "secret",
+				"project_name": "prod", "active": true, "created_at": "2026-01-01T00:00:00Z",
+			},
+			changes: []change{
+				{"name", "renamed", false},
+				{"description", "docs", false},
+				{"cache_enabled", true, false},
+				{"project_id", "55555555-5555-5555-5555-555555555555", true},
+				{"expires_at", "2027-01-01T00:00:00Z", true},
+			},
+		},
 	} {
-		t.Run(tt.attribute, func(t *testing.T) {
-			t.Parallel()
-			base := map[string]any{
-				"name": "gateway", "project_id": "33333333-3333-3333-3333-333333333333",
-			}
-			for k, v := range computed {
-				base[k] = v
-			}
-			priorRaw := apiKeyValue(t, s, base)
-			prior, err := tfprotov6.NewDynamicValue(priorRaw.Type(), priorRaw)
-			if err != nil {
-				t.Fatal(err)
-			}
-			base[tt.attribute] = tt.value
-			proposedRaw := apiKeyValue(t, s, base)
-			proposed, err := tfprotov6.NewDynamicValue(proposedRaw.Type(), proposedRaw)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for k := range computed {
-				delete(base, k)
-			}
-			configRaw := apiKeyValue(t, s, base)
-			config, err := tfprotov6.NewDynamicValue(configRaw.Type(), configRaw)
-			if err != nil {
-				t.Fatal(err)
-			}
-			response, err := server.PlanResourceChange(t.Context(), &tfprotov6.PlanResourceChangeRequest{
-				TypeName: "logfire_gateway_api_key", PriorState: &prior, Config: &config, ProposedNewState: &proposed,
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, diagnostic := range response.Diagnostics {
-				if diagnostic.Severity == tfprotov6.DiagnosticSeverityError {
-					t.Fatal(diagnostic)
+		s := apiKeySchema(t, kind.typeName)
+		for _, tt := range kind.changes {
+			t.Run(kind.typeName+"/"+tt.attribute, func(t *testing.T) {
+				t.Parallel()
+				changed := map[string]any{tt.attribute: tt.value}
+				prior := merged(kind.config, kind.computed)
+				priorState := apiKeyDynamicValue(t, s, prior)
+				proposedState := apiKeyDynamicValue(t, s, merged(prior, changed))
+				configValue := apiKeyDynamicValue(t, s, merged(kind.config, changed))
+				response, err := server.PlanResourceChange(t.Context(), &tfprotov6.PlanResourceChangeRequest{
+					TypeName:         kind.typeName,
+					PriorState:       &priorState,
+					Config:           &configValue,
+					ProposedNewState: &proposedState,
+				})
+				if err != nil {
+					t.Fatal(err)
 				}
-			}
-			if (len(response.RequiresReplace) > 0) != tt.replace {
-				t.Fatalf("requires replacement = %v", response.RequiresReplace)
-			}
-		})
+				for _, diagnostic := range response.Diagnostics {
+					if diagnostic.Severity == tfprotov6.DiagnosticSeverityError {
+						t.Fatal(diagnostic)
+					}
+				}
+				if (len(response.RequiresReplace) > 0) != tt.replace {
+					t.Fatalf("requires replacement = %v", response.RequiresReplace)
+				}
+			})
+		}
 	}
 }

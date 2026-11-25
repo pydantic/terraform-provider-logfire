@@ -45,72 +45,58 @@ func newChannelImportResponse(t *testing.T) resource.ImportStateResponse {
 	}
 }
 
-func TestChannelImportByUUID(t *testing.T) {
+func TestChannelImport(t *testing.T) {
 	t.Parallel()
-	// A UUID import resolves through the same channel list, matching by ID.
-	list := `[
-		{"id":"9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff","organization_id":"22222222-2222-2222-2222-222222222222","label":"other-channel","active":true,"created_at":"2026-01-01T00:00:00Z","config":{"type":"webhook"}}
-	]`
-	c, err := logclient.NewAPIClient("https://example.invalid", "test-token", &http.Client{Transport: channelListTransport{body: list}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := &ChannelResource{client: c}
-	response := newChannelImportResponse(t)
-	r.ImportState(t.Context(), resource.ImportStateRequest{ID: "9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff"}, &response)
-	if response.Diagnostics.HasError() {
-		t.Fatal(response.Diagnostics)
-	}
-}
 
-// TestChannelImportUUIDShapedLabel verifies that a label that happens to be
-// UUID-shaped resolves to the channel carrying that label, not to whatever
-// the UUID-shaped string would point at as an ID.
-func TestChannelImportUUIDShapedLabel(t *testing.T) {
-	t.Parallel()
-	list := `[
-		{"id":"11111111-1111-1111-1111-111111111111","organization_id":"22222222-2222-2222-2222-222222222222","label":"9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff","active":true,"created_at":"2026-01-01T00:00:00Z","config":{"type":"webhook"}}
-	]`
-	c, err := logclient.NewAPIClient("https://example.invalid", "test-token", &http.Client{Transport: channelListTransport{body: list}})
-	if err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		name    string
+		list    string
+		id      string
+		wantErr bool
+	}{
+		{
+			// A UUID import resolves through the same channel list, matching by ID.
+			name: "by uuid",
+			list: `[
+				{"id":"9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff","organization_id":"22222222-2222-2222-2222-222222222222","label":"other-channel","active":true,"created_at":"2026-01-01T00:00:00Z","config":{"type":"webhook"}}
+			]`,
+			id: "9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff",
+		},
+		{
+			// A label that happens to be UUID-shaped resolves to the channel carrying that
+			// label, not to whatever the UUID-shaped string would point at as an ID.
+			name: "uuid-shaped label",
+			list: `[
+				{"id":"11111111-1111-1111-1111-111111111111","organization_id":"22222222-2222-2222-2222-222222222222","label":"9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff","active":true,"created_at":"2026-01-01T00:00:00Z","config":{"type":"webhook"}}
+			]`,
+			id: "9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff",
+		},
+		{
+			name: "by label",
+			list: `[
+				{"id":"11111111-1111-1111-1111-111111111111","organization_id":"22222222-2222-2222-2222-222222222222","label":"opsgenie-channel","active":true,"created_at":"2026-01-01T00:00:00Z","config":{"type":"opsgenie"}},
+				{"id":"9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff","organization_id":"22222222-2222-2222-2222-222222222222","label":"alerts-webhook","active":true,"created_at":"2026-01-02T00:00:00Z","config":{"type":"webhook","format":"auto","url":"https://example.com/hook"}}
+			]`,
+			id: " alerts-webhook ",
+		},
+		{name: "unknown label", list: `[]`, id: "missing-channel", wantErr: true},
 	}
-	r := &ChannelResource{client: c}
-	response := newChannelImportResponse(t)
-	r.ImportState(t.Context(), resource.ImportStateRequest{ID: "9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff"}, &response)
-	if response.Diagnostics.HasError() {
-		t.Fatal(response.Diagnostics)
-	}
-}
 
-func TestChannelImportByLabel(t *testing.T) {
-	t.Parallel()
-	list := `[
-		{"id":"11111111-1111-1111-1111-111111111111","organization_id":"22222222-2222-2222-2222-222222222222","label":"opsgenie-channel","active":true,"created_at":"2026-01-01T00:00:00Z","config":{"type":"opsgenie"}},
-		{"id":"9f9b2f9e-aaaa-bbbb-cccc-ddddeeeeffff","organization_id":"22222222-2222-2222-2222-222222222222","label":"alerts-webhook","active":true,"created_at":"2026-01-02T00:00:00Z","config":{"type":"webhook","format":"auto","url":"https://example.com/hook"}}
-	]`
-	c, err := logclient.NewAPIClient("https://example.invalid", "test-token", &http.Client{Transport: channelListTransport{body: list}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := &ChannelResource{client: c}
-	response := newChannelImportResponse(t)
-	r.ImportState(t.Context(), resource.ImportStateRequest{ID: " alerts-webhook "}, &response)
-	if response.Diagnostics.HasError() {
-		t.Fatal(response.Diagnostics)
-	}
-}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-func TestChannelImportByLabelNotFound(t *testing.T) {
-	t.Parallel()
-	c, err := logclient.NewAPIClient("https://example.invalid", "test-token", &http.Client{Transport: channelListTransport{body: `[]`}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := &ChannelResource{client: c}
-	response := newChannelImportResponse(t)
-	r.ImportState(t.Context(), resource.ImportStateRequest{ID: "missing-channel"}, &response)
-	if !response.Diagnostics.HasError() {
-		t.Fatal("expected an import error for an unknown channel label")
+			httpClient := &http.Client{Transport: channelListTransport{body: tc.list}}
+			c, err := logclient.NewAPIClient("https://example.invalid", "test-token", httpClient)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := &ChannelResource{configured{c}}
+			response := newChannelImportResponse(t)
+			r.ImportState(t.Context(), resource.ImportStateRequest{ID: tc.id}, &response)
+			if response.Diagnostics.HasError() != tc.wantErr {
+				t.Fatalf("error = %v, want %v: %v", response.Diagnostics.HasError(), tc.wantErr, response.Diagnostics)
+			}
+		})
 	}
 }

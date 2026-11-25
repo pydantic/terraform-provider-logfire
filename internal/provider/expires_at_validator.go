@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 )
-
-var _ validator.String = optionalRFC3339Validator{}
 
 // optionalRFC3339Validator validates optional timestamp strings.
 // Null, unknown, and empty values are accepted to represent "no expiration".
@@ -27,15 +27,10 @@ func (v optionalRFC3339Validator) MarkdownDescription(ctx context.Context) strin
 }
 
 func (v optionalRFC3339Validator) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
-	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
-		return
-	}
-
 	raw := strings.TrimSpace(req.ConfigValue.ValueString())
 	if raw == "" {
 		return
 	}
-
 	if _, err := time.Parse(time.RFC3339Nano, raw); err != nil {
 		resp.Diagnostics.AddAttributeError(
 			req.Path,
@@ -47,4 +42,28 @@ func (v optionalRFC3339Validator) ValidateString(_ context.Context, req validato
 
 func newOptionalRFC3339Validator() validator.String {
 	return optionalRFC3339Validator{}
+}
+
+// invalidExpiresAt rejects a bad expires_at before a create request. Upjet can
+// apply without running the config validator, so create checks it again.
+func invalidExpiresAt(v types.String, diags *diag.Diagnostics) bool {
+	raw := strings.TrimSpace(v.ValueString())
+	if raw == "" {
+		return false
+	}
+	if _, err := time.Parse(time.RFC3339Nano, raw); err != nil {
+		diags.AddError("Invalid expires_at", fmt.Sprintf("must be a valid RFC3339 timestamp: %v", err))
+		return true
+	}
+	return false
+}
+
+// expiresAtPointer returns the trimmed expires_at for a create payload, or nil
+// to omit it.
+func expiresAtPointer(v types.String) *string {
+	raw := strings.TrimSpace(v.ValueString())
+	if raw == "" {
+		return nil
+	}
+	return &raw
 }

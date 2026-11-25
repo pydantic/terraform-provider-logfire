@@ -5,9 +5,7 @@ package client
 
 import (
 	"context"
-	"fmt"
 	"net/http"
-	"net/url"
 )
 
 // GatewaySpendingLimitMaxUSD is the maximum spend limit, in whole US dollars,
@@ -106,23 +104,11 @@ type APIKeyUpdate struct {
 	Claims      *map[string]any       `json:"claims,omitempty"`
 }
 
-func (c *APIClient) apiKeysBase() string {
-	return "/api/v1/api-keys/"
-}
-
-func (c *APIClient) apiKeyPath(id string) string {
-	return fmt.Sprintf("%s%s/", c.apiKeysBase(), url.PathEscape(id))
-}
-
 // CreateAPIKey mints a delegated API key. Creation is not idempotent, so no
 // automatic retry is attempted.
 func (c *APIClient) CreateAPIKey(ctx context.Context, in APIKeyCreate) (*APIKeyCreateOutput, error) {
-	var out APIKeyCreateOutput
-	_, err := c.doJSON(disableAutomaticRetries(ctx), http.MethodPost, c.apiKeysBase(), in, &out, http.StatusCreated)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return create[APIKeyCreateOutput](
+		ctx, c, apiPath("api-keys"), in, http.StatusCreated)
 }
 
 // ListAPIKeys returns the organization's API keys visible to the calling
@@ -130,20 +116,10 @@ func (c *APIClient) CreateAPIKey(ctx context.Context, in APIKeyCreate) (*APIKeyC
 // the unified API-keys API, so it maps to an upgrade hint rather than a bare
 // API error.
 func (c *APIClient) ListAPIKeys(ctx context.Context) ([]APIKeyRead, error) {
-	var out []APIKeyRead
-	_, err := c.doJSON(ctx, http.MethodGet, c.apiKeysBase(), nil, &out, http.StatusOK)
-	if err != nil {
-		if IsNotFoundError(err) {
-			return nil, &EndpointUnavailableError{
-				Method:         http.MethodGet,
-				Path:           c.apiKeysBase(),
-				MinimumRelease: "v2026-06-09.01",
-				BackendVersion: BackendVersionFromError(err),
-			}
-		}
-		return nil, err
-	}
-	return out, nil
+	path := apiPath("api-keys")
+	out, err := list[APIKeyRead](ctx, c, path)
+	return out, unavailableIfNotFound(
+		err, http.MethodGet, path, "v2026-06-09.01", "")
 }
 
 // GetAPIKey returns a single API key by ID. The list endpoint is the only
@@ -159,22 +135,20 @@ func (c *APIClient) GetAPIKey(ctx context.Context, id string) (*APIKeyRead, erro
 			return &keys[i], nil
 		}
 	}
-	return nil, &APIError{StatusCode: http.StatusNotFound, Message: "API key not found"}
+	return nil, &APIError{
+		StatusCode: http.StatusNotFound,
+		Message:    "API key not found",
+	}
 }
 
 // UpdateAPIKey patches an API key's name, description, and/or claims.
 func (c *APIClient) UpdateAPIKey(ctx context.Context, id string, in APIKeyUpdate) (*APIKeyRead, error) {
-	var out APIKeyRead
-	_, err := c.doJSON(ctx, http.MethodPatch, c.apiKeyPath(id), in, &out, http.StatusOK)
-	if err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return request[APIKeyRead](
+		ctx, c, http.MethodPatch, apiPath("api-keys", id), in)
 }
 
 // DeleteAPIKey revokes (soft-deletes) an API key. The key stops
 // authenticating immediately.
 func (c *APIClient) DeleteAPIKey(ctx context.Context, id string) error {
-	_, err := c.doJSON(ctx, http.MethodDelete, c.apiKeyPath(id), nil, nil, http.StatusNoContent)
-	return err
+	return c.remove(ctx, apiPath("api-keys", id))
 }

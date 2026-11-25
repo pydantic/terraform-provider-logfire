@@ -25,6 +25,7 @@ import (
 func TestAccDashboardResource(t *testing.T) {
 	t.Parallel()
 
+	const address = "logfire_dashboard.test"
 	projectName := fmt.Sprintf("acc-test-dashboard-%s", acctest.RandStringFromCharSet(6, acctest.CharSetAlphaNum))
 	dashboardSlug := fmt.Sprintf("acc-dashboard-%s", acctest.RandStringFromCharSet(6, acctest.CharSetAlphaNum))
 	dashboardName := fmt.Sprintf("Dashboard %s", dashboardSlug)
@@ -45,23 +46,18 @@ func TestAccDashboardResource(t *testing.T) {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccDashboardResourceConfig(
-					projectName,
-					dashboardSlug,
-					dashboardName,
-					initialDefinition,
-				),
+				Config: testAccDashboardResourceConfig(projectName, dashboardSlug, dashboardName, initialDefinition),
 				ConfigStateChecks: []statecheck.StateCheck{
-					sameID.AddStateValue("logfire_dashboard.test", tfjsonpath.New("id")),
-					replacementID.AddStateValue("logfire_dashboard.test", tfjsonpath.New("id")),
-					statecheck.ExpectKnownValue("logfire_dashboard.test", tfjsonpath.New("id"), knownvalue.NotNull()),
-					statecheck.ExpectKnownValue("logfire_dashboard.test", tfjsonpath.New("project_id"), knownvalue.NotNull()),
-					statecheck.ExpectKnownValue("logfire_dashboard.test", tfjsonpath.New("name"), knownvalue.StringExact(dashboardName)),
-					statecheck.ExpectKnownValue("logfire_dashboard.test", tfjsonpath.New("slug"), knownvalue.StringExact(dashboardSlug)),
+					sameID.AddStateValue(address, tfjsonpath.New("id")),
+					replacementID.AddStateValue(address, tfjsonpath.New("id")),
+					expectAccValue(address, "id", knownvalue.NotNull()),
+					expectAccValue(address, "project_id", knownvalue.NotNull()),
+					expectAccValue(address, "name", knownvalue.StringExact(dashboardName)),
+					expectAccValue(address, "slug", knownvalue.StringExact(dashboardSlug)),
 				},
 			},
 			{
-				ResourceName:      "logfire_dashboard.test",
+				ResourceName:      address,
 				ImportState:       true,
 				ImportStateVerify: true,
 				// Import stores API JSON; the following plan verifies equivalence to the file.
@@ -72,37 +68,28 @@ func TestAccDashboardResource(t *testing.T) {
 				},
 			},
 			{
-				Config: testAccDashboardResourceConfig(
-					projectName,
-					dashboardSlug,
-					dashboardName,
-					initialDefinition,
-				),
-				ConfigPlanChecks: resource.ConfigPlanChecks{
-					PreApply: []plancheck.PlanCheck{
-						plancheck.ExpectEmptyPlan(),
-					},
-				},
+				Config:           testAccDashboardResourceConfig(projectName, dashboardSlug, dashboardName, initialDefinition),
+				ConfigPlanChecks: accPreApply(plancheck.ExpectEmptyPlan()),
 			},
 			{
 				Config: testAccDashboardResourceConfig(projectName, dashboardSlug, updatedDashboardName, updatedDefinition),
-				ConfigPlanChecks: resource.ConfigPlanChecks{
-					PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction("logfire_dashboard.test", plancheck.ResourceActionUpdate)},
-				},
+				ConfigPlanChecks: accPreApply(
+					plancheck.ExpectResourceAction(address, plancheck.ResourceActionUpdate),
+				),
 				ConfigStateChecks: []statecheck.StateCheck{
-					sameID.AddStateValue("logfire_dashboard.test", tfjsonpath.New("id")),
-					statecheck.ExpectKnownValue("logfire_dashboard.test", tfjsonpath.New("name"), knownvalue.StringExact(updatedDashboardName)),
+					sameID.AddStateValue(address, tfjsonpath.New("id")),
+					expectAccValue(address, "name", knownvalue.StringExact(updatedDashboardName)),
 				},
 			},
 			{
 				Config: testAccDashboardResourceConfig(projectName, updatedDashboardSlug, updatedDashboardName, updatedDefinition),
-				ConfigPlanChecks: resource.ConfigPlanChecks{
-					PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction("logfire_dashboard.test", plancheck.ResourceActionReplace)},
-				},
+				ConfigPlanChecks: accPreApply(
+					plancheck.ExpectResourceAction(address, plancheck.ResourceActionReplace),
+				),
 				ConfigStateChecks: []statecheck.StateCheck{
-					replacementID.AddStateValue("logfire_dashboard.test", tfjsonpath.New("id")),
-					statecheck.ExpectKnownValue("logfire_dashboard.test", tfjsonpath.New("name"), knownvalue.StringExact(updatedDashboardName)),
-					statecheck.ExpectKnownValue("logfire_dashboard.test", tfjsonpath.New("slug"), knownvalue.StringExact(updatedDashboardSlug)),
+					replacementID.AddStateValue(address, tfjsonpath.New("id")),
+					expectAccValue(address, "name", knownvalue.StringExact(updatedDashboardName)),
+					expectAccValue(address, "slug", knownvalue.StringExact(updatedDashboardSlug)),
 				},
 			},
 		},

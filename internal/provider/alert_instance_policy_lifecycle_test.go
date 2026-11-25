@@ -75,11 +75,8 @@ func newAlertPolicyAPI(t *testing.T) (*httptest.Server, *alertPolicyAPI) {
 	return server, api
 }
 
-func TestLifecycleAlertInstancePolicy(t *testing.T) {
-	t.Parallel()
-	server, api := newAlertPolicyAPI(t)
-	config := func(name, notifyWhen string, policy string) string {
-		return lifecycleConfig(server.URL, "alert", fmt.Sprintf(`project_id = %q
+func alertPolicyConfig(baseURL, name, notifyWhen, policy string) string {
+	return lifecycleConfig(baseURL, "alert", fmt.Sprintf(`project_id = %q
 name = %q
 query = "select 1"
 time_window = "5m"
@@ -87,8 +84,12 @@ frequency = "1m"
 notify_when = %q
 channel_assignments = []
 %s`, alertPolicyProjectID, name, notifyWhen, policy))
-	}
-	policyWith := func(pendingRuns, missingRuns int) string {
+}
+
+func TestLifecycleAlertInstancePolicy(t *testing.T) {
+	t.Parallel()
+	server, api := newAlertPolicyAPI(t)
+	policy := func(pendingRuns, missingRuns int) string {
 		return fmt.Sprintf(`instance_policy = {
   identity_columns = ["service_name", "trace_id"]
   pending_runs     = %d
@@ -96,8 +97,6 @@ channel_assignments = []
   missing_behavior = "expire"
 }`, pendingRuns, missingRuns)
 	}
-	policy := func(missingRuns int) string { return policyWith(2, missingRuns) }
-	// lastWrite returns the most recent create or update request body.
 	lastWrite := func() map[string]any {
 		api.Lock()
 		defer api.Unlock()
@@ -126,7 +125,7 @@ channel_assignments = []
 		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: config("alert", "instances_changed", policy(2)),
+				Config: alertPolicyConfig(server.URL, "alert", "instances_changed", policy(2, 2)),
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckResourceAttr(resourceName, "instance_policy.identity_columns.1", "trace_id"),
 					resource.TestCheckResourceAttr(resourceName, "instance_policy.missing_runs", "2"),
@@ -134,11 +133,11 @@ channel_assignments = []
 				),
 			},
 			{
-				Config: config("renamed", "instances_changed", policy(2)),
+				Config: alertPolicyConfig(server.URL, "renamed", "instances_changed", policy(2, 2)),
 				Check:  omitsPolicy,
 			},
 			{
-				Config: config("renamed", "instances_changed", policy(3)),
+				Config: alertPolicyConfig(server.URL, "renamed", "instances_changed", policy(2, 3)),
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckResourceAttr(resourceName, "instance_policy.missing_runs", "3"),
 					policyWrite(`{"continuity_runs":3,"identity_columns":["service_name","trace_id"],"missing_behavior":"expire","missing_runs":3,"pending_runs":2}`),
@@ -149,21 +148,21 @@ channel_assignments = []
 				PreConfig: func() {
 					api.Lock()
 					defer api.Unlock()
-					policy, _ := api.alert["instance_policy"].(map[string]any)
-					policy["continuity_runs"] = 5
+					stored, _ := api.alert["instance_policy"].(map[string]any)
+					stored["continuity_runs"] = 5
 				},
-				Config: config("renamed", "instances_changed", policyWith(4, 3)),
+				Config: alertPolicyConfig(server.URL, "renamed", "instances_changed", policy(4, 3)),
 				Check:  policyWrite(`{"continuity_runs":5,"identity_columns":["service_name","trace_id"],"missing_behavior":"expire","missing_runs":3,"pending_runs":4}`),
 			},
 			{
-				Config: config("renamed", "has_matches", ""),
+				Config: alertPolicyConfig(server.URL, "renamed", "has_matches", ""),
 				Check: resource.ComposeTestCheckFunc(
 					resource.TestCheckNoResourceAttr(resourceName, "instance_policy"),
 					policyWrite("null"),
 				),
 			},
 			{
-				Config: config("renamed again", "has_matches", ""),
+				Config: alertPolicyConfig(server.URL, "renamed again", "has_matches", ""),
 				Check:  omitsPolicy,
 			},
 			{
@@ -172,7 +171,7 @@ channel_assignments = []
 					defer api.Unlock()
 					api.denied = true
 				},
-				Config:      config("renamed again", "instances_changed", policy(2)),
+				Config:      alertPolicyConfig(server.URL, "renamed again", "instances_changed", policy(2, 2)),
 				ExpectError: regexp.MustCompile(`alert_instances_not_enabled`),
 			},
 		},
@@ -183,21 +182,11 @@ func TestLifecycleAlertInstancePolicyOnOlderLogfire(t *testing.T) {
 	t.Parallel()
 	server, api := newAlertPolicyAPI(t)
 	api.olderLogfire = true
-	config := func(policy string) string {
-		return lifecycleConfig(server.URL, "alert", fmt.Sprintf(`project_id = %q
-name = "alert"
-query = "select 1"
-time_window = "5m"
-frequency = "1m"
-notify_when = "has_matches"
-channel_assignments = []
-%s`, alertPolicyProjectID, policy))
-	}
 	resource.Test(t, resource.TestCase{
 		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: config(`instance_policy = {
+				Config: alertPolicyConfig(server.URL, "alert", "has_matches", `instance_policy = {
   identity_columns = ["service_name"]
   pending_runs     = 1
   missing_runs     = 1
@@ -207,7 +196,7 @@ channel_assignments = []
 			},
 			{
 				// The failed create still saved the alert, so Terraform replaces it.
-				Config: config(""),
+				Config: alertPolicyConfig(server.URL, "alert", "has_matches", ""),
 				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
 					plancheck.ExpectResourceAction("logfire_alert.test", plancheck.ResourceActionDestroyBeforeCreate),
 				}},

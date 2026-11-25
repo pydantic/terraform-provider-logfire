@@ -6,6 +6,7 @@ package provider
 import (
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -81,6 +82,31 @@ func TestSameNameIdentityReplacementNeedsAdoption(t *testing.T) {
 	}
 }
 
+const (
+	frontendAppAddr     = "logfire_frontend_application.test"
+	frontendCurrentAddr = "logfire_frontend_application_token.current"
+	frontendReplaceAddr = "logfire_frontend_application_token.replacement"
+)
+
+func expectFrontendValue(address, attribute string, value knownvalue.Check) statecheck.StateCheck {
+	return statecheck.ExpectKnownValue(address, tfjsonpath.New(attribute), value)
+}
+
+// frontendImportID joins the named attributes of a resource in state into an import ID.
+func frontendImportID(address string, attributes ...string) resource.ImportStateIdFunc {
+	return func(s *terraform.State) (string, error) {
+		resourceState, ok := s.RootModule().Resources[address]
+		if !ok || resourceState.Primary == nil {
+			return "", fmt.Errorf("resource state not found in root module")
+		}
+		parts := []string{}
+		for _, attribute := range attributes {
+			parts = append(parts, resourceState.Primary.Attributes[attribute])
+		}
+		return strings.Join(parts, "/"), nil
+	}
+}
+
 func TestAccFrontendApplicationResource(t *testing.T) {
 	requireExperimentalFrontendApplicationAcceptance(t)
 	t.Parallel()
@@ -92,49 +118,37 @@ func TestAccFrontendApplicationResource(t *testing.T) {
 			{
 				Config: testAccFrontendApplicationConfig(projectName, true, false, true),
 				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue("logfire_frontend_application.test", tfjsonpath.New("token"), knownvalue.NotNull()),
-					statecheck.ExpectKnownValue("logfire_frontend_application_token.current", tfjsonpath.New("token"), knownvalue.NotNull()),
+					expectFrontendValue(frontendAppAddr, "token", knownvalue.NotNull()),
+					expectFrontendValue(frontendCurrentAddr, "token", knownvalue.NotNull()),
 				},
 			},
 			{
 				ImportState: true, ImportStateVerify: true,
-				ResourceName: "logfire_frontend_application.test", ImportStateVerifyIgnore: []string{"adopt_existing_service_name"},
-				ImportStateIdFunc: func(s *terraform.State) (string, error) {
-					resourceState, ok := s.RootModule().Resources["logfire_frontend_application.test"]
-					if !ok || resourceState.Primary == nil {
-						return "", fmt.Errorf("resource state not found in root module")
-					}
-					return fmt.Sprintf("%s/%s", resourceState.Primary.Attributes["project_id"], resourceState.Primary.Attributes["id"]), nil
-				},
+				ResourceName: frontendAppAddr, ImportStateVerifyIgnore: []string{"adopt_existing_service_name"},
+				ImportStateIdFunc: frontendImportID(frontendAppAddr, "project_id", "id"),
 			},
 			{
 				Config: testAccFrontendApplicationConfig(projectName, true, true, true),
 				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue("logfire_frontend_application_token.current", tfjsonpath.New("token"), knownvalue.NotNull()),
-					statecheck.ExpectKnownValue("logfire_frontend_application_token.replacement", tfjsonpath.New("token"), knownvalue.NotNull()),
+					expectFrontendValue(frontendCurrentAddr, "token", knownvalue.NotNull()),
+					expectFrontendValue(frontendReplaceAddr, "token", knownvalue.NotNull()),
 				},
 			},
 			{
 				Config: testAccFrontendApplicationConfig(projectName, false, true, true),
 				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue("logfire_frontend_application_token.replacement", tfjsonpath.New("status"), knownvalue.StringExact("active")),
-					statecheck.ExpectKnownValue("logfire_frontend_application.test", tfjsonpath.New("token_id"), knownvalue.NotNull()),
+					expectFrontendValue(frontendReplaceAddr, "status", knownvalue.StringExact("active")),
+					expectFrontendValue(frontendAppAddr, "token_id", knownvalue.NotNull()),
 				},
 			},
 			{
-				ResourceName: "logfire_frontend_application_token.replacement", ImportState: true, ImportStateVerify: true,
-				ImportStateIdFunc: func(s *terraform.State) (string, error) {
-					resourceState, ok := s.RootModule().Resources["logfire_frontend_application_token.replacement"]
-					if !ok || resourceState.Primary == nil {
-						return "", fmt.Errorf("resource state not found in root module")
-					}
-					return fmt.Sprintf("%s/%s/%s", resourceState.Primary.Attributes["project_id"], resourceState.Primary.Attributes["application_id"], resourceState.Primary.Attributes["id"]), nil
-				},
+				ResourceName: frontendReplaceAddr, ImportState: true, ImportStateVerify: true,
+				ImportStateIdFunc: frontendImportID(frontendReplaceAddr, "project_id", "application_id", "id"),
 			},
 			{
 				Config: testAccFrontendApplicationConfig(projectName, false, true, false),
 				ConfigStateChecks: []statecheck.StateCheck{
-					statecheck.ExpectKnownValue("logfire_frontend_application_token.replacement", tfjsonpath.New("revoke_on_destroy"), knownvalue.Bool(false)),
+					expectFrontendValue(frontendReplaceAddr, "revoke_on_destroy", knownvalue.Bool(false)),
 				},
 			},
 		},
@@ -151,11 +165,11 @@ func TestAccFrontendApplicationNamespaceReplacement(t *testing.T) {
 		Steps: []resource.TestStep{
 			{
 				Config: testAccFrontendApplicationNamespaceReplacementConfig(projectName, "old", false),
-				Check:  resource.TestCheckResourceAttr("logfire_frontend_application.test", "service_namespace", "old"),
+				Check:  resource.TestCheckResourceAttr(frontendAppAddr, "service_namespace", "old"),
 			},
 			{
 				Config: testAccFrontendApplicationNamespaceReplacementConfig(projectName, "new", true),
-				Check:  resource.TestCheckResourceAttr("logfire_frontend_application.test", "service_namespace", "new"),
+				Check:  resource.TestCheckResourceAttr(frontendAppAddr, "service_namespace", "new"),
 			},
 		},
 	})

@@ -34,24 +34,17 @@ func TestTargetPercentValidator(t *testing.T) {
 		{name: "empty rejected", input: types.StringValue(""), wantErr: true},
 	}
 
-	v := newTargetPercentValidator()
+	v := targetPercentValidator{}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			req := validator.StringRequest{
-				Path:        path.Root("target_percent"),
-				ConfigValue: tc.input,
-			}
+			req := validator.StringRequest{Path: path.Root("target_percent"), ConfigValue: tc.input}
 			var resp validator.StringResponse
 			v.ValidateString(context.Background(), req, &resp)
-
-			if tc.wantErr && !resp.Diagnostics.HasError() {
-				t.Fatalf("expected validation error, got none")
-			}
-			if !tc.wantErr && resp.Diagnostics.HasError() {
-				t.Fatalf("unexpected validation error: %v", resp.Diagnostics)
+			if resp.Diagnostics.HasError() != tc.wantErr {
+				t.Fatalf("wantErr=%v, got diags=%v", tc.wantErr, resp.Diagnostics)
 			}
 		})
 	}
