@@ -156,7 +156,7 @@ func (r *ProjectResource) Read(ctx context.Context, req resource.ReadRequest, re
 		// An exchanged token has the scopes the provider asked for, so with one
 		// the 403 means the project is not in the organization.
 		if forbiddenProject(err) && (knownString(state.OrganizationID) ||
-			ownProjectGone(ctx, client, state.ID.ValueString())) {
+			ownProjectGone(ctx, client, state.ID.ValueString(), state.Organization.ValueString())) {
 			status = http.StatusNotFound
 		}
 		return out, status, err
@@ -264,7 +264,7 @@ func (r *ProjectResource) Delete(ctx context.Context, req resource.DeleteRequest
 		return
 	}
 	if forbiddenProject(err) && !knownString(state.OrganizationID) &&
-		ownProjectGone(ctx, client, state.ID.ValueString()) {
+		ownProjectGone(ctx, client, state.ID.ValueString(), state.Organization.ValueString()) {
 		return
 	}
 	resp.Diagnostics.AddError("Delete project failed", err.Error())
@@ -281,15 +281,18 @@ func forbiddenProject(err error) bool {
 
 // ownProjectGone reports whether the key's own project list succeeds without the
 // project. A project with a null organization_id is in the key's organization,
-// so a list without it means that the project was deleted. Through a provider
-// organization, the list is another organization's, so it tells nothing.
-func ownProjectGone(ctx context.Context, c *logclient.APIClient, projectID string) bool {
+// so a list without it means that the project was deleted, unless the key is now
+// from another organization. The list rows name the key's organization. Through
+// a provider organization, the list is another organization's, so it tells
+// nothing.
+func ownProjectGone(ctx context.Context, c *logclient.APIClient, projectID, organization string) bool {
 	if c.Organization() != "" {
 		return false
 	}
 	list, err := c.ListProjects(ctx)
-	return err == nil && !slices.ContainsFunc(list,
-		func(p logclient.ProjectRead) bool { return p.ID == projectID })
+	return err == nil && !slices.ContainsFunc(list, func(p logclient.ProjectRead) bool {
+		return p.ID == projectID || p.OrganizationName != organization
+	})
 }
 
 func (r *ProjectResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {

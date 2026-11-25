@@ -4,6 +4,7 @@
 package provider
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -47,6 +48,9 @@ type organizationInstance struct {
 	projectListRefused bool
 	// proxyForbids makes a project read answer a 403 that the instance did not send.
 	proxyForbids bool
+	// projectDenied makes every project request answer the instance's 403, as
+	// for a key without access to the project.
+	projectDenied bool
 }
 
 func newOrganizationInstance(t *testing.T, names ...string) *organizationInstance {
@@ -221,7 +225,7 @@ func (api *organizationInstance) serve(w http.ResponseWriter, r *http.Request) {
 		reply(http.StatusForbidden, map[string]string{"detail": "Blocked by proxy"})
 	case strings.HasPrefix(r.URL.Path, "/api/v1/projects/"):
 		project := api.projects[id]
-		if project == nil || project.OrganizationID != callerOrganization {
+		if project == nil || project.OrganizationID != callerOrganization || api.projectDenied {
 			// Like the server, answer 403 for a missing project or one in another organization.
 			reply(http.StatusForbidden, map[string]string{"detail": "You do not have permission to access this project"})
 			return
@@ -606,21 +610,50 @@ func TestLifecycleProjectOfTheKeyKeepsStateWhenTheListFails(t *testing.T) {
 	}
 }
 
+// The same 403 answers a project of another organization, so after a switch to
+// a key of another organization the project stays in state.
+func TestLifecycleProjectKeepsStateWithAKeyOfAnotherOrganization(t *testing.T) {
+	api := newOrganizationInstance(t, "team-a")
+	api.projects["other"] = &testProject{ID: "other", Name: "other", Visibility: "public", OrganizationID: "org-admin"}
+	teamKey := fmt.Sprintf("provider \"logfire\" {\nbase_url = %q\napi_key = \"tok:org-team-a\"\n}\n", api.URL) +
+		projectBlock("svc", "name = \"svc\"")
+	runLifecycleSteps(t, []tfresource.TestStep{
+		{Config: teamKey},
+		{
+			Config:      svcProject(api, ""),
+			ExpectError: regexp.MustCompile(`(?s)Read project failed.*permission to access this`),
+		},
+		{Config: teamKey, ConfigPlanChecks: expectNoChange},
+	})
+	if api.creates != 1 {
+		t.Errorf("creates = %d, want the project kept in state", api.creates)
+	}
+}
+
 // A destroy without refresh reaches Delete for a project that is already gone.
 // Only the key's own project list can tell that it is gone.
 func TestProjectDeleteOfAProjectAlreadyGone(t *testing.T) {
 	tests := map[string]struct {
 		providerOrganization string
+		stateOrganization    string
 		listRefused          bool
+		projectListed        bool
 		wantErr              bool
 	}{
-		"key":                   {},
-		"key whose list fails":  {listRefused: true, wantErr: true},
-		"provider organization": {providerOrganization: "team-a", wantErr: true},
+		"key":                         {},
+		"key whose list fails":        {listRefused: true, wantErr: true},
+		"key whose list has it":       {projectListed: true, wantErr: true},
+		"key of another organization": {stateOrganization: "team-a", wantErr: true},
+		"provider organization":       {providerOrganization: "team-a", wantErr: true},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			api := newOrganizationInstance(t, "team-a")
+			api.projects["other"] = &testProject{ID: "other", Name: "other", Visibility: "public", OrganizationID: "org-admin"}
+			if tt.projectListed {
+				api.projects["project-1"] = &testProject{ID: "project-1", Name: "svc", Visibility: "public", OrganizationID: "org-admin"}
+				api.projectDenied = true
+			}
 			api.projectListRefused = tt.listRefused
 			client, err := logclient.NewAPIClient(api.URL, testAPIKey, nil)
 			if err != nil {
@@ -633,7 +666,8 @@ func TestProjectDeleteOfAProjectAlreadyGone(t *testing.T) {
 			var schemaResponse resource.SchemaResponse
 			r.Schema(t.Context(), resource.SchemaRequest{}, &schemaResponse)
 			state := tfsdk.State{Schema: schemaResponse.Schema, Raw: tftypes.NewValue(schemaResponse.Schema.Type().TerraformType(t.Context()), nil)}
-			if diags := state.Set(t.Context(), projectModel(types.StringValue("admin"), types.StringNull())); diags.HasError() {
+			organization := cmp.Or(tt.stateOrganization, "admin")
+			if diags := state.Set(t.Context(), projectModel(types.StringValue(organization), types.StringNull())); diags.HasError() {
 				t.Fatal(diags)
 			}
 			response := resource.DeleteResponse{State: state}
