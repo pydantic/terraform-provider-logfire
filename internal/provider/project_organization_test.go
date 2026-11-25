@@ -563,18 +563,85 @@ func TestLifecycleProjectLeavesStateWhenItsOrganizationIsDeleted(t *testing.T) {
 	})
 }
 
+// The server answers 403, not 404, for a missing project. With the key's own
+// organization ("") the key's project list tells that the project is gone.
 func TestLifecycleProjectDeletedOutsideTerraformIsCreatedAgain(t *testing.T) {
-	api := newOrganizationInstance(t, "team-a")
-	config := svcProject(api, "team-a")
+	for _, organization := range []string{"team-a", ""} {
+		t.Run("organization "+organization, func(t *testing.T) {
+			api := newOrganizationInstance(t, "team-a")
+			config := svcProject(api, organization)
+			runLifecycleSteps(t, []tfresource.TestStep{
+				{Config: config},
+				{
+					PreConfig: func() { api.Lock(); clear(api.projects); api.Unlock() },
+					Config:    config,
+				},
+			})
+			if api.creates != 2 {
+				t.Errorf("creates = %d, want the deleted project created again", api.creates)
+			}
+		})
+	}
+}
+
+// Without a project list, the 403 may be a missing scope, so the project stays
+// in state.
+func TestLifecycleProjectOfTheKeyKeepsStateWhenTheListFails(t *testing.T) {
+	api := newOrganizationInstance(t)
+	config := svcProject(api, "")
+	setListRefused := func(on bool) func() {
+		return func() { api.Lock(); api.projectListRefused = on; api.Unlock() }
+	}
 	runLifecycleSteps(t, []tfresource.TestStep{
 		{Config: config},
 		{
-			PreConfig: func() { clear(api.projects) },
-			Config:    config,
+			PreConfig:   func() { api.Lock(); clear(api.projects); api.projectListRefused = true; api.Unlock() },
+			Config:      config,
+			ExpectError: regexp.MustCompile(`(?s)Read project failed.*permission to access this`),
 		},
+		{PreConfig: setListRefused(false), Config: config},
 	})
 	if api.creates != 2 {
-		t.Errorf("creates = %d, want the deleted project created again", api.creates)
+		t.Errorf("creates = %d, want the project created again only after the list succeeds", api.creates)
+	}
+}
+
+// A destroy without refresh reaches Delete for a project that is already gone.
+// Only the key's own project list can tell that it is gone.
+func TestProjectDeleteOfAProjectAlreadyGone(t *testing.T) {
+	tests := map[string]struct {
+		providerOrganization string
+		listRefused          bool
+		wantErr              bool
+	}{
+		"key":                   {},
+		"key whose list fails":  {listRefused: true, wantErr: true},
+		"provider organization": {providerOrganization: "team-a", wantErr: true},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			api := newOrganizationInstance(t, "team-a")
+			api.projectListRefused = tt.listRefused
+			client, err := logclient.NewAPIClient(api.URL, testAPIKey, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.providerOrganization != "" {
+				client = client.ForOrganization(tt.providerOrganization)
+			}
+			r := &ProjectResource{configured{client}}
+			var schemaResponse resource.SchemaResponse
+			r.Schema(t.Context(), resource.SchemaRequest{}, &schemaResponse)
+			state := tfsdk.State{Schema: schemaResponse.Schema, Raw: tftypes.NewValue(schemaResponse.Schema.Type().TerraformType(t.Context()), nil)}
+			if diags := state.Set(t.Context(), projectModel(types.StringValue("admin"), types.StringNull())); diags.HasError() {
+				t.Fatal(diags)
+			}
+			response := resource.DeleteResponse{State: state}
+			r.Delete(t.Context(), resource.DeleteRequest{State: state}, &response)
+			if response.Diagnostics.HasError() != tt.wantErr {
+				t.Errorf("diagnostics = %v, want error %v", response.Diagnostics, tt.wantErr)
+			}
+		})
 	}
 }
 
