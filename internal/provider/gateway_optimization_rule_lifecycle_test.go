@@ -184,7 +184,7 @@ action          = "observe"
 message_role    = "user"
 targets = [
   { endpoint_slug = "support" },
-  { endpoint_slug = "support", model_pattern = "^gpt-5", agent_name = "triage", system_prompt_pattern = "support" },
+  { endpoint_slug = "support", model_pattern = "gpt-5*", agent_name = "triage", system_prompt_pattern = "support" },
 ]`
 	resource.Test(t, resource.TestCase{
 		IsUnitTest: true, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
@@ -217,7 +217,7 @@ targets = [
 					resource.TestCheckResourceAttr(resourceName, "message_role", "user"),
 					resource.TestCheckResourceAttr(resourceName, "targets.#", "2"),
 					resource.TestCheckTypeSetElemNestedAttrs(resourceName, "targets.*", map[string]string{
-						"endpoint_slug": "support", "model_pattern": "^gpt-5", "agent_name": "triage",
+						"endpoint_slug": "support", "model_pattern": "gpt-5*", "agent_name": "triage",
 						"system_prompt_pattern": "support",
 					}),
 				),
@@ -418,7 +418,7 @@ func TestLifecycleGatewayOptimizationRuleValidation(t *testing.T) {
 		verbosity + `targets = [{ endpoint_slug = "" }]`:                            `at least 1`,
 		verbosity + `targets = [{ endpoint_slug = "support", model_pattern = "" }]`: `at least 1`,
 		verbosity + "targets = [" + tooManyTargets + "]":                            `at most 100`,
-		verbosity + `targets = [{ model_pattern = "^gpt" }]`:                        `endpoint_slug.*required`,
+		verbosity + `targets = [{ model_pattern = "gpt-*" }]`:                       `endpoint_slug.*required`,
 	} {
 		steps = append(steps, resource.TestStep{
 			Config: config(body), PlanOnly: true, ExpectError: regexp.MustCompile("(?s)" + message),

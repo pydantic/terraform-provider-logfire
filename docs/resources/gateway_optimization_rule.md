@@ -31,7 +31,7 @@ resource "logfire_gateway_optimization_rule" "concise_support" {
     },
     {
       endpoint_slug = logfire_gateway_endpoint.default.slug
-      model_pattern = "^gpt-5"
+      model_pattern = "gpt-5*"
       agent_name    = "support-triage"
     },
   ]
@@ -150,7 +150,7 @@ Required:
 Optional:
 
 - `agent_name` (String) Agent name that the request must carry. Omit it to match every agent.
-- `model_pattern` (String) Regular expression that the requested model must match. Omit it to match every model.
+- `model_pattern` (String) Model name that the requested model must equal. A `*` matches any run of characters, so `gpt-5*` matches `gpt-5` and `gpt-5-mini`. It is not a regular expression. Omit it to match every model.
 - `system_prompt_pattern` (String) Regular expression that the system prompt must match. Omit it to match every system prompt.
 
 ## Import

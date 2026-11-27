@@ -137,9 +137,11 @@ func (r *GatewayOptimizationRuleResource) Schema(ctx context.Context, req resour
 							Validators: []validator.String{stringvalidator.LengthAtLeast(1)},
 						},
 						"model_pattern": schema.StringAttribute{
-							Optional:            true,
-							MarkdownDescription: "Regular expression that the requested model must match. Omit it to match every model.",
-							Validators:          []validator.String{stringvalidator.LengthAtLeast(1)},
+							Optional: true,
+							MarkdownDescription: "Model name that the requested model must equal. A `*` matches any run of characters, " +
+								"so `gpt-5*` matches `gpt-5` and `gpt-5-mini`. It is not a regular expression. " +
+								"Omit it to match every model.",
+							Validators: []validator.String{stringvalidator.LengthAtLeast(1)},
 						},
 						"agent_name": schema.StringAttribute{
 							Optional:            true,

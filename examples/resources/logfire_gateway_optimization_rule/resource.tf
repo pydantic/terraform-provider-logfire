@@ -10,7 +10,7 @@ resource "logfire_gateway_optimization_rule" "concise_support" {
     },
     {
       endpoint_slug = logfire_gateway_endpoint.default.slug
-      model_pattern = "^gpt-5"
+      model_pattern = "gpt-5*"
       agent_name    = "support-triage"
     },
   ]
