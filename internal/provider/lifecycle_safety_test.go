@@ -516,6 +516,7 @@ func TestEmptyIDMakesNoRequests(t *testing.T) {
 		"write_token":                NewWriteTokenResource,
 		"organization":               func() fwresource.Resource { return &OrganizationResource{} },
 		"gateway_endpoint":           func() fwresource.Resource { return &GatewayEndpointResource{} },
+		"gateway_optimization_rule":  func() fwresource.Resource { return &GatewayOptimizationRuleResource{} },
 		"gateway_provider":           func() fwresource.Resource { return &GatewayProviderResource{} },
 		"frontend_application":       func() fwresource.Resource { return &FrontendApplicationResource{} },
 		"frontend_application_token": func() fwresource.Resource { return &FrontendApplicationTokenResource{} },

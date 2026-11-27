@@ -314,6 +314,7 @@ func (p *LogfireProvider) Resources(_ context.Context) []func() resource.Resourc
 		func() resource.Resource { return &FrontendApplicationTokenResource{} },
 		func() resource.Resource { return &GatewayAPIKeyResource{} },
 		func() resource.Resource { return &GatewayEndpointResource{} },
+		func() resource.Resource { return &GatewayOptimizationRuleResource{} },
 		func() resource.Resource { return &GatewayProjectSpendingLimitsResource{} },
 		func() resource.Resource { return &GatewayProviderResource{} },
 		func() resource.Resource { return &GatewaySpendingLimitsResource{} },
