@@ -40,11 +40,10 @@ resource "logfire_gateway_optimization_rule" "concise_support" {
 
 ## Targets
 
-`targets` is the complete set of request selectors that the rule applies to.
-Each target names an endpoint by slug. It can also narrow the match by model,
-agent name, or system prompt. A rule without targets applies to no request.
-Logfire keeps a target that a change repeats, so only the added and removed
-targets change.
+`targets` is authoritative. Each apply sets the rule's targets to exactly this
+list, and Logfire removes any target that is not in it. Each target names an
+endpoint by slug. It can also narrow the match by model, agent name, or system
+prompt. A rule without targets applies to no request.
 
 A successful apply means that Logfire stored the rule and queued a Gateway
 refresh. The Gateway applies the change when the refresh completes.
