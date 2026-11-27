@@ -370,6 +370,9 @@ func NewAPIClient(baseURL, token string, httpClient *http.Client, opts ...Option
 	return apiClient, nil
 }
 
+// truncatedSuffix ends an error body that the client cut at maxErrorBodySize.
+const truncatedSuffix = "... (truncated)"
+
 // instanceRoutePrefix starts the routes that authorize the instance-admin API
 // key itself. The other routes resolve the organization from the token.
 const instanceRoutePrefix = "/api/v1/instance/"
@@ -473,7 +476,7 @@ func (c *APIClient) send(req *http.Request, expectedStatus ...int) (*http.Respon
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodySize))
 	msg := string(b)
 	if len(b) == maxErrorBodySize {
-		msg += "... (truncated)"
+		msg += truncatedSuffix
 	}
 	version := strings.TrimSpace(resp.Header.Get("Logfire-Version"))
 	if !releaseVersionPattern.MatchString(version) {

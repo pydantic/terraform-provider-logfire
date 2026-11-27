@@ -104,10 +104,25 @@ func redactSecret(err error, secret *string) error {
 		return err
 	}
 	encoded, _ := json.Marshal(*secret)
-	replacer := strings.NewReplacer(*secret, "<redacted>", strings.Trim(string(encoded), `"`), "<redacted>")
+	forms := []string{*secret, strings.Trim(string(encoded), `"`)}
+	replacer := strings.NewReplacer(forms[0], "<redacted>", forms[1], "<redacted>")
 	var apiError *APIError
 	if errors.As(err, &apiError) {
-		return &APIError{StatusCode: apiError.StatusCode, Message: replacer.Replace(apiError.Message), BackendVersion: apiError.BackendVersion}
+		message := replacer.Replace(apiError.Message)
+		// The client cuts a long error body before this runs, so the body can
+		// end in the first part of the secret.
+		if body, cut := strings.CutSuffix(message, truncatedSuffix); cut {
+			for _, form := range forms {
+				for n := len(form) - 1; n > 0; n-- {
+					if strings.HasSuffix(body, form[:n]) {
+						body = body[:len(body)-n] + "<redacted>"
+						break
+					}
+				}
+			}
+			message = body + truncatedSuffix
+		}
+		return &APIError{StatusCode: apiError.StatusCode, Message: message, BackendVersion: apiError.BackendVersion}
 	}
 	if text := err.Error(); replacer.Replace(text) != text {
 		return errors.New(replacer.Replace(text))
