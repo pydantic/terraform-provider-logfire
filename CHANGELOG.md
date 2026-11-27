@@ -1,5 +1,13 @@
 ## Unreleased
 
+FEATURES:
+- `logfire_gateway_guardrail_connection` manages an AI Gateway connection to a Presidio service. The bearer token is write-only, so Terraform keeps it in state. The provider sends it only when `auth_type`, `bearer_token`, or `base_url` changes, and removes it from error messages. Import accepts the connection name or UUID. Beta. Needs Logfire v2026-11-27.01 or newer.
+- `logfire_gateway_prebuilt_guardrail` manages the targets of a prebuilt guardrail template, such as a PII detector. Changing `template_slug` replaces the resource. Import accepts the template slug. Beta. Needs Logfire v2026-11-27.01 or newer.
+- `logfire_gateway_regex_guardrail` manages a custom regex guardrail and its targets. Import accepts the guardrail name or UUID. Beta. Needs Logfire v2026-11-27.01 or newer.
+- `logfire_gateway_presidio_guardrail` manages a guardrail that detects one Presidio entity type through a `logfire_gateway_guardrail_connection`. Import accepts the guardrail name or UUID. Beta. Needs Logfire v2026-11-27.01 or newer.
+- The guardrail resources take optional `sample_messages` or `sample_texts`, the editor samples of the Logfire UI. If you omit them, Terraform leaves the stored samples unchanged.
+- The guardrail resources need a plan with the Gateway guardrail API: Growth, Enterprise Cloud, or self-hosted. Writes to `logfire_gateway_guardrail_connection` and `logfire_gateway_presidio_guardrail` also need Presidio guardrails on the plan: Enterprise Cloud or self-hosted. Logfire tests an enabled connection before it stores a create or a change, so an apply fails while Presidio is unreachable.
+
 ## 0.3.2
 
 BUG FIXES:
