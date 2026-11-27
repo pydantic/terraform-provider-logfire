@@ -89,6 +89,26 @@ func TestMissingRouteHints(t *testing.T) {
 			wants:    []string{"v2026-10-29.02", "/api/v1/gateway/endpoints/"},
 			reported: "reports version v2026-10-29.01",
 		},
+		{
+			name: "gateway optimization rule create",
+			call: func(c *APIClient) error {
+				_, err := c.CreateGatewayOptimizationRule(ctx, GatewayOptimizationRuleWrite{Name: "Concise"})
+				return err
+			},
+			version:  "v2026-11-20.01",
+			wants:    []string{"v2026-11-27.01", "/api/v1/gateway/optimization-rules/"},
+			reported: "reports version v2026-11-20.01",
+		},
+		{
+			name: "gateway optimization rule find",
+			call: func(c *APIClient) error {
+				_, err := c.FindGatewayOptimizationRuleByName(ctx, "Concise")
+				return err
+			},
+			version:  "v2026-11-20.01",
+			wants:    []string{"v2026-11-27.01", "/api/v1/gateway/optimization-rules/"},
+			reported: "reports version v2026-11-20.01",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -134,6 +154,31 @@ func TestGetGatewayEndpointKeepsItemNotFound(t *testing.T) {
 	c := versionedClient(t, http.StatusNotFound, `{"detail":"Endpoint not found."}`, "")
 	if _, err := c.GetGatewayEndpoint(context.Background(), "missing"); !IsNotFoundError(err) {
 		t.Fatalf("an item 404 must stay a not-found error so a deleted endpoint leaves state, got %v", err)
+	}
+}
+
+func TestGatewayOptimizationRuleItemNotFoundStaysNotFound(t *testing.T) {
+	t.Parallel()
+	c := versionedClient(t, http.StatusNotFound, `{"detail":"Optimization rule not found in this organization."}`, "")
+	if _, err := c.GetGatewayOptimizationRule(context.Background(), "missing"); !IsNotFoundError(err) {
+		t.Fatalf("an item 404 must stay a not-found error so a deleted rule leaves state, got %v", err)
+	}
+	var unavailable *EndpointUnavailableError
+	if _, err := c.ReplaceGatewayOptimizationRule(context.Background(), "missing", GatewayOptimizationRuleWrite{}); errors.As(err, &unavailable) {
+		t.Fatalf("an item 404 must not be reported as a missing route: %v", err)
+	}
+}
+
+func TestFindGatewayOptimizationRuleByNameMissingNameIsNotRouteHint(t *testing.T) {
+	t.Parallel()
+	c := versionedClient(t, http.StatusOK, `{"rules":[],"next_cursor":null}`, "")
+	_, err := c.FindGatewayOptimizationRuleByName(context.Background(), "missing")
+	if !IsNotFoundError(err) {
+		t.Fatalf("expected a not-found error for the missing name, got %v", err)
+	}
+	var unavailable *EndpointUnavailableError
+	if errors.As(err, &unavailable) {
+		t.Fatalf("a missing name must not be reported as a missing route: %v", err)
 	}
 }
 

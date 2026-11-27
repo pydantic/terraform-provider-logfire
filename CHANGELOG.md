@@ -1,5 +1,8 @@
 ## Unreleased
 
+FEATURES:
+- `logfire_gateway_optimization_rule` manages an AI Gateway optimization rule and the complete set of endpoint targets it applies to. It also manages rules installed from the Logfire catalog, and exposes their `source` and `template_slug`. On a catalog rule, only `enabled` and `targets` can change, and the plan fails if the configuration changes another argument. An update that races a concurrent change of the rule is sent again after the `Retry-After` delay, at most three times in all. Import accepts the rule name or UUID. The resource is in Beta. Needs Logfire v2026-11-27.01 or newer, on the Growth, Enterprise Cloud, or self-hosted plan.
+
 ## 0.3.2
 
 BUG FIXES:
